@@ -54,16 +54,36 @@ class RealtimeSession:
     def __init__(self, websocket: WebSocket):
         self.client_ws = websocket
         self.openai_ws = None
+        self.conversation_turn = 0  # Track conversation turns
         self.session_config = {
             "modalities": ["text", "audio"],
-            "instructions": "You are a podcast host and AI expert discussing research papers. Engage in natural conversation with the user about academic topics.",
+            "instructions": """You are hosting a 3-way podcast conversation as two different AI personalities:
+
+1. Dr. Sarah Chen (Expert): An AI research expert with deep technical knowledge. Respond with authority and precision about research topics.
+
+2. Alex Rivera (Curious): A curious science communicator who asks follow-up questions and seeks clarification.
+
+When the user speaks, alternate between these personas:
+- On odd turns (1, 3, 5...): Respond as Dr. Sarah Chen with expert insights
+- On even turns (2, 4, 6...): Respond as Alex Rivera with curious follow-up questions
+
+Always start your response with either "Dr. Sarah Chen:" or "Alex Rivera:" to identify which persona is speaking. Keep responses to 2-3 sentences each.""",
             "voice": "alloy",
-            "input_audio_format": "pcm16",
+            "input_audio_format": "pcm16", 
             "output_audio_format": "pcm16",
-            "input_audio_transcription": {"enabled": True, "model": "whisper-1"},
-            "turn_detection": {"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300, "silence_duration_ms": 200},
+            "input_audio_transcription": {
+                "enabled": True,
+                "model": "whisper-1"
+            },
+            "turn_detection": {
+                "type": "server_vad",
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 200
+            },
             "temperature": 0.8,
-            "max_output_tokens": 4096
+            "max_output_tokens": 300,
+            "tools": []
         }
         
     async def connect_to_openai(self):
@@ -105,6 +125,9 @@ class RealtimeSession:
         """Handle incoming message from client"""
         try:
             if message.get("type") == "audio":
+                # Increment turn counter for persona switching
+                self.conversation_turn += 1
+                
                 # Create conversation item with audio input
                 item_event = {
                     "event_id": f"event_{datetime.now().isoformat()}",
@@ -118,6 +141,20 @@ class RealtimeSession:
                 }
                 await self.openai_ws.send(json.dumps(item_event))
                 
+                # Add context about which persona should respond
+                persona = "Dr. Sarah Chen" if self.conversation_turn % 2 == 1 else "Alex Rivera"
+                context_event = {
+                    "event_id": f"event_{datetime.now().isoformat()}",
+                    "type": "conversation.item.create",
+                    "item": {
+                        "id": f"item_{datetime.now().isoformat()}_context",
+                        "type": "message",
+                        "role": "system",
+                        "content": [{"type": "input_text", "text": f"Respond as {persona} (Turn {self.conversation_turn})."}]
+                    }
+                }
+                await self.openai_ws.send(json.dumps(context_event))
+                
                 # Trigger response
                 response_event = {
                     "event_id": f"event_{datetime.now().isoformat()}",
@@ -126,6 +163,9 @@ class RealtimeSession:
                 await self.openai_ws.send(json.dumps(response_event))
                 
             elif message.get("type") == "text":
+                # Increment turn counter for persona switching
+                self.conversation_turn += 1
+                
                 # Create conversation item with text input
                 item_event = {
                     "event_id": f"event_{datetime.now().isoformat()}",
@@ -139,6 +179,20 @@ class RealtimeSession:
                 }
                 await self.openai_ws.send(json.dumps(item_event))
                 
+                # Add context about which persona should respond
+                persona = "Dr. Sarah Chen" if self.conversation_turn % 2 == 1 else "Alex Rivera"
+                context_event = {
+                    "event_id": f"event_{datetime.now().isoformat()}",
+                    "type": "conversation.item.create",
+                    "item": {
+                        "id": f"item_{datetime.now().isoformat()}_context",
+                        "type": "message",
+                        "role": "system",
+                        "content": [{"type": "input_text", "text": f"Respond as {persona} (Turn {self.conversation_turn})."}]
+                    }
+                }
+                await self.openai_ws.send(json.dumps(context_event))
+                
                 # Trigger response
                 response_event = {
                     "event_id": f"event_{datetime.now().isoformat()}",
@@ -150,7 +204,7 @@ class RealtimeSession:
             logger.error(f"Error handling client message: {e}")
     
     async def handle_openai_response(self):
-        """Handle responses from OpenAI and forward to client"""
+        """Handle responses from OpenAI and forward to client with persona detection"""
         try:
             async for message in self.openai_ws:
                 data = json.loads(message)
@@ -167,10 +221,16 @@ class RealtimeSession:
                     })
                     
                 elif event_type == "response.text.delta":
-                    # Forward text delta to client
+                    # Forward text delta and detect persona
+                    text_delta = data.get("delta", "")
+                    persona = "expert" if "Dr. Sarah Chen:" in text_delta else "curious" if "Alex Rivera:" in text_delta else "unknown"
+                    speaker = "Dr. Sarah Chen" if persona == "expert" else "Alex Rivera" if persona == "curious" else "AI"
+                    
                     await self.client_ws.send_json({
                         "type": "text_delta",
-                        "text": data.get("delta", "")
+                        "text": text_delta,
+                        "persona": persona,
+                        "speaker": speaker
                     })
                     
                 elif event_type == "response.done":
@@ -181,6 +241,24 @@ class RealtimeSession:
                     
                 elif event_type == "input_audio_buffer.speech_stopped":
                     await self.client_ws.send_json({"type": "speech_stopped"})
+                    
+                elif event_type == "conversation.item.input_audio_transcription.updated":
+                    # Handle live transcription updates
+                    transcription_text = data.get("transcript", "")
+                    if transcription_text:
+                        await self.client_ws.send_json({
+                            "type": "transcription_delta",
+                            "text": transcription_text
+                        })
+                        
+                elif event_type == "conversation.item.input_audio_transcription.completed":
+                    # Handle completed transcription
+                    final_transcript = data.get("transcript", "")
+                    if final_transcript:
+                        await self.client_ws.send_json({
+                            "type": "transcription_complete",
+                            "text": final_transcript
+                        })
                     
         except websockets.exceptions.ConnectionClosed:
             logger.info("OpenAI WebSocket connection closed")

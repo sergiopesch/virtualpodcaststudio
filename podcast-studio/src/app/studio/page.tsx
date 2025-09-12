@@ -24,10 +24,11 @@ import {
 
 interface ConversationMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'expert' | 'curious';
   content: string;
   timestamp: Date;
   type: 'text' | 'audio';
+  speaker?: string;
 }
 
 export default function Studio() {
@@ -37,6 +38,8 @@ export default function Studio() {
     isRecording,
     messages,
     error,
+    isTranscribing,
+    currentTranscription,
     connect,
     disconnect,
     startRecording,
@@ -85,7 +88,7 @@ export default function Studio() {
 
   const handleExportTranscript = () => {
     const transcriptText = messages.map((msg: ConversationMessage) => 
-      `[${msg.timestamp.toLocaleTimeString()}] ${msg.role === 'user' ? 'You' : 'AI Host'}: ${msg.content}`
+      `[${msg.timestamp.toLocaleTimeString()}] ${msg.speaker || (msg.role === 'user' ? 'You' : msg.role)}: ${msg.content}`
     ).join('\n\n');
     
     const blob = new Blob([transcriptText], { type: 'text/plain' });
@@ -270,46 +273,57 @@ export default function Studio() {
                           </div>
                         )}
                         
-                        {messages.map((entry: ConversationMessage) => (
-                          <div
-                            key={entry.id}
-                            className="flex items-start space-x-3 animate-fade-in"
-                          >
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm border ${
-                              entry.role === "user" 
-                                ? "bg-purple-100 border-purple-200 text-purple-600" 
-                                : "bg-blue-100 border-blue-200 text-blue-600"
-                            }`}>
-                              {entry.role === "user" ? (
-                                <Headphones className="w-5 h-5" />
-                              ) : (
-                                <Brain className="w-5 h-5" />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center space-x-2 mb-2">
-                                <span className="text-sm font-semibold text-gray-900">
-                                  {entry.role === "user" ? "You" : "AI Host"}
-                                </span>
-                                <span className="text-xs text-gray-500 font-mono bg-gray-100 border border-gray-200 px-2 py-1 rounded-md shadow-sm">
-                                  {entry.timestamp.toLocaleTimeString('en-US', {
-                                    hour: '2-digit', 
-                                    minute: '2-digit', 
-                                    second: '2-digit', 
-                                    hour12: false
-                                  })}
-                                </span>
+                        {messages.map((entry: ConversationMessage) => {
+                          const isUser = entry.role === "user";
+                          const isExpert = entry.role === "expert";
+                          
+                          const avatarStyles = isUser 
+                            ? "bg-purple-100 border-purple-200 text-purple-600"
+                            : isExpert 
+                            ? "bg-blue-100 border-blue-200 text-blue-600"
+                            : "bg-green-100 border-green-200 text-green-600";
+                            
+                          const messageStyles = isUser
+                            ? "bg-gradient-to-r from-purple-50 to-purple-50/70 border-purple-200 text-gray-800"
+                            : isExpert
+                            ? "bg-gradient-to-r from-blue-50 to-blue-50/70 border-blue-200 text-gray-800"
+                            : "bg-gradient-to-r from-green-50 to-green-50/70 border-green-200 text-gray-800";
+                            
+                          const displayName = entry.speaker || (isUser ? "You" : entry.role);
+                          
+                          return (
+                            <div
+                              key={entry.id}
+                              className="flex items-start space-x-3 animate-fade-in"
+                            >
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm border ${avatarStyles}`}>
+                                {isUser ? (
+                                  <Headphones className="w-5 h-5" />
+                                ) : (
+                                  <Brain className="w-5 h-5" />
+                                )}
                               </div>
-                              <div className={`p-4 rounded-xl border-2 shadow-sm transition-all hover:shadow-md ${
-                                entry.role === "user"
-                                  ? "bg-gradient-to-r from-purple-50 to-purple-50/70 border-purple-200 text-gray-800"
-                                  : "bg-gradient-to-r from-blue-50 to-blue-50/70 border-blue-200 text-gray-800"
-                              }`}>
-                                <p className="text-sm leading-relaxed">{entry.content}</p>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center space-x-2 mb-2">
+                                  <span className="text-sm font-semibold text-gray-900">
+                                    {displayName}
+                                  </span>
+                                  <span className="text-xs text-gray-500 font-mono bg-gray-100 border border-gray-200 px-2 py-1 rounded-md shadow-sm">
+                                    {entry.timestamp.toLocaleTimeString('en-US', {
+                                      hour: '2-digit', 
+                                      minute: '2-digit', 
+                                      second: '2-digit', 
+                                      hour12: false
+                                    })}
+                                  </span>
+                                </div>
+                                <div className={`p-4 rounded-xl border-2 shadow-sm transition-all hover:shadow-md ${messageStyles}`}>
+                                  <p className="text-sm leading-relaxed">{entry.content}</p>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                         
                         {/* Live indicator when recording */}
                         {isRecording && (
@@ -329,6 +343,31 @@ export default function Studio() {
                               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
                               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Live transcription when transcribing */}
+                        {isTranscribing && currentTranscription && (
+                          <div className="flex items-start space-x-3 animate-fade-in">
+                            <div className="w-10 h-10 rounded-xl bg-yellow-100 border border-yellow-200 flex items-center justify-center flex-shrink-0 shadow-sm">
+                              <Mic className="w-5 h-5 text-yellow-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <span className="text-sm font-semibold text-gray-900">
+                                  You (Transcribing...)
+                                </span>
+                                <span className="text-xs text-yellow-600 font-mono bg-yellow-50 border border-yellow-200 px-2 py-1 rounded-md">
+                                  LIVE
+                                </span>
+                              </div>
+                              <div className="p-4 rounded-xl border-2 border-yellow-200 bg-gradient-to-r from-yellow-50 to-yellow-50/70 shadow-sm">
+                                <p className="text-sm leading-relaxed text-gray-800">
+                                  {currentTranscription}
+                                  <span className="inline-block w-2 h-4 bg-yellow-500 ml-1 animate-pulse"></span>
+                                </p>
+                              </div>
                             </div>
                           </div>
                         )}

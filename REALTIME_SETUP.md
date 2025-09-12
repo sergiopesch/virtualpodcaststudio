@@ -6,7 +6,7 @@ I've successfully integrated OpenAI's Realtime API into your Virtual Podcast Stu
 
 ## Architecture
 
-```
+```text
 User (Browser) ↔ Next.js Frontend ↔ FastAPI Backend ↔ OpenAI Realtime API
 ```
 
@@ -17,6 +17,7 @@ The system uses WebSocket connections throughout for real-time bidirectional com
 ### 1. Backend Setup
 
 1. **Install new dependencies:**
+
    ```bash
    cd backend
    source venv/bin/activate
@@ -24,6 +25,7 @@ The system uses WebSocket connections throughout for real-time bidirectional com
    ```
 
 2. **Configure OpenAI API Key:**
+
    ```bash
    cp .env.example .env
    # Edit .env and add your OpenAI API key:
@@ -31,6 +33,7 @@ The system uses WebSocket connections throughout for real-time bidirectional com
    ```
 
 3. **Start the backend:**
+
    ```bash
    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
    ```
@@ -38,23 +41,27 @@ The system uses WebSocket connections throughout for real-time bidirectional com
 ### 2. Frontend Setup
 
 1. **Install dependencies (if needed):**
+
    ```bash
    cd podcast-studio
    npm install
    ```
 
 2. **Start the frontend:**
+
    ```bash
    npm run dev
    ```
 
 3. **Access the application:**
-   - Open http://localhost:3000
+
+   - Open [http://localhost:3000](http://localhost:3000)
    - Navigate to the Audio Studio
 
 ## Key Features Implemented
 
 ### Backend Features
+
 - **WebSocket Endpoint:** `/ws/conversation` handles real-time communication
 - **OpenAI Integration:** Connects to OpenAI's Realtime API with proper authentication
 - **Session Management:** Configures AI personas for podcast-style conversations
@@ -62,6 +69,7 @@ The system uses WebSocket connections throughout for real-time bidirectional com
 - **Error Handling:** Comprehensive error management and logging
 
 ### Frontend Features
+
 - **Real-time Voice Recording:** Records user's voice and streams to AI
 - **Text Input:** Alternative text-based communication with AI
 - **Live Transcription:** Displays conversation in real-time
@@ -72,6 +80,7 @@ The system uses WebSocket connections throughout for real-time bidirectional com
 ## Usage
 
 ### Voice Conversation
+
 1. Visit the Audio Studio page
 2. Wait for "READY" status (indicates connected to OpenAI)
 3. Click "Start Voice Recording"
@@ -79,6 +88,7 @@ The system uses WebSocket connections throughout for real-time bidirectional com
 5. The AI will respond with both audio and text
 
 ### Text Conversation
+
 1. Type your message in the input field
 2. Press Enter or click Send
 3. The AI will respond with both audio and text
@@ -88,10 +98,12 @@ The system uses WebSocket connections throughout for real-time bidirectional com
 ### WebSocket Message Types
 
 **Client to Server:**
+
 - `{type: "audio", audio: "base64_data"}` - Voice input
 - `{type: "text", text: "message"}` - Text input
 
 **Server to Client:**
+
 - `{type: "session_ready"}` - Connection established
 - `{type: "audio_delta", audio: "base64_data"}` - Streaming AI audio
 - `{type: "text_delta", text: "partial_text"}` - Streaming AI text
@@ -99,6 +111,7 @@ The system uses WebSocket connections throughout for real-time bidirectional com
 - `{type: "error", message: "error_description"}` - Error messages
 
 ### AI Configuration
+
 - **Voice:** Alloy (OpenAI's most natural voice)
 - **Instructions:** Configured as a podcast host discussing research papers
 - **Audio Format:** PCM 16-bit for optimal quality

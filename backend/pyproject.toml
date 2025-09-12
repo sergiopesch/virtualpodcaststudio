@@ -1,0 +1,17 @@
+[tool.pyright]
+pythonVersion = "3.13"
+pythonPlatform = "Darwin"
+executablePath = "./venv/bin/python"
+include = ["."]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "**/venv"
+]
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+pythonPath = "./venv/bin/python"
+
+[tool.python]
+version = "3.13"
