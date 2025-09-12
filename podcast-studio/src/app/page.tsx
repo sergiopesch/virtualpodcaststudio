@@ -8,7 +8,6 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useSidebar } from "@/contexts/sidebar-context";
 import { 
-  Mic, 
   BookOpen, 
   Brain, 
   Eye, 
@@ -17,11 +16,6 @@ import {
   Search,
   Play,
   FileText,
-  Headphones,
-  UserCheck,
-  Video,
-  Upload,
-  Archive,
   Sparkles,
   TrendingUp,
   Clock,
@@ -70,7 +64,7 @@ const topics = [
 
 const stats = [
   { label: "Papers Analyzed", value: "1,247", icon: BookOpen, color: "text-purple-600" },
-  { label: "Episodes Created", value: "89", icon: Mic, color: "text-blue-600" },
+  { label: "Episodes Created", value: "89", icon: Brain, color: "text-blue-600" },
   { label: "Total Views", value: "12.4K", icon: TrendingUp, color: "text-green-600" },
   { label: "Research Hours", value: "156", icon: Clock, color: "text-orange-600" },
 ];
@@ -369,7 +363,7 @@ export default function Home() {
                         </div>
                         <p className="text-gray-600 font-medium mb-2">No papers yet</p>
                         <p className="text-gray-500 text-sm">
-                          Select research topics and click "Find Papers" to discover content
+                          Select research topics and click &quot;Find Papers&quot; to discover content
                         </p>
                       </div>
                     )}

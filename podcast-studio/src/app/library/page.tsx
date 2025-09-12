@@ -4,33 +4,24 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sidebar } from "@/components/layout/sidebar";
+import { Header } from "@/components/layout/header";
+import { useSidebar } from "@/contexts/sidebar-context";
 import { 
   Archive,
   BookOpen, 
-  Settings, 
   Play,
-  Pause,
-  Square,
   FileText,
-  Headphones,
   Clock,
   Download,
   MoreHorizontal,
-  Video,
-  Upload,
-  Mic,
-  Search,
   Calendar,
   Users,
   Eye,
-  Share2,
-  Trash2,
   Edit,
   Star,
   TrendingUp
 } from "lucide-react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 
 interface Episode {
   id: string;
@@ -59,7 +50,7 @@ interface Season {
 }
 
 export default function Library() {
-  const pathname = usePathname();
+  const { collapsed, toggleCollapsed } = useSidebar();
   const [selectedSeason, setSelectedSeason] = useState<string>("1");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
@@ -196,85 +187,19 @@ export default function Library() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
       <div className="flex">
-        {/* Sidebar */}
-        <div className="w-56 md:w-64 bg-white border-r border-gray-200 min-h-screen flex-shrink-0">
-          <div className="p-6">
-            <div 
-              className="flex items-center space-x-3 mb-8 cursor-pointer"
-              onClick={() => window.location.href = '/'}
-            >
-              <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
-                <Headphones className="w-5 h-5 text-white" />
-              </div>
-              <h1 className="text-lg font-bold text-gray-900 truncate">Virtual Podcast Studio</h1>
-            </div>
-            
-            <nav className="space-y-2">
-              <Link 
-                href="/"
-                className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-                  pathname === '/' 
-                    ? 'bg-purple-50 text-purple-700' 
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <Search className="w-4 h-4" />
-                <span className="text-sm font-medium">Research Hub</span>
-              </Link>
-              <Link 
-                href="/studio"
-                className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-                  pathname === '/studio' 
-                    ? 'bg-purple-50 text-purple-700' 
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <Mic className="w-4 h-4" />
-                <span className="text-sm font-medium">Audio Studio</span>
-              </Link>
-              <Link 
-                href="/video-studio"
-                className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-                  pathname === '/video-studio' 
-                    ? 'bg-purple-50 text-purple-700' 
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <Video className="w-4 h-4" />
-                <span className="text-sm font-medium">Video Studio</span>
-              </Link>
-              <Link 
-                href="/publisher"
-                className={`flex items-center space-x-3 px-3 py-2 rounded-lg transition-colors ${
-                  pathname === '/publisher' 
-                    ? 'bg-purple-50 text-purple-700' 
-                    : 'text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <Upload className="w-4 h-4" />
-                <span className="text-sm font-medium">Publisher</span>
-              </Link>
-              <div className="flex items-center space-x-3 px-3 py-2 rounded-lg bg-purple-50 text-purple-700">
-                <Archive className="w-4 h-4" />
-                <span className="text-sm font-medium">Episode Library</span>
-              </div>
-            </nav>
-          </div>
-        </div>
-
+        <Sidebar 
+          collapsed={collapsed}
+          onToggleCollapse={toggleCollapsed}
+        />
+        
         {/* Main Content */}
-        <div className="flex-1 bg-gray-50">
-          {/* Top Navigation */}
-          <header className="bg-white border-b border-gray-200 px-6 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">Episode Library</h1>
-                  <p className="text-gray-600 mt-1">Manage and browse your published podcast episodes</p>
-                </div>
-              </div>
+        <div className="flex-1">
+          <Header
+            title="Episode Library"
+            description="Manage and browse your published podcast episodes"
+            actions={
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2 text-sm">
                   <div className="flex items-center space-x-1">
@@ -286,14 +211,12 @@ export default function Library() {
                     <span className="text-gray-600">{totalViews.toLocaleString()} views</span>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" className="text-gray-600">
-                  <Settings className="w-4 h-4" />
-                </Button>
               </div>
-            </div>
-          </header>
+            }
+          />
 
-          <div className="p-4 md:p-6 grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6">
+          <main className="p-6 space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             {/* Season Sidebar */}
             <div className="lg:col-span-1">
               <Card className="h-fit">
@@ -514,7 +437,8 @@ export default function Library() {
                 </CardContent>
               </Card>
             </div>
-          </div>
+            </div>
+          </main>
         </div>
       </div>
     </div>

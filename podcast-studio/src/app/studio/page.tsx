@@ -1,75 +1,50 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useSidebar } from "@/contexts/sidebar-context";
+import { useRealtimeConversation } from "@/hooks/useRealtimeConversation";
 import { 
   Mic, 
   BookOpen, 
   Brain, 
   Play,
-  Pause,
-  Square,
   FileText,
   Headphones,
   Download,
   RotateCcw,
-  Volume2
+  Volume2,
+  Send,
+  MicOff
 } from "lucide-react";
 
-interface Message {
+interface ConversationMessage {
   id: string;
-  speaker: "Host" | "AI Expert" | "AI Researcher";
+  role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  type: 'text' | 'audio';
 }
 
 export default function Studio() {
-  const [isRecording, setIsRecording] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const { collapsed, toggleCollapsed } = useSidebar();
-  const [transcript] = useState<Message[]>([
-    {
-      id: "1",
-      speaker: "Host",
-      content: "Welcome to today's AI Research Podcast. I'm here with two AI experts to discuss the fascinating paper on 'Attention Is All You Need'. Let's start with the basics - what problem were the authors trying to solve?",
-      timestamp: new Date(2024, 0, 1, 14, 30, 0)
-    },
-    {
-      id: "2", 
-      speaker: "AI Expert",
-      content: "Great question! The authors were addressing a fundamental limitation in sequence-to-sequence models that relied heavily on recurrent or convolutional neural networks. The main issue was that these architectures processed sequences sequentially, making it difficult to parallelize training and capture long-range dependencies effectively.",
-      timestamp: new Date(2024, 0, 1, 14, 31, 0)
-    },
-    {
-      id: "3",
-      speaker: "Host", 
-      content: "That's really interesting. So the Transformer architecture was designed to solve these parallelization issues?",
-      timestamp: new Date(2024, 0, 1, 14, 32, 0)
-    },
-    {
-      id: "4",
-      speaker: "AI Researcher",
-      content: "Exactly! The Transformer uses self-attention mechanisms to process all positions in the sequence simultaneously, allowing for much better parallelization during training. This was a game-changer for training efficiency.",
-      timestamp: new Date(2024, 0, 1, 14, 33, 15)
-    },
-    {
-      id: "5",
-      speaker: "AI Expert",
-      content: "To add to that, the attention mechanism essentially allows the model to focus on different parts of the input sequence when processing each element, creating rich contextual representations.",
-      timestamp: new Date(2024, 0, 1, 14, 34, 30)
-    },
-    {
-      id: "6",
-      speaker: "Host",
-      content: "That's fascinating! Could you both explain how this differs from traditional RNNs in more practical terms?",
-      timestamp: new Date(2024, 0, 1, 14, 35, 45)
-    }
-  ]);
+  const {
+    isConnected,
+    isRecording,
+    messages,
+    error,
+    connect,
+    disconnect,
+    startRecording,
+    stopRecording,
+    sendTextMessage
+  } = useRealtimeConversation();
+  
+  const [textInput, setTextInput] = useState("");
   const [sessionDuration, setSessionDuration] = useState(0);
 
   const currentPaper = {
@@ -78,16 +53,22 @@ export default function Studio() {
     abstract: "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely."
   };
 
-  // Simulate timer
-  React.useEffect(() => {
+  // Auto-connect on mount
+  useEffect(() => {
+    connect();
+    return () => disconnect();
+  }, [connect, disconnect]);
+
+  // Timer for session duration
+  useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isRecording && !isPaused) {
+    if (isRecording) {
       interval = setInterval(() => {
         setSessionDuration(prev => prev + 1);
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isRecording, isPaused]);
+  }, [isRecording]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -95,30 +76,16 @@ export default function Studio() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleStartRecording = () => {
-    setIsRecording(true);
-    setIsPaused(false);
-  };
-
-  const handlePauseRecording = () => {
-    setIsPaused(!isPaused);
-  };
-
-  const handleStopRecording = () => {
-    setIsRecording(false);
-    setIsPaused(false);
-    setSessionDuration(0);
-  };
-
-  const handleExportAudio = () => {
-    // Audio export functionality
-    console.log("Exporting audio file...");
+  const handleSendText = () => {
+    if (textInput.trim() && isConnected) {
+      sendTextMessage(textInput);
+      setTextInput("");
+    }
   };
 
   const handleExportTranscript = () => {
-    // Transcript export functionality
-    const transcriptText = transcript.map(msg => 
-      `[${msg.timestamp.toLocaleTimeString()}] ${msg.speaker}: ${msg.content}`
+    const transcriptText = messages.map((msg: ConversationMessage) => 
+      `[${msg.timestamp.toLocaleTimeString()}] ${msg.role === 'user' ? 'You' : 'AI Host'}: ${msg.content}`
     ).join('\n\n');
     
     const blob = new Blob([transcriptText], { type: 'text/plain' });
@@ -146,8 +113,8 @@ export default function Studio() {
             title="Audio Studio"
             description="Generate audio conversations between you and AI experts"
             status={{
-              label: isRecording ? (isPaused ? 'PAUSED' : 'LIVE') : 'OFFLINE',
-              color: isRecording ? 'red' : 'gray',
+              label: !isConnected ? 'CONNECTING' : isRecording ? 'RECORDING' : 'READY',
+              color: !isConnected ? 'yellow' : isRecording ? 'red' : 'green',
               active: isRecording
             }}
             timer={{
@@ -202,53 +169,63 @@ export default function Studio() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {error && (
+                      <div className="text-red-500 text-sm mb-2 p-2 bg-red-50 rounded">
+                        Error: {error}
+                      </div>
+                    )}
+                    
                     <div className="flex space-x-2">
                       {!isRecording ? (
                         <Button 
-                          onClick={handleStartRecording}
+                          onClick={startRecording}
+                          disabled={!isConnected}
                           variant="destructive"
                           size="lg"
                           className="flex-1"
                         >
-                          <Play className="w-4 h-4 mr-2" />
-                          Start Recording
+                          <Mic className="w-4 h-4 mr-2" />
+                          Start Voice Recording
                         </Button>
                       ) : (
-                        <>
-                          <Button 
-                            onClick={handlePauseRecording}
-                            variant="outline"
-                            size="lg"
-                            className="flex-1"
-                          >
-                            {isPaused ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
-                            {isPaused ? 'Resume' : 'Pause'}
-                          </Button>
-                          <Button 
-                            onClick={handleStopRecording}
-                            variant="outline"
-                            size="lg"
-                            className="flex-1"
-                          >
-                            <Square className="w-4 h-4 mr-2" />
-                            Stop
-                          </Button>
-                        </>
+                        <Button 
+                          onClick={stopRecording}
+                          variant="outline"
+                          size="lg"
+                          className="flex-1"
+                        >
+                          <MicOff className="w-4 h-4 mr-2" />
+                          Stop Recording
+                        </Button>
                       )}
                     </div>
                     
-                    <div className="space-y-2">
-                      <Button variant="ghost" className="w-full justify-start" onClick={handleExportAudio}>
-                        <Download className="w-4 h-4 mr-2" />
-                        Export Audio
+                    <div className="flex space-x-2">
+                      <input
+                        type="text"
+                        value={textInput}
+                        onChange={(e) => setTextInput(e.target.value)}
+                        placeholder="Type your message..."
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                        onKeyPress={(e) => e.key === 'Enter' && handleSendText()}
+                      />
+                      <Button 
+                        onClick={handleSendText}
+                        disabled={!isConnected || !textInput.trim()}
+                        size="lg"
+                      >
+                        <Send className="w-4 h-4" />
                       </Button>
+                    </div>
+                    
+                    <div className="space-y-2">
                       <Button variant="ghost" className="w-full justify-start" onClick={handleExportTranscript}>
                         <FileText className="w-4 h-4 mr-2" />
                         Export Transcript
                       </Button>
-                      <Button variant="ghost" className="w-full justify-start">
+                      <Button variant="ghost" className="w-full justify-start" onClick={disconnect}>
                         <RotateCcw className="w-4 h-4 mr-2" />
-                        Clear Session
+                        Disconnect Session
                       </Button>
                     </div>
                   </CardContent>
@@ -257,8 +234,8 @@ export default function Studio() {
 
               {/* Live Transcript */}
               <div className="lg:col-span-2">
-                <Card className="h-[600px] flex flex-col animate-scale-in">
-                  <CardHeader>
+                <Card className="h-[600px] flex flex-col animate-scale-in border border-gray-200 shadow-sm">
+                  <CardHeader className="flex-shrink-0 border-b border-gray-100 bg-gray-50/30">
                     <div className="flex items-center justify-between">
                       <CardTitle className="flex items-center space-x-2">
                         <FileText className="w-5 h-5 text-green-600" />
@@ -267,15 +244,15 @@ export default function Studio() {
                       <div className="flex items-center space-x-4">
                         <div className="flex items-center space-x-3 text-xs">
                           <div className="flex items-center space-x-1 text-gray-500">
-                            <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                            <div className="w-2 h-2 rounded-full bg-purple-500 shadow-sm"></div>
                             <span>Host (You)</span>
                           </div>
                           <div className="flex items-center space-x-1 text-gray-500">
-                            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                            <div className="w-2 h-2 rounded-full bg-blue-500 shadow-sm"></div>
                             <span>AI Expert</span>
                           </div>
                           <div className="flex items-center space-x-1 text-gray-500">
-                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                            <div className="w-2 h-2 rounded-full bg-green-500 shadow-sm"></div>
                             <span>AI Researcher</span>
                           </div>
                         </div>
@@ -283,22 +260,27 @@ export default function Studio() {
                     </div>
                   </CardHeader>
                 
-                  <CardContent className="flex-1 flex flex-col p-0">
-                    <ScrollArea className="flex-1 p-6">
-                      <div className="space-y-6">
-                        {transcript.map((entry) => (
+                  <CardContent className="flex-1 flex flex-col p-0 bg-white">
+                    <ScrollArea className="flex-1 px-6 py-4">
+                      <div className="space-y-4">
+                        {messages.length === 0 && !isRecording && (
+                          <div className="text-center text-gray-500 py-8">
+                            <Brain className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                            <p>Start recording or type a message to begin your conversation</p>
+                          </div>
+                        )}
+                        
+                        {messages.map((entry: ConversationMessage) => (
                           <div
                             key={entry.id}
-                            className="flex items-start space-x-4 animate-fade-in"
+                            className="flex items-start space-x-3 animate-fade-in"
                           >
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm ${
-                              entry.speaker === "Host" 
-                                ? "bg-purple-100 text-purple-600" 
-                                : entry.speaker === "AI Expert"
-                                ? "bg-blue-100 text-blue-600"
-                                : "bg-green-100 text-green-600"
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm border ${
+                              entry.role === "user" 
+                                ? "bg-purple-100 border-purple-200 text-purple-600" 
+                                : "bg-blue-100 border-blue-200 text-blue-600"
                             }`}>
-                              {entry.speaker === "Host" ? (
+                              {entry.role === "user" ? (
                                 <Headphones className="w-5 h-5" />
                               ) : (
                                 <Brain className="w-5 h-5" />
@@ -307,9 +289,9 @@ export default function Studio() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center space-x-2 mb-2">
                                 <span className="text-sm font-semibold text-gray-900">
-                                  {entry.speaker}
+                                  {entry.role === "user" ? "You" : "AI Host"}
                                 </span>
-                                <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-1 rounded">
+                                <span className="text-xs text-gray-500 font-mono bg-gray-100 border border-gray-200 px-2 py-1 rounded-md shadow-sm">
                                   {entry.timestamp.toLocaleTimeString('en-US', {
                                     hour: '2-digit', 
                                     minute: '2-digit', 
@@ -318,12 +300,10 @@ export default function Studio() {
                                   })}
                                 </span>
                               </div>
-                              <div className={`p-4 rounded-xl border shadow-sm ${
-                                entry.speaker === "Host"
-                                  ? "bg-purple-50 border-purple-200 text-gray-800"
-                                  : entry.speaker === "AI Expert"
-                                  ? "bg-blue-50 border-blue-200 text-gray-800"
-                                  : "bg-green-50 border-green-200 text-gray-800"
+                              <div className={`p-4 rounded-xl border-2 shadow-sm transition-all hover:shadow-md ${
+                                entry.role === "user"
+                                  ? "bg-gradient-to-r from-purple-50 to-purple-50/70 border-purple-200 text-gray-800"
+                                  : "bg-gradient-to-r from-blue-50 to-blue-50/70 border-blue-200 text-gray-800"
                               }`}>
                                 <p className="text-sm leading-relaxed">{entry.content}</p>
                               </div>
@@ -333,12 +313,22 @@ export default function Studio() {
                         
                         {/* Live indicator when recording */}
                         {isRecording && (
-                          <div className="flex items-center space-x-4 opacity-60 animate-pulse">
-                            <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center">
+                          <div className="flex items-center space-x-3 opacity-80 animate-pulse border border-green-200 bg-green-50/50 p-3 rounded-lg">
+                            <div className="w-10 h-10 rounded-xl bg-green-100 border border-green-200 flex items-center justify-center shadow-sm">
                               <Mic className="w-5 h-5 text-green-600" />
                             </div>
-                            <div className="text-sm text-gray-500 italic">
-                              {isPaused ? "Recording paused..." : "Listening..."}
+                            <div className="flex-1">
+                              <div className="text-sm font-medium text-green-800">
+                                Recording...
+                              </div>
+                              <div className="text-xs text-green-600">
+                                AI is listening to your voice
+                              </div>
+                            </div>
+                            <div className="flex space-x-1">
+                              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
+                              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
                             </div>
                           </div>
                         )}
@@ -346,22 +336,22 @@ export default function Studio() {
                     </ScrollArea>
                   
                     {/* Audio Controls */}
-                    <div className="p-6 border-t border-gray-200/60 bg-gray-50/50">
+                    <div className="px-6 py-4 border-t border-gray-200 bg-gradient-to-r from-gray-50 to-gray-50/80 flex-shrink-0">
                       <div className="flex items-center space-x-4 mb-3">
                         <div className="flex items-center space-x-2">
-                          <Button size="sm" variant="ghost">
+                          <Button size="sm" variant="outline" className="border-gray-300 hover:border-purple-400 hover:bg-purple-50">
                             <Play className="w-4 h-4 mr-2" />
                             Play Audio
                           </Button>
-                          <Button size="sm" variant="ghost">
+                          <Button size="sm" variant="outline" className="border-gray-300 hover:border-green-400 hover:bg-green-50">
                             <Download className="w-4 h-4 mr-2" />
                             Save Audio
                           </Button>
                         </div>
-                        <div className="flex-1 bg-gray-200 rounded-full h-2">
-                          <div className="gradient-primary h-2 rounded-full w-1/3 transition-all duration-300"></div>
+                        <div className="flex-1 bg-gray-200 rounded-full h-2 shadow-inner">
+                          <div className="gradient-primary h-2 rounded-full w-1/3 transition-all duration-300 shadow-sm"></div>
                         </div>
-                        <div className="text-sm text-gray-500 font-mono">
+                        <div className="text-sm text-gray-600 font-mono bg-white px-3 py-1 rounded-md border border-gray-200 shadow-sm">
                           02:34 / 05:15
                         </div>
                       </div>
