@@ -5,6 +5,7 @@ A modern web application for discovering and analyzing research papers from arXi
 ## 🚀 Quick Start
 
 ### Backend (FastAPI)
+
 ```bash
 cd backend
 source venv/bin/activate
@@ -12,6 +13,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### Frontend (Next.js)
+
 ```bash
 cd podcast-studio
 npm run dev
@@ -36,22 +38,19 @@ Visit `http://localhost:3000` to use the application.
 
 - `GET /health` - Health check
 - `POST /api/papers` - Fetch papers from arXiv
+
   ```json
   {
-    "topics": ["cs.AI", "cs.LG"]
+    "topics": ["cs.AI", "cs.CV"]
   }
   ```
 
 ## 🎯 Available Topics
 
 - `cs.AI` - Artificial Intelligence
-- `physics.gen-ph` - General Physics
-- `math.GM` - General Mathematics
 - `cs.LG` - Machine Learning
-- `q-bio.BM` - Biomolecules
-- `astro-ph.GA` - Astrophysics
 - `cs.CV` - Computer Vision
-- `quant-ph` - Quantum Physics
+- `cs.RO` - Robotics
 
 ## 🔧 Development
 

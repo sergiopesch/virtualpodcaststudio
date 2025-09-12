@@ -20,7 +20,7 @@ Open [http://localhost:3000](http://localhost:3000) to view the application.
 
 ## 📁 Project Structure
 
-```
+```text
 src/
 ├── app/                 # Next.js App Router
 │   ├── api/papers/      # API routes
@@ -34,7 +34,7 @@ src/
 ## 🎨 Features
 
 - Dark theme with professional design
-- Topic selection with checkboxes
+- Topic selection with checkboxes (AI, ML, Computer Vision, Robotics)
 - Real-time paper fetching from arXiv
 - Responsive design for all devices
 - Error handling and loading states

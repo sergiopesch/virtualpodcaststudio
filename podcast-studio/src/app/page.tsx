@@ -8,13 +8,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 
 const topics = [
   { id: "cs.AI", label: "Artificial Intelligence" },
-  { id: "physics.gen-ph", label: "General Physics" },
-  { id: "math.GM", label: "General Mathematics" },
   { id: "cs.LG", label: "Machine Learning" },
-  { id: "q-bio.BM", label: "Biomolecules" },
-  { id: "astro-ph.GA", label: "Astrophysics" },
   { id: "cs.CV", label: "Computer Vision" },
-  { id: "quant-ph", label: "Quantum Physics" },
+  { id: "cs.RO", label: "Robotics" },
 ];
 
 interface Paper {
@@ -86,7 +82,7 @@ export default function Home() {
         {/* Topic Selection */}
         <section className="bg-gray-800 rounded-lg p-6 shadow-lg">
           <h2 className="text-xl font-semibold mb-4">Select Topics</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {topics.map((topic) => (
               <div
                 key={topic.id}
