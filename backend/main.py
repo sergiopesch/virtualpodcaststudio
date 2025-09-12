@@ -114,7 +114,14 @@ async def fetch_arxiv_papers(topics: List[str], max_results: int = 10) -> List[P
         logger.error(f"Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
     
-    # Sort by publication date (most recent first) and limit results
+    # Remove duplicates based on paper ID
+    unique_papers = {}
+    for paper in papers:
+        if paper.id not in unique_papers:
+            unique_papers[paper.id] = paper
+    
+    # Convert back to list, sort by publication date (most recent first) and limit results
+    papers = list(unique_papers.values())
     papers.sort(key=lambda x: x.published, reverse=True)
     return papers[:max_results]
 

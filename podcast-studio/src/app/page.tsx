@@ -56,13 +56,23 @@ export default function Home() {
       }
       
       const data = await response.json();
-      setPapers(data.papers);
+      // Remove duplicate papers based on ID
+      const uniquePapers = data.papers.filter((paper: Paper, index: number, self: Paper[]) => 
+        index === self.findIndex(p => p.id === paper.id)
+      );
+      setPapers(uniquePapers);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
       console.error("Error fetching papers:", err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedTopics([]);
+    setPapers([]);
+    setError(null);
   };
 
   return (
@@ -107,19 +117,38 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Fetch Papers Button */}
-        <section className="flex flex-col items-center space-y-2">
-          <Button
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full text-lg disabled:opacity-50"
-            onClick={handleFetchPapers}
-            disabled={selectedTopics.length === 0 || loading}
-          >
-            {loading ? "Fetching Papers..." : "Fetch Papers"}
-          </Button>
-          {selectedTopics.length > 0 && (
-            <p className="text-sm text-gray-400">
-              Selected: {selectedTopics.length} topic{selectedTopics.length !== 1 ? 's' : ''}
-            </p>
+        {/* Action Buttons */}
+        <section className="flex flex-col items-center space-y-4">
+          <div className="flex gap-4">
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full text-lg disabled:opacity-50"
+              onClick={handleFetchPapers}
+              disabled={selectedTopics.length === 0 || loading}
+            >
+              {loading ? "Fetching Papers..." : "Fetch Papers"}
+            </Button>
+            <Button
+              variant="outline"
+              className="border-gray-500 text-gray-300 hover:bg-gray-700 hover:text-white font-bold py-4 px-8 rounded-full text-lg disabled:opacity-50"
+              onClick={handleClearSelection}
+              disabled={selectedTopics.length === 0 && papers.length === 0}
+            >
+              Clear Selection
+            </Button>
+          </div>
+          {(selectedTopics.length > 0 || papers.length > 0) && (
+            <div className="text-center space-y-1">
+              {selectedTopics.length > 0 && (
+                <p className="text-sm text-gray-400">
+                  Selected: {selectedTopics.length} topic{selectedTopics.length !== 1 ? 's' : ''}
+                </p>
+              )}
+              {papers.length > 0 && (
+                <p className="text-sm text-green-400">
+                  Loaded: {papers.length} paper{papers.length !== 1 ? 's' : ''}
+                </p>
+              )}
+            </div>
           )}
         </section>
 
@@ -134,9 +163,9 @@ export default function Home() {
               </div>
             ) : papers.length > 0 ? (
               <div className="space-y-4">
-                {papers.map((paper) => (
+                {papers.map((paper, index) => (
                   <Card
-                    key={paper.id}
+                    key={`${paper.id}-${index}`}
                     className="bg-gray-700 border-gray-600 hover:bg-gray-600 transition-colors"
                   >
                     <CardHeader>
