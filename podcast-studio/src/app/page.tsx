@@ -4,7 +4,6 @@ import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Checkbox } from "@/components/ui/checkbox";
 import { 
   Mic, 
   BookOpen, 
@@ -154,35 +153,37 @@ export default function Home() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {topics.map((topic) => {
                   const IconComponent = topic.icon;
+                  const isSelected = selectedTopics.includes(topic.id);
+                  
                   return (
                     <div
                       key={topic.id}
                       className={`flex items-center space-x-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                        selectedTopics.includes(topic.id)
+                        isSelected
                           ? 'border-purple-300 bg-purple-50'
                           : 'border-gray-200 hover:border-gray-300 bg-white'
                       }`}
-                      onClick={() => handleTopicChange(topic.id, !selectedTopics.includes(topic.id))}
+                      onClick={() => handleTopicChange(topic.id, !isSelected)}
                     >
                       <div className={`flex-shrink-0 ${topic.color}`}>
                         <IconComponent className="w-5 h-5" />
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center space-x-3">
-                          <Checkbox
-                            id={topic.id}
-                            checked={selectedTopics.includes(topic.id)}
-                            onCheckedChange={(checked) =>
-                              handleTopicChange(topic.id, checked as boolean)
-                            }
-                            className="border-gray-300 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
-                          />
-                          <label
-                            htmlFor={topic.id}
-                            className="text-sm font-medium text-gray-900 cursor-pointer flex-1"
-                          >
+                          <div className={`w-4 h-4 border-2 rounded flex items-center justify-center transition-colors ${
+                            isSelected 
+                              ? 'bg-purple-600 border-purple-600' 
+                              : 'border-gray-300 bg-white'
+                          }`}>
+                            {isSelected && (
+                              <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+                          <span className="text-sm font-medium text-gray-900 flex-1">
                             {topic.label}
-                          </label>
+                          </span>
                         </div>
                       </div>
                     </div>
