@@ -2,15 +2,28 @@
 
 import React, { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
+import { 
+  Mic, 
+  BookOpen, 
+  Brain, 
+  Eye, 
+  Cpu, 
+  Settings, 
+  Search,
+  Play,
+  FileText,
+  Headphones,
+  UserCheck
+} from "lucide-react";
 
 const topics = [
-  { id: "cs.AI", label: "Artificial Intelligence" },
-  { id: "cs.LG", label: "Machine Learning" },
-  { id: "cs.CV", label: "Computer Vision" },
-  { id: "cs.RO", label: "Robotics" },
+  { id: "cs.AI", label: "Artificial Intelligence", icon: Brain, color: "text-purple-400" },
+  { id: "cs.LG", label: "Machine Learning", icon: Cpu, color: "text-blue-400" },
+  { id: "cs.CV", label: "Computer Vision", icon: Eye, color: "text-green-400" },
+  { id: "cs.RO", label: "Robotics", icon: Settings, color: "text-orange-400" },
 ];
 
 interface Paper {
@@ -76,141 +89,245 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white font-sans">
-      {/* Header */}
-      <header className="flex items-center justify-between p-4 bg-gray-800 shadow-md">
-        <h1 className="text-2xl font-bold tracking-tight">Podcast Studio</h1>
-        <nav>
-          <Button variant="ghost" className="text-gray-300 hover:text-white">
-            Settings
-          </Button>
-        </nav>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto p-6 space-y-6">
-        {/* Topic Selection */}
-        <section className="bg-gray-800 rounded-lg p-6 shadow-lg">
-          <h2 className="text-xl font-semibold mb-4">Select Topics</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {topics.map((topic) => (
-              <div
-                key={topic.id}
-                className="flex items-center space-x-3 p-3 bg-gray-700 rounded-md hover:bg-gray-600 transition-colors"
-              >
-                <Checkbox
-                  id={topic.id}
-                  checked={selectedTopics.includes(topic.id)}
-                  onCheckedChange={(checked) =>
-                    handleTopicChange(topic.id, checked as boolean)
-                  }
-                  className="border-gray-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
-                />
-                <label
-                  htmlFor={topic.id}
-                  className="text-sm font-medium text-gray-200 cursor-pointer flex-1"
-                >
-                  {topic.label}
-                </label>
+    <div className="min-h-screen bg-gray-50 text-gray-900">
+      <div className="flex">
+        {/* Sidebar */}
+        <div className="w-64 bg-white border-r border-gray-200 min-h-screen">
+          <div className="p-6">
+            <div className="flex items-center space-x-3 mb-8">
+              <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center">
+                <Headphones className="w-5 h-5 text-white" />
               </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Action Buttons */}
-        <section className="flex flex-col items-center space-y-4">
-          <div className="flex gap-4">
-            <Button
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full text-lg disabled:opacity-50"
-              onClick={handleFetchPapers}
-              disabled={selectedTopics.length === 0 || loading}
-            >
-              {loading ? "Fetching Papers..." : "Fetch Papers"}
-            </Button>
-            <Button
-              variant="outline"
-              className="border-gray-500 text-gray-300 hover:bg-gray-700 hover:text-white font-bold py-4 px-8 rounded-full text-lg disabled:opacity-50"
-              onClick={handleClearSelection}
-              disabled={selectedTopics.length === 0 && papers.length === 0}
-            >
-              Clear Selection
-            </Button>
-          </div>
-          {(selectedTopics.length > 0 || papers.length > 0) && (
-            <div className="text-center space-y-1">
-              {selectedTopics.length > 0 && (
-                <p className="text-sm text-gray-400">
-                  Selected: {selectedTopics.length} topic{selectedTopics.length !== 1 ? 's' : ''}
-                </p>
-              )}
-              {papers.length > 0 && (
-                <p className="text-sm text-green-400">
-                  Loaded: {papers.length} paper{papers.length !== 1 ? 's' : ''}
-                </p>
-              )}
+              <h1 className="text-xl font-bold text-gray-900">Virtual Podcast Studio</h1>
             </div>
-          )}
-        </section>
+            
+            <nav className="space-y-2">
+              <div className="flex items-center space-x-3 px-3 py-2 rounded-lg bg-purple-50 text-purple-700">
+                <Mic className="w-4 h-4" />
+                <span className="text-sm font-medium">Studio</span>
+              </div>
+              <div className="flex items-center space-x-3 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-50 cursor-pointer">
+                <FileText className="w-4 h-4" />
+                <span className="text-sm font-medium">Scripts</span>
+              </div>
+              <div className="flex items-center space-x-3 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-50 cursor-pointer">
+                <BookOpen className="w-4 h-4" />
+                <span className="text-sm font-medium">Research</span>
+              </div>
+              <div className="flex items-center space-x-3 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-50 cursor-pointer">
+                <UserCheck className="w-4 h-4" />
+                <span className="text-sm font-medium">Team</span>
+              </div>
+            </nav>
+          </div>
+        </div>
 
-        {/* Paper Preview */}
-        <section className="bg-gray-800 rounded-lg p-6 shadow-lg">
-          <h2 className="text-xl font-semibold mb-4">Recent Papers</h2>
-          <ScrollArea className="h-96">
-            {error ? (
-              <div className="text-center py-8">
-                <p className="text-red-400 mb-2">Error loading papers</p>
-                <p className="text-gray-400 text-sm">{error}</p>
+        {/* Main Content */}
+        <div className="flex-1 bg-gray-50">
+          {/* Top Navigation */}
+          <header className="bg-white border-b border-gray-200 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Research Hub</h1>
+                <p className="text-gray-600 mt-1">Discover and analyze research papers for podcast content</p>
               </div>
-            ) : papers.length > 0 ? (
-              <div className="space-y-4">
-                {papers.map((paper, index) => (
-                  <Card
-                    key={`${paper.id}-${index}`}
-                    className="bg-gray-700 border-gray-600 hover:bg-gray-600 transition-colors"
-                  >
-                    <CardHeader>
-                      <CardTitle className="text-lg text-white">
-                        {paper.title}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-gray-300 text-sm mb-2">{paper.authors}</p>
-                      <p className="text-gray-500 text-xs mb-2">
-                        Published: {new Date(paper.published).toLocaleDateString()}
-                      </p>
-                      <p className="text-gray-400 text-sm mb-3 line-clamp-3">
-                        {paper.abstract}
-                      </p>
-                      <div className="flex space-x-2">
-                        <Button
-                          variant="link"
-                          className="text-blue-400 p-0 h-auto"
-                          onClick={() =>
-                            console.log(`Selected paper: ${paper.title}`)
-                          }
-                        >
-                          Select Paper
-                        </Button>
-                        <Button
-                          variant="link"
-                          className="text-green-400 p-0 h-auto"
-                          onClick={() => window.open(paper.arxiv_url, '_blank')}
-                        >
-                          View on arXiv
-                        </Button>
+              <div className="flex items-center space-x-4">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search papers..."
+                    className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                </div>
+                <Button variant="ghost" size="sm" className="text-gray-600">
+                  <Settings className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          </header>
+
+          <main className="p-6 space-y-6">
+            {/* Topic Selection */}
+            <section className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900 mb-6">Research Topics</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {topics.map((topic) => {
+                  const IconComponent = topic.icon;
+                  return (
+                    <div
+                      key={topic.id}
+                      className={`flex items-center space-x-4 p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                        selectedTopics.includes(topic.id)
+                          ? 'border-purple-300 bg-purple-50'
+                          : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                      onClick={() => handleTopicChange(topic.id, !selectedTopics.includes(topic.id))}
+                    >
+                      <div className={`flex-shrink-0 ${topic.color}`}>
+                        <IconComponent className="w-5 h-5" />
                       </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3">
+                          <Checkbox
+                            id={topic.id}
+                            checked={selectedTopics.includes(topic.id)}
+                            onCheckedChange={(checked) =>
+                              handleTopicChange(topic.id, checked as boolean)
+                            }
+                            className="border-gray-300 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
+                          />
+                          <label
+                            htmlFor={topic.id}
+                            className="text-sm font-medium text-gray-900 cursor-pointer flex-1"
+                          >
+                            {topic.label}
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ) : (
-              <p className="text-gray-400 text-center py-8">
-                No papers loaded. Select topics and click &quot;Fetch Papers&quot; to get started.
-              </p>
-            )}
-          </ScrollArea>
-        </section>
-      </main>
+            </section>
+
+            {/* Action Buttons */}
+            <section className="flex justify-center">
+              <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 w-full max-w-md">
+                <div className="flex gap-3">
+                  <Button
+                    className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-medium py-3 px-6 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={handleFetchPapers}
+                    disabled={selectedTopics.length === 0 || loading}
+                  >
+                    {loading ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Searching...
+                      </>
+                    ) : (
+                      <>
+                        <Search className="w-4 h-4 mr-2" />
+                        Find Papers
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-gray-300 text-gray-700 hover:bg-gray-50 font-medium py-3 px-4 rounded-lg disabled:opacity-50"
+                    onClick={handleClearSelection}
+                    disabled={selectedTopics.length === 0 && papers.length === 0}
+                  >
+                    Clear
+                  </Button>
+                </div>
+                
+                {(selectedTopics.length > 0 || papers.length > 0) && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="flex justify-between items-center text-sm">
+                      {selectedTopics.length > 0 && (
+                        <span className="text-gray-600">
+                          {selectedTopics.length} topic{selectedTopics.length !== 1 ? 's' : ''} selected
+                        </span>
+                      )}
+                      {papers.length > 0 && (
+                        <span className="text-green-600 font-medium">
+                          {papers.length} paper{papers.length !== 1 ? 's' : ''} found
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Paper Preview */}
+            <section className="bg-white rounded-xl shadow-sm border border-gray-200">
+              <div className="p-6 border-b border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900">Research Papers</h2>
+                <p className="text-gray-600 text-sm mt-1">Latest papers from your selected topics</p>
+              </div>
+              
+              <ScrollArea className="h-96">
+                {error ? (
+                  <div className="text-center py-12">
+                    <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <FileText className="w-6 h-6 text-red-600" />
+                    </div>
+                    <p className="text-red-600 font-medium mb-2">Error loading papers</p>
+                    <p className="text-gray-500 text-sm">{error}</p>
+                  </div>
+                ) : papers.length > 0 ? (
+                  <div className="p-6 space-y-4">
+                    {papers.map((paper, index) => (
+                      <Card
+                        key={`${paper.id}-${index}`}
+                        className="border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all duration-200"
+                      >
+                        <CardContent className="p-6">
+                          <div className="flex items-start space-x-4">
+                            <div className="w-10 h-10 bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                              <BookOpen className="w-5 h-5 text-purple-600" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-semibold text-gray-900 line-clamp-2 mb-2">
+                                {paper.title}
+                              </h3>
+                              <div className="flex items-center space-x-4 text-sm text-gray-600 mb-3">
+                                <span className="flex items-center">
+                                  {paper.authors.split(',')[0]}
+                                  {paper.authors.split(',').length > 1 && ' et al.'}
+                                </span>
+                                <span>
+                                  {new Date(paper.published).toLocaleDateString()}
+                                </span>
+                              </div>
+                              <p className="text-gray-700 text-sm line-clamp-3 mb-4">
+                                {paper.abstract}
+                              </p>
+                              <div className="flex items-center space-x-4">
+                                <Button
+                                  size="sm"
+                                  className="bg-purple-600 hover:bg-purple-700 text-white"
+                                  onClick={() =>
+                                    console.log(`Selected paper: ${paper.title}`)
+                                  }
+                                >
+                                  <Play className="w-3 h-3 mr-1" />
+                                  Create Podcast
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="border-gray-300 text-gray-700 hover:bg-gray-50"
+                                  onClick={() => window.open(paper.arxiv_url, '_blank')}
+                                >
+                                  <BookOpen className="w-3 h-3 mr-1" />
+                                  Read Paper
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Search className="w-8 h-8 text-gray-400" />
+                    </div>
+                    <p className="text-gray-600 font-medium mb-2">No papers yet</p>
+                    <p className="text-gray-500 text-sm">
+                      Select research topics and click &quot;Find Papers&quot; to discover content
+                    </p>
+                  </div>
+                )}
+              </ScrollArea>
+            </section>
+          </main>
+        </div>
+      </div>
     </div>
   );
 }

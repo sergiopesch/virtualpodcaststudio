@@ -1,0 +1,16 @@
+{
+  "name": "Virtual Podcast Studio",
+  "short_name": "VPS",
+  "description": "AI-Powered Research to Podcast Creation",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#9333ea",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
