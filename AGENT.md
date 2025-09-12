@@ -2,7 +2,7 @@
 
 ## 🎯 Project Overview
 
-This is a full-stack web application for discovering and analyzing research papers from arXiv to create AI-powered podcast content. The system consists of a FastAPI backend and Next.js frontend.
+This is a comprehensive podcast production platform that transforms research papers into AI-powered podcast content through a complete workflow: Research → Audio Studio → Video Studio → Publisher. The system consists of a FastAPI backend and Next.js frontend.
 
 ## 🏗️ Architecture Overview
 
@@ -19,6 +19,32 @@ virtualpodcaststudio/
 2. **Frontend**: `cd podcast-studio && npm run dev`
 3. **Access**: <http://localhost:3000>
 
+## 🎬 Application Workflow
+
+### 1. Research Hub (Home Page)
+
+- **Purpose**: Discover and analyze research papers from arXiv
+- **Functionality**: Topic selection, paper fetching, content analysis
+- **Output**: Curated research papers ready for podcast creation
+
+### 2. Audio Studio (`/studio`)
+
+- **Purpose**: Generate audio conversations between user and AI experts
+- **Functionality**: AI-powered conversation recording, transcript generation
+- **Output**: Audio files and conversation transcripts
+
+### 3. Video Studio (Future)
+
+- **Purpose**: Generate video rendering from conversation transcripts
+- **Functionality**: Video production, visual effects, scene generation
+- **Output**: Video files synchronized with audio
+
+### 4. Publisher (Future)
+
+- **Purpose**: Merge audio with video and generate final podcast files
+- **Functionality**: Final production, thumbnail generation, platform export
+- **Output**: Ready-to-publish podcast episodes
+
 ## 🔧 Key Components
 
 ### Backend (`backend/`)
@@ -29,11 +55,12 @@ virtualpodcaststudio/
 
 ### Frontend (`podcast-studio/`)
 
-- **src/app/page.tsx**: Main UI component with topic selection and paper display
+- **src/app/page.tsx**: Research Hub with topic selection and paper display
+- **src/app/studio/page.tsx**: Audio Studio for conversation recording
 - **src/app/api/papers/route.ts**: Next.js API route that proxies to backend
 - **src/components/ui/**: Reusable UI components (Button, Card, etc.)
 
-## 🎯 Available Topics
+## 🎯 Available Research Topics
 
 - `cs.AI` - Artificial Intelligence
 - `cs.LG` - Machine Learning  
@@ -42,12 +69,14 @@ virtualpodcaststudio/
 
 ## 🔄 Data Flow
 
-1. User selects topics in frontend
-2. Frontend calls `/api/papers` with selected topics
-3. Next.js API route forwards request to FastAPI backend
-4. Backend fetches papers from arXiv API
-5. Papers are deduplicated and returned
-6. Frontend displays papers in scrollable cards
+1. **Research Phase**: User selects topics in Research Hub
+2. **Paper Fetching**: Frontend calls `/api/papers` with selected topics
+3. **Backend Processing**: Next.js API route forwards request to FastAPI backend
+4. **arXiv Integration**: Backend fetches papers from arXiv API
+5. **Data Processing**: Papers are deduplicated and returned
+6. **Content Display**: Frontend displays papers in scrollable cards
+7. **Audio Creation**: User moves to Audio Studio to create conversations
+8. **Production Pipeline**: Future phases for video and publishing
 
 ## 🛠️ Development Guidelines
 

@@ -2,7 +2,7 @@
 
 ## 🎯 Purpose
 
-Reusable UI components built with Shadcn/UI and Radix UI primitives for the Virtual Podcast Studio application.
+Reusable UI components built with Shadcn/UI and Radix UI primitives for the Virtual Podcast Studio application. These components support the complete podcast production pipeline from Research Hub to Audio Studio, Video Studio, and Publisher phases.
 
 ## 📁 File Structure
 

@@ -2,7 +2,7 @@
 
 ## 🎯 Purpose
 
-Next.js frontend application that provides a user interface for selecting research topics and displaying papers from arXiv.
+Next.js frontend application that powers the Virtual Podcast Studio's complete production pipeline. It provides interfaces for Research Hub (topic selection and paper display), Audio Studio (conversation recording), Video Studio (video production), and Publisher (final production and export).
 
 ## 📁 File Structure
 
@@ -10,7 +10,8 @@ Next.js frontend application that provides a user interface for selecting resear
 podcast-studio/
 ├── src/
 │   ├── app/
-│   │   ├── page.tsx              # Main UI component
+│   │   ├── page.tsx              # Research Hub (home page)
+│   │   ├── studio/page.tsx       # Audio Studio
 │   │   ├── layout.tsx            # Root layout
 │   │   ├── globals.css           # Global styles
 │   │   └── api/papers/route.ts   # API route (proxies to backend)
@@ -22,18 +23,27 @@ podcast-studio/
 
 ## 🎨 UI Components
 
-### Main Page (`src/app/page.tsx`)
+### Research Hub (`src/app/page.tsx`)
 
-- **Topic Selection**: Grid of checkboxes for 4 research topics
-- **Action Buttons**: "Fetch Papers" and "Clear Selection"
-- **Paper Display**: Scrollable cards showing paper details
+- **Navigation**: Sidebar with Audio Studio, Video Studio, Publisher, and Team sections
+- **Topic Selection**: Grid of clickable cards for 4 research topics (AI, ML, Computer Vision, Robotics)
+- **Action Buttons**: "Start Audio Studio" and "Clear Selection"
+- **Paper Display**: Scrollable cards showing paper details with author and publication info
 - **Status Indicators**: Shows selected topics and loaded papers count
+
+### Audio Studio (`src/app/studio/page.tsx`)
+
+- **Navigation**: Sidebar with active state indicators
+- **Conversation Interface**: Chat-like interface for AI-powered conversations
+- **Recording Controls**: Play, pause, stop, and download functionality
+- **Transcript Display**: Real-time conversation transcript with timestamps
+- **AI Participants**: Simulated AI experts for different research topics
 
 ### Layout (`src/app/layout.tsx`)
 
-- **Root Layout**: HTML structure with Inter font
-- **Metadata**: Page title and description
-- **Global Styles**: Tailwind CSS imports
+- **Root Layout**: HTML structure with Inter font and microphone favicon
+- **Metadata**: Page title and description for podcast production
+- **Global Styles**: Tailwind CSS imports with dark theme
 
 ### API Route (`src/app/api/papers/route.ts`)
 

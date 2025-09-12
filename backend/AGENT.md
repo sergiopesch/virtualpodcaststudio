@@ -2,7 +2,7 @@
 
 ## 🎯 Purpose
 
-FastAPI backend that fetches research papers from arXiv API and serves them to the frontend.
+FastAPI backend that powers the Virtual Podcast Studio's research phase by fetching research papers from arXiv API. This backend serves as the foundation for the podcast production pipeline, providing curated research content that feeds into the Audio Studio, Video Studio, and Publisher phases.
 
 ## 📁 File Structure
 

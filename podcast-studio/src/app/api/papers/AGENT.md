@@ -2,7 +2,7 @@
 
 ## 🎯 Purpose
 
-Next.js API route that acts as a proxy between the frontend and FastAPI backend for fetching research papers.
+Next.js API route that acts as a proxy between the frontend and FastAPI backend for fetching research papers. This route serves the Research Hub phase of the Virtual Podcast Studio, providing the foundation for the podcast production pipeline.
 
 ## 📁 File Location
 
