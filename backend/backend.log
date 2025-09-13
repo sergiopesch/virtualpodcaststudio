@@ -1,0 +1,524 @@
+INFO:__main__:Starting server on port 8000
+INFO:     Started server process [61371]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+/Users/speschiera/Documents/Projects/virtualpodcaststudio/backend/main.py:405: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+INFO:     127.0.0.1:58519 - "GET /health HTTP/1.1" 200 OK
+INFO:__main__:🔗 New WebSocket conversation connection
+INFO:     ('127.0.0.1', 58649) - "WebSocket /ws/conversation" [accepted]
+INFO:__main__:🚀 Starting conversation session...
+INFO:__main__:🔌 Attempting to connect to OpenAI Realtime API...
+INFO:__main__:✅ OpenAI API key found, establishing connection...
+INFO:__main__:📡 Connecting to: wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01
+INFO:     connection open
+INFO:__main__:🎉 Successfully connected to OpenAI Realtime API
+INFO:__main__:📝 Creating session with config: {
+  "modalities": [
+    "text",
+    "audio"
+  ],
+  "instructions": "You are Dr. Sarah Chen, an AI research expert with deep technical knowledge. You're having a casual podcast conversation with a host about research papers and AI topics. Be conversational and engaging, like you're on a friendly podcast. Provide expert insights but keep them accessible. Ask follow-up questions to keep the conversation flowing. Keep responses to 2-3 sentences for natural conversation flow. Always start your response with 'Dr. Sarah:' to identify yourself.",
+  "voice": "alloy",
+  "input_audio_format": "pcm16",
+  "output_audio_format": "pcm16",
+  "input_audio_transcription": {
+    "model": "whisper-1"
+  },
+  "turn_detection": {
+    "type": "server_vad",
+    "threshold": 0.5,
+    "prefix_padding_ms": 300,
+    "silence_duration_ms": 700,
+    "create_response": true
+  },
+  "temperature": 0.8
+}
+INFO:__main__:✅ Session creation sent successfully
+INFO:__main__:📝 Session creation sent to OpenAI
+INFO:__main__:✅ Session setup complete, starting message handling...
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: ping
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:🎯 Starting to handle OpenAI responses...
+INFO:__main__:🔄 OpenAI event: session.created
+INFO:__main__:✅ OpenAI session ready successfully
+INFO:__main__:👋 Client disconnected gracefully
+INFO:     connection closed
+INFO:__main__:🧹 Cleaning up session resources...
+INFO:__main__:🔗 New WebSocket conversation connection
+INFO:     ('127.0.0.1', 58869) - "WebSocket /ws/conversation" [accepted]
+INFO:__main__:🚀 Starting conversation session...
+INFO:__main__:🔌 Attempting to connect to OpenAI Realtime API...
+INFO:__main__:✅ OpenAI API key found, establishing connection...
+INFO:__main__:📡 Connecting to: wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01
+INFO:     connection open
+INFO:__main__:🎉 Successfully connected to OpenAI Realtime API
+INFO:__main__:📝 Creating session with config: {
+  "modalities": [
+    "text",
+    "audio"
+  ],
+  "instructions": "You are Dr. Sarah Chen, an AI research expert with deep technical knowledge. You're having a casual podcast conversation with a host about research papers and AI topics. Be conversational and engaging, like you're on a friendly podcast. Provide expert insights but keep them accessible. Ask follow-up questions to keep the conversation flowing. Keep responses to 2-3 sentences for natural conversation flow. Always start your response with 'Dr. Sarah:' to identify yourself.",
+  "voice": "alloy",
+  "input_audio_format": "pcm16",
+  "output_audio_format": "pcm16",
+  "input_audio_transcription": {
+    "model": "whisper-1"
+  },
+  "turn_detection": {
+    "type": "server_vad",
+    "threshold": 0.5,
+    "prefix_padding_ms": 300,
+    "silence_duration_ms": 700,
+    "create_response": true
+  },
+  "temperature": 0.8
+}
+INFO:__main__:✅ Session creation sent successfully
+INFO:__main__:📝 Session creation sent to OpenAI
+INFO:__main__:✅ Session setup complete, starting message handling...
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:🎯 Starting to handle OpenAI responses...
+INFO:__main__:🔄 OpenAI event: session.created
+INFO:__main__:✅ OpenAI session ready successfully
+INFO:__main__:🔄 OpenAI event: session.updated
+INFO:__main__:✅ OpenAI session ready successfully
+INFO:__main__:📨 Received client message: text
+INFO:__main__:💬 Processing text message: 'Hello Dr. Sarah! Can you tell me about transformer...'
+INFO:__main__:📤 Text message sent to OpenAI
+INFO:__main__:⚡ Response trigger sent to OpenAI
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:🔄 OpenAI event: error
+ERROR:__main__:❌ OpenAI error: Invalid 'item.id': string too long. Expected a string with maximum length 32, but got a string with length 36 instead.
+INFO:__main__:🔄 OpenAI event: response.created
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.created
+INFO:__main__:🔄 OpenAI event: response.output_item.added
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.output_item.added
+INFO:__main__:🔄 OpenAI event: conversation.item.created
+INFO:__main__:ℹ️ Unhandled OpenAI event: conversation.item.created
+INFO:__main__:🔄 OpenAI event: response.content_part.added
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.content_part.added
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 6400)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 9600)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.delta
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.delta
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 16000)
+INFO:__main__:🔄 OpenAI event: response.audio.delta
+INFO:__main__:🔊 Forwarding audio delta to client (length: 44800)
+INFO:__main__:🔄 OpenAI event: response.audio.done
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio.done
+INFO:__main__:🔄 OpenAI event: response.audio_transcript.done
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.audio_transcript.done
+INFO:__main__:🔄 OpenAI event: response.content_part.done
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.content_part.done
+INFO:__main__:🔄 OpenAI event: response.output_item.done
+INFO:__main__:ℹ️ Unhandled OpenAI event: response.output_item.done
+INFO:__main__:🔄 OpenAI event: response.done
+INFO:__main__:✅ Response completed
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:📨 Received client message: audio
+INFO:__main__:🎤 Processing audio chunk from client
+INFO:__main__:⏳ Waiting for client message...
+INFO:__main__:👋 Client disconnected gracefully
+INFO:     connection closed
+INFO:__main__:🧹 Cleaning up session resources...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [61371]
