@@ -1,0 +1,59 @@
+# Global ignores for this repo
+
+# macOS
+.DS_Store
+
+# Node/Next frontend artifacts
+podcast-studio/node_modules/
+podcast-studio/.next/
+podcast-studio/out/
+podcast-studio/build/
+podcast-studio/.vercel/
+podcast-studio/coverage/
+podcast-studio/*.tsbuildinfo
+podcast-studio/npm-debug.log*
+podcast-studio/yarn-debug.log*
+podcast-studio/yarn-error.log*
+podcast-studio/.pnpm-debug.log*
+podcast-studio/.pnp
+podcast-studio/.pnp.*
+
+# Frontend env files
+podcast-studio/.env
+podcast-studio/.env.*
+
+# Python backend artifacts
+backend/__pycache__/
+backend/*.pyc
+backend/.mypy_cache/
+backend/.pytest_cache/
+backend/.coverage
+backend/coverage/
+backend/.venv/
+backend/venv/
+
+# Backend env files and logs
+backend/.env
+backend/.env.*
+backend/*.log
+
+# Root logs and temporary files
+*.log
+*.tmp
+*.swp
+
+# Credentials/keys by pattern
+*.pem
+*.key
+*.crt
+*.p12
+*.keystore
+
+# Media and test artifacts (optional)
+*.wav
+*.mp3
+*.mp4
+*.webm
+*.ogg
+
+
