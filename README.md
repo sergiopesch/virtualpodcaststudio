@@ -211,10 +211,7 @@ Enable detailed logging by checking browser DevTools → Console for emoji-marke
 
 ## 📚 Documentation
 
-- [Setup Instructions](SETUP_INSTRUCTIONS.md) - Detailed setup guide
-- [Voice Recording Setup](VOICE_RECORDING_SETUP.md) - Audio configuration
-- [Debug Guide](debug_audio_studio.md) - Troubleshooting steps
-- [Realtime Implementation](realtime_ws_track_b_implementation.md) - Technical details
+All essential setup, usage, troubleshooting, and architecture information is covered in this README. Refer to the sections above for Quick Start, Features, Architecture, API Endpoints, Environment Variables, and Troubleshooting.
 
 ## 🤝 Contributing
 

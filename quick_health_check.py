@@ -60,7 +60,7 @@ def main():
         print("\n📋 Next steps:")
         print("1. Start frontend: cd podcast-studio && npm run dev")
         print("2. Open http://localhost:3000/studio")
-        print("3. Follow debug_audio_studio.md checklist")
+        print("3. See README.md Troubleshooting section")
     else:
         print("❌ Setup issues found:")
         if not key_ok:

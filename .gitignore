@@ -1,76 +1,42 @@
-# Global ignores for this repo
+# Node
+node_modules/
+.next/
+.out/
+coverage/
+*.log
 
-# macOS
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Env files
+.env
+backend/.env
+podcast-studio/.env.local
+
+# OS
 .DS_Store
 
-# Node/Next frontend artifacts
-podcast-studio/node_modules/
-podcast-studio/.next/
-podcast-studio/out/
-podcast-studio/build/
-podcast-studio/.vercel/
-podcast-studio/coverage/
-podcast-studio/*.tsbuildinfo
-podcast-studio/npm-debug.log*
-podcast-studio/yarn-debug.log*
-podcast-studio/yarn-error.log*
-podcast-studio/.pnpm-debug.log*
-podcast-studio/.pnp
-podcast-studio/.pnp.*
+# Build artifacts
+*.tsbuildinfo
+storybook-static/
+dist/
+build/
 
-# Frontend env files
-podcast-studio/.env
-# allow example files to be committed
-podcast-studio/.env.*
-!podcast-studio/.env.example
-
-# Python backend artifacts
-backend/__pycache__/
-backend/*.pyc
-backend/.mypy_cache/
-backend/.pytest_cache/
-backend/.coverage
-backend/coverage/
-backend/.venv/
-backend/venv/
-
-# Backend env files and logs
-backend/.env
-# allow example files to be committed
-backend/.env.*
-!backend/.env.example
+# Logs
 backend/*.log
+frontend.log
+backend.log
+backend_fixed.log
 
-# Root logs and temporary files
-*.log
-*.tmp
+# Editor
+.vscode/
+.idea/
+
+# Misc
 *.swp
-
-# Credentials/keys by pattern
-*.pem
-*.key
-*.crt
-*.p12
-*.keystore
-
-# Media and test artifacts (optional)
-*.wav
-*.mp3
-*.mp4
-*.webm
-*.ogg
-
-
-.env.example
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env.development
-.env.test
-.env.production
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
