@@ -20,7 +20,9 @@ podcast-studio/.pnp.*
 
 # Frontend env files
 podcast-studio/.env
+# allow example files to be committed
 podcast-studio/.env.*
+!podcast-studio/.env.example
 
 # Python backend artifacts
 backend/__pycache__/
@@ -34,7 +36,9 @@ backend/venv/
 
 # Backend env files and logs
 backend/.env
+# allow example files to be committed
 backend/.env.*
+!backend/.env.example
 backend/*.log
 
 # Root logs and temporary files
