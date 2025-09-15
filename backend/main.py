@@ -1,11 +1,11 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from typing import List, Dict, Any
 import feedparser
 import httpx
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import json
 import asyncio
@@ -13,6 +13,8 @@ import websockets
 import base64
 import os
 from dotenv import load_dotenv
+from collections import defaultdict
+import time
 
 load_dotenv()
 
@@ -22,17 +24,60 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Podcast Studio API", version="1.0.0")
 
+# Simple rate limiting
+rate_limit_store = defaultdict(list)
+RATE_LIMIT_REQUESTS = 100  # requests per minute
+RATE_LIMIT_WINDOW = 60  # seconds
+
+def check_rate_limit(client_ip: str) -> bool:
+    """Simple rate limiting check"""
+    now = time.time()
+    
+    # Clean old requests
+    rate_limit_store[client_ip] = [
+        timestamp for timestamp in rate_limit_store[client_ip]
+        if now - timestamp < RATE_LIMIT_WINDOW
+    ]
+    
+    # Check if under limit
+    if len(rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+        return False
+    
+    # Add current request
+    rate_limit_store[client_ip].append(now)
+    return True
+
 # Add CORS middleware
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js dev server
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],  # Restrict methods
+    allow_headers=["Content-Type", "Authorization"],  # Restrict headers
 )
 
 class PaperRequest(BaseModel):
     topics: List[str]
+    
+    @validator('topics')
+    def validate_topics(cls, v):
+        if not v or len(v) == 0:
+            raise ValueError('At least one topic is required')
+        if len(v) > 10:
+            raise ValueError('Maximum 10 topics allowed')
+        
+        valid_topics = []
+        for topic in v:
+            if not isinstance(topic, str):
+                raise ValueError('All topics must be strings')
+            if len(topic) > 50:
+                raise ValueError('Topic length cannot exceed 50 characters')
+            if not re.match(r'^[a-zA-Z0-9.\-_]+$', topic):
+                raise ValueError('Topic contains invalid characters')
+            valid_topics.append(topic)
+        
+        return valid_topics
 
 class Paper(BaseModel):
     id: str
@@ -194,8 +239,20 @@ class RealtimeSession:
 
 def sanitize_input(topic: str) -> str:
     """Sanitize topic input to prevent injection attacks"""
+    if not isinstance(topic, str):
+        return ""
+    
+    # Remove any whitespace and limit length
+    topic = topic.strip()[:50]
+    
     # Only allow alphanumeric, dots, hyphens, and underscores
-    return re.sub(r'[^a-zA-Z0-9.\-_]', '', topic)
+    sanitized = re.sub(r'[^a-zA-Z0-9.\-_]', '', topic)
+    
+    # Additional validation - must start with alphanumeric
+    if not sanitized or not sanitized[0].isalnum():
+        return ""
+    
+    return sanitized
 
 def format_authors(authors: str) -> str:
     """Format authors string for display"""
@@ -291,6 +348,12 @@ async def health_check():
 @app.websocket("/ws/conversation")
 async def websocket_conversation(websocket: WebSocket):
     """WebSocket endpoint for realtime conversation"""
+    # Basic rate limiting for WebSocket connections
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    if not check_rate_limit(client_ip):
+        await websocket.close(code=1008, reason="Rate limit exceeded")
+        return
+    
     await websocket.accept()
     session = RealtimeSession(websocket)
     
@@ -320,33 +383,22 @@ async def websocket_conversation(websocket: WebSocket):
         await session.close()
 
 @app.post("/api/papers", response_model=PaperResponse)
-async def fetch_papers(request: PaperRequest):
+async def fetch_papers(request: PaperRequest, http_request: Request):
     """Fetch papers from arXiv based on selected topics"""
-    if not request.topics:
-        raise HTTPException(status_code=400, detail="At least one topic must be selected")
-    
-    if len(request.topics) > 10:
-        raise HTTPException(status_code=400, detail="Too many topics selected (max 10)")
-    
-    # Validate topic format
-    valid_topics = []
-    for topic in request.topics:
-        sanitized = sanitize_input(topic)
-        if sanitized and len(sanitized) <= 50:  # Reasonable length limit
-            valid_topics.append(sanitized)
-    
-    if not valid_topics:
-        raise HTTPException(status_code=400, detail="No valid topics provided")
+    # Rate limiting
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
     
     try:
-        papers = await fetch_arxiv_papers(valid_topics)
+        papers = await fetch_arxiv_papers(request.topics)
         return PaperResponse(papers=papers)
     
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error in fetch_papers endpoint: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch papers")
+        raise HTTPException(status_code=500, detail="Service temporarily unavailable")
 
 if __name__ == "__main__":
     import uvicorn

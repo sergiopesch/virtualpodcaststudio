@@ -14,6 +14,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Additional validation for topics
+    if (body.topics.length > 10) {
+      return NextResponse.json(
+        { error: 'Too many topics (maximum 10 allowed)' },
+        { status: 400 }
+      );
+    }
+
+    // Validate each topic
+    for (const topic of body.topics) {
+      if (typeof topic !== 'string' || topic.length > 50 || !/^[a-zA-Z0-9.\-_]+$/.test(topic)) {
+        return NextResponse.json(
+          { error: 'Invalid topic format' },
+          { status: 400 }
+        );
+      }
+    }
+
     // Forward request to FastAPI backend
     const response = await fetch(`${BACKEND_URL}/api/papers`, {
       method: 'POST',
@@ -57,7 +75,7 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': process.env.FRONTEND_URL || 'http://localhost:3000',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     },

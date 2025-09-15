@@ -51,7 +51,9 @@ export const useRealtimeConversation = () => {
   const handleWebSocketMessage = useCallback((data: Record<string, string | number | boolean | undefined>) => {
     switch (data.type) {
       case 'session_ready':
-        console.log('Session ready');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Session ready');
+        }
         break;
         
       case 'audio_delta':
@@ -93,11 +95,15 @@ export const useRealtimeConversation = () => {
         break;
         
       case 'speech_started':
-        console.log('User started speaking');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('User started speaking');
+        }
         break;
         
       case 'speech_stopped':
-        console.log('User stopped speaking');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('User stopped speaking');
+        }
         break;
         
       case 'error':
@@ -105,7 +111,9 @@ export const useRealtimeConversation = () => {
         break;
         
       default:
-        console.log('Unknown message type:', data.type);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Unknown message type:', data.type);
+        }
     }
   }, [playAudioDelta]);
 
@@ -114,24 +122,29 @@ export const useRealtimeConversation = () => {
       setState(prev => ({ ...prev, error: null }));
       
       // Check if backend server is running first
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+      const wsUrl = backendUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+      
       try {
-        const response = await fetch('http://localhost:8000/health');
+        const response = await fetch(`${backendUrl}/health`);
         if (!response.ok) {
           throw new Error('Backend server not responding');
         }
       } catch (fetchError) {
         setState(prev => ({ 
           ...prev, 
-          error: 'Backend server is not running. Please start the backend server on port 8000.' 
+          error: 'Backend server is not running. Please check your backend configuration.' 
         }));
         return;
       }
       
-      const ws = new WebSocket('ws://localhost:8000/ws/conversation');
+      const ws = new WebSocket(`${wsUrl}/ws/conversation`);
       
       ws.onopen = () => {
         setState(prev => ({ ...prev, isConnected: true, error: null }));
-        console.log('Connected to conversation WebSocket');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Connected to conversation WebSocket');
+        }
       };
       
       ws.onmessage = (event) => {
