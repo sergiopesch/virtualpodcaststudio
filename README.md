@@ -153,7 +153,6 @@ npm run format       # Format with Prettier
 ```bash
 uvicorn main:app --reload              # Development server
 uvicorn main:app --host 0.0.0.0 --port 8000  # Production server
-python -m pytest                      # Run tests
 ```
 
 ### Environment Variables
