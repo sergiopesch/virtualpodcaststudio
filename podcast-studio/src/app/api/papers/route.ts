@@ -2,28 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8000';
 
-async function findBackendPort(): Promise<string> {
-  // Try common ports for the backend
-  const ports = [8000, 8001, 8002, 8003, 8004];
-  
-  for (const port of ports) {
-    try {
-      const response = await fetch(`http://localhost:${port}/health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(1000) // 1 second timeout
-      });
-      if (response.ok) {
-        return `http://localhost:${port}`;
-      }
-    } catch (error) {
-      // Continue to next port
-      continue;
-    }
-  }
-  
-  throw new Error('Backend server not found on any common ports (8000-8004)');
-}
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -36,10 +14,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-<<<<<<< Current (Your changes)
-    // Find the backend port dynamically
-    const backendUrl = await findBackendPort();
-=======
     // Additional validation for topics
     if (body.topics.length > 10) {
       return NextResponse.json(
@@ -57,10 +31,9 @@ export async function POST(request: NextRequest) {
         );
       }
     }
->>>>>>> Incoming (Background Agent changes)
 
     // Forward request to FastAPI backend
-    const response = await fetch(`${backendUrl}/api/papers`, {
+    const response = await fetch(`${BACKEND_URL}/api/papers`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
