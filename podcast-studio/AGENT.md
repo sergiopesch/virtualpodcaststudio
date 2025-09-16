@@ -1,222 +1,92 @@
 # Frontend Agent Guide
 
-## 🎯 Purpose
+## Mission & Stack
+The frontend is a Next.js 15 App Router project written in TypeScript. It powers the full
+"virtual podcast studio" experience: research discovery, realtime audio recording, and
+post-production dashboards. Styling leans on Tailwind CSS 4 with custom gradient/glass
+utilities defined in [`src/app/globals.css`](./src/app/globals.css).
 
-Next.js frontend application that powers the Virtual Podcast Studio's complete production pipeline. It provides interfaces for Research Hub (topic selection and paper display), Audio Studio (conversation recording), Video Studio (video production), and Publisher (final production and export).
-
-## 📁 File Structure
-
-```text
+```
 podcast-studio/
 ├── src/
-│   ├── app/
-│   │   ├── page.tsx              # Research Hub (home page)
-│   │   ├── studio/page.tsx       # Audio Studio
-│   │   ├── layout.tsx            # Root layout
-│   │   ├── globals.css           # Global styles
-│   │   └── api/papers/route.ts   # API route (proxies to backend)
-│   ├── components/ui/            # Reusable UI components
-│   └── lib/utils.ts              # Utility functions
-├── package.json                  # Dependencies
-└── AGENT.md                      # This file
+│   ├── app/               # App Router pages + API routes
+│   ├── components/        # Layout chrome, shadcn-based UI primitives
+│   ├── contexts/          # React context providers for sidebar + API keys
+│   ├── hooks/             # Legacy websocket hook (fallback path)
+│   └── lib/               # Realtime session manager + shared utilities
+├── package.json           # Next.js 15, React 19, Tailwind 4
+└── AGENT.md               # This guide
 ```
 
-## 🎨 UI Components
+## High-Level Flow
+1. **Research Hub (`src/app/page.tsx`)** – Users pick arXiv categories, call the Next.js
+   `/api/papers` route, and review normalized results. Choosing "Start Audio Studio"
+   persists the selected paper into `sessionStorage` (`vps:selectedPaper`).
+2. **Audio Studio (`src/app/studio/page.tsx`)** – Restores the stored paper, ensures a
+   realtime session via `/api/rt/start`, negotiates WebRTC with `/api/rt/webrtc`, and
+   streams PCM16 microphone chunks through `/api/rt/audio-append`. Server-Sent Events from
+   `/api/rt/audio`, `/api/rt/transcripts`, and `/api/rt/user-transcripts` render live audio
+   and captions.
+3. **Video Studio / Library / Publisher pages** – Rich mock dashboards that share layout
+   chrome and highlight the post-production pipeline.
 
-### Research Hub (`src/app/page.tsx`)
+Backend communication happens exclusively through App Router API routes. They either proxy
+requests to FastAPI (`/api/papers`) or interact with the shared `rtSessionManager`
+(`src/lib/realtimeSession.ts`) for realtime sessions.
 
-- **Navigation**: Sidebar with Audio Studio, Video Studio, Publisher, and Team sections
-- **Topic Selection**: Grid of clickable cards for 4 research topics (AI, ML, Computer Vision, Robotics)
-- **Action Buttons**: "Start Audio Studio" and "Clear Selection"
-- **Audio Handoff**: "Start Audio Studio" persists the selected paper to `sessionStorage` (`vps:selectedPaper`) before navigating to `/studio`.
-- **Paper Display**: Scrollable cards showing paper details with author and publication info
-- **Status Indicators**: Shows selected topics and loaded papers count
+## Key Modules
+- **Layout chrome** – `src/components/layout/sidebar.tsx`, `header.tsx`, and
+  `user-menu.tsx` render navigation, search, status, and workspace settings. They expect to
+  be wrapped in both `SidebarProvider` and `ApiConfigProvider` (see `src/app/layout.tsx`).
+- **UI primitives** – `src/components/ui` hosts shadcn-derived components (Button, Card,
+  Checkbox, ScrollArea, DropdownMenu, Sheet, Tabs). Follow their AGENT for styling rules.
+- **Contexts** – `SidebarProvider` manages collapse state; `ApiConfigProvider` persists
+  user-supplied API keys and active provider to `localStorage`.
+- **Realtime session manager** – `src/lib/realtimeSession.ts` implements a server-side
+  singleton that talks to OpenAI's Realtime WebSocket API, emits transcript/audio events,
+  and cleans up idle sessions. API routes under `src/app/api/rt` are thin wrappers around
+  it.
 
-### Audio Studio (`src/app/studio/page.tsx`)
+## Adding or Modifying Features
+- **Stay in sync with the backend** – Any schema change to `Paper` or paper fetching must be
+  mirrored in both `/api/papers` (Next.js) and FastAPI (`backend/main.py`). `transformPapers`
+  in `src/app/page.tsx` and the Audio Studio's `SelectedPaper` interface expect the same
+  shape.
+- **Realtime flows** – Always start sessions (`/api/rt/start`) before posting audio/text.
+  When extending event types, update both the Audio Studio handlers and the session manager
+  event emitters. The WebSocket fallback (`src/hooks/useRealtimeConversation.ts`) still
+  expects the legacy FastAPI events—keep it compiling even if unused by default.
+- **Context usage** – Components that read `useSidebar` or `useApiConfig` must live under
+  the matching providers. If you add new providers, register them in `src/app/layout.tsx` so
+  all pages share the same context tree.
+- **Styling** – Prefer Tailwind utilities or the gradient/glass tokens defined in
+  `globals.css`. Avoid inline colors that drift from the design language; add utilities to
+  `globals.css` if needed.
+- **State hygiene** – Use `AbortController` when introducing new network requests on the
+  Research Hub to match the existing race-cancellation logic. Remember to clear additional
+  state inside `handleClearSelection` when you append new filters.
+- **Session storage contracts** – Keep the `vps:selectedPaper` payload backwards compatible
+  (Audio Studio will surface errors if parsing fails). When expanding its schema, update the
+  read/write logic in both pages simultaneously.
 
-- **Navigation**: Sidebar with active state indicators
-- **Conversation Interface**: Chat-like interface for AI-powered conversations
-- **Recording Controls**: Play, pause, stop, and download functionality
-- **Transcript Display**: Real-time conversation transcript with timestamps
-- **AI Participants**: Simulated AI experts for different research topics
-- **Current Paper**: Card hydrates from the Research Hub handoff, falling back to guidance copy when no paper is stored.
-- **Live Badge**: Sidebar only shows the "LIVE" pill while `isRecording` is true.
+## Environment Variables
+Create `.env.local` with:
+- `OPENAI_API_KEY` – used by server-side API routes if the user has not supplied a key.
+- `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE` – optional overrides for WebRTC
+  sessions.
+- `BACKEND_URL` / `NEXT_PUBLIC_BACKEND_URL` – override FastAPI base URL when not running on
+  `http://localhost:8000`.
 
-### Layout (`src/app/layout.tsx`)
+Do **not** expose secrets on the client. The API routes accept a user-provided key from the
+Settings sheet (`ApiConfigProvider`) and fall back to server env vars only on the server.
 
-- **Root Layout**: HTML structure with Inter font and microphone favicon
-- **Metadata**: Page title and description for podcast production
-- **Global Styles**: Tailwind CSS imports with dark theme
-
-### API Route (`src/app/api/papers/route.ts`)
-
-- **Proxy**: Forwards requests to FastAPI backend
-- **Error Handling**: Catches and formats backend errors
-- **CORS**: Handles cross-origin requests
-
-## 🎯 Available Topics
-
-```typescript
-const topics = [
-  { id: "cs.AI", label: "Artificial Intelligence" },
-  { id: "cs.LG", label: "Machine Learning" },
-  { id: "cs.CV", label: "Computer Vision" },
-  { id: "cs.RO", label: "Robotics" },
-];
-```
-
-## 🔄 State Management
-
-### React State
-
-- **`selectedTopics`**: Array of selected topic IDs
-- **`papers`**: Array of fetched papers
-- **`loading`**: Boolean for loading state
-- **`error`**: String for error messages
-
-### State Updates
-
-- **Topic Selection**: Toggle topics in/out of array
-- **Paper Fetching**: Set loading, fetch data, update papers
-- **Clear Selection**: Reset all state to initial values
-
-## 🎨 Styling System
-
-### Design System
-
-- **Theme**: Dark theme with gray color palette
-- **Background**: `bg-gray-900` (main), `bg-gray-800` (cards)
-- **Text**: `text-white` (primary), `text-gray-400` (secondary)
-- **Buttons**: `bg-blue-600` (primary), `border-gray-500` (outline)
-
-### Responsive Design
-
-- **Mobile**: Single column layout
-- **Tablet**: Two column grid (`sm:grid-cols-2`)
-- **Desktop**: Four column grid (`lg:grid-cols-4`)
-
-### Component Library
-
-- **Shadcn/UI**: Pre-built components (Button, Card, Checkbox, ScrollArea)
-- **Tailwind CSS**: Utility-first styling
-- **Custom Classes**: App-specific styling for podcast studio theme
-
-## 🔧 Key Functions
-
-### `handleTopicToggle(topicId)`
-
-- Toggles topic selection
-- Updates `selectedTopics` state
-- Handles single/multiple selection
-
-### `handleFetchPapers()`
-
-- Validates topic selection
-- Sets loading state
-- Calls API endpoint
-- Handles errors and success
-- Deduplicates papers
-
-### `handleClearSelection()`
-
-- Resets all state
-- Clears selected topics
-- Clears loaded papers
-- Clears error messages
-
-### `handleStartAudioStudio(paper)`
-
-- Serializes `PaperCardData` into `sessionStorage` under `vps:selectedPaper`
-- Navigates to `/studio` using the Next.js router
-- Logs storage failures so the Audio Studio can surface an empty-state warning
-
-## 🛠️ Development Notes
-
-### Dependencies
-
-- **next**: React framework
-- **react**: UI library
-- **typescript**: Type safety
-- **tailwindcss**: Styling
-- **@radix-ui**: Component primitives
-
-### Build System
-
-- **Next.js 15**: Latest version with App Router
-- **Turbopack**: Fast bundler for development
-- **TypeScript**: Compile-time type checking
-
-### API Integration
-
-- **Frontend API**: `/api/papers` (Next.js route)
-- **Backend API**: `http://localhost:8000/api/papers` (FastAPI)
-- **Error Handling**: User-friendly error messages
-
-## 🐛 Common Issues
-
-### Duplicate Keys
-
-- **Problem**: Same paper appears in multiple topics
-- **Solution**: Deduplication in both frontend and backend
-- **Implementation**: Filter by unique paper ID
-
-### Font Loading
-
-- **Problem**: Geist font causes loading issues
-- **Solution**: Use Inter font instead
-- **Implementation**: Updated in `layout.tsx`
-
-### State Management
-
-- **Problem**: State not updating correctly
-- **Solution**: Use functional state updates
-- **Implementation**: `setState(prev => ...)`
-
-## 🔍 Testing
-
-### Manual Testing
-
-1. **Topic Selection**: Click checkboxes, verify selection
-2. **Paper Fetching**: Click "Fetch Papers", verify loading state
-3. **Clear Selection**: Click "Clear Selection", verify reset
-4. **Error Handling**: Test with invalid topics
-
-### API Testing
-
-```bash
-# Test frontend API
-curl -X POST http://localhost:3000/api/papers \
-  -H "Content-Type: application/json" \
-  -d '{"topics": ["cs.AI"]}'
-```
-
-## 📝 When Modifying
-
-### Adding New Topics
-
-1. Update `topics` array in `page.tsx`
-2. Update grid layout if needed
-3. Test topic selection and API calls
-
-### Changing UI Layout
-
-1. Modify Tailwind classes
-2. Test responsive design
-3. Ensure accessibility
-
-### Adding New Features
-
-1. Update state management
-2. Add new UI components
-3. Update API integration
-4. Test error handling
-
-## 🎯 Agent Instructions
-
-- Always test UI changes in browser
-- Maintain responsive design principles
-- Use TypeScript for type safety
-- Follow React best practices
-- Keep components small and focused
-- Handle loading and error states
-- Ensure accessibility compliance
+## Testing Checklist
+- `npm run lint` – ESLint 9 (fails currently due to known upstream issues; still run it and
+  note failures when filing PRs).
+- `npm run build` – Validate Turbopack builds for production when changing App Router or
+  API code.
+- Manual:
+  - Fetch papers with several topics and verify deduped cards.
+  - Start the Audio Studio, confirm session status via `/api/rt/status`, and inspect SSE
+    streams in browser dev tools.
+  - Exercise the workspace Settings sheet to ensure API key persistence works.

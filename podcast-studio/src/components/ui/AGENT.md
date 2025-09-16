@@ -1,179 +1,73 @@
 # UI Components Agent Guide
 
-## 🎯 Purpose
+## Purpose
+Reusable UI primitives built on top of shadcn/ui (Radix UI + Tailwind) live in this folder.
+They provide consistent theming for the Research Hub, Studio, and post-production pages.
+Each component exports semantic props and uses the shared `cn` helper from
+`src/lib/utils.ts`.
 
-Reusable UI components built with Shadcn/UI and Radix UI primitives for the Virtual Podcast Studio application. These components support the complete podcast production pipeline from Research Hub to Audio Studio, Video Studio, and Publisher phases.
-
-## 📁 File Structure
-
-```text
+```
 src/components/ui/
-├── button.tsx           # Button component
-├── card.tsx             # Card component
-├── checkbox.tsx         # Checkbox component
-├── scroll-area.tsx      # Scrollable area component
-└── AGENT.md             # This file
+├── button.tsx        # cva-powered gradient buttons
+├── card.tsx          # Glass/gradient cards with header/content slots
+├── checkbox.tsx      # Radix checkbox, Tailwind focus styles
+├── dropdown-menu.tsx # Workspace menu, keyboard friendly
+├── scroll-area.tsx   # Styled viewport + scrollbar
+├── sheet.tsx         # Settings drawer (Radix dialog)
+├── tabs.tsx          # Timeline/analytics tab strip
+└── AGENT.md          # This guide
 ```
 
-## 🎨 Component Overview
+## Component Notes
+- **Button** (`button.tsx`)
+  - Uses `class-variance-authority` to expose `variant` (`default`, `gradient`, `glass`,
+    `outline`, etc.) and `size` props. Extend variants here before referencing them in pages.
+  - `asChild` lets you wrap anchors (`<Button asChild><a/></Button>`), preserving focus
+    styles.
+- **Card** (`card.tsx`)
+  - Layout-friendly slots (`CardHeader`, `CardContent`, `CardFooter`, etc.) with subtle
+    borders and backdrop blur. Keep padding consistent—Research Hub and Studio rely on the
+    default spacing.
+- **Checkbox** (`checkbox.tsx`)
+  - Wraps `@radix-ui/react-checkbox` with Tailwind focus rings. Only accepts boolean `checked`
+    and `onCheckedChange` from Radix. Keep icons sized with `size-3.5` to align with topic
+    toggles.
+- **DropdownMenu** (`dropdown-menu.tsx`)
+  - Provides menu items, separators, shortcuts, checkbox/radio items, and submenus. Each item
+    forwards the `data-variant` attribute (default/destructive). Update this file if you need
+    new menu surface styles rather than inlining overrides.
+- **ScrollArea** (`scroll-area.tsx`)
+  - Combines `ScrollArea.Root`, `.Viewport`, and `.Scrollbar` with custom thumb styling.
+    Reuse for scrollable panels instead of raw `<div>` overflow to keep consistent
+    scrollbar/keep-alive behaviour.
+- **Sheet** (`sheet.tsx`)
+  - Radix dialog configured as a sliding drawer (right/left/top/bottom). The Settings sheet
+    depends on the `side="right"` animation classes—keep transitions intact when editing.
+- **Tabs** (`tabs.tsx`)
+  - Inline-flex tab list with active-state border and focus rings. Used heavily by the Video
+    Studio; maintain the root/list/trigger/content structure so keyboard navigation works.
 
-### Button (`button.tsx`)
+## Styling Conventions
+- All components rely on the design tokens defined in `globals.css` (`gradient-primary`,
+  `glass`, `shadow-*`). If you introduce a new visual treatment, add utility classes there
+  rather than hard-coding hex values.
+- Focus states come from Tailwind (`focus-visible:ring-[3px]` etc.). Keep them accessible and
+  ensure `data-slot` attributes remain so design tooling can target them.
+- When adding new components, prefer `@radix-ui` primitives to maintain accessibility. Follow
+  the patterns above: wrap the primitive, apply Tailwind classes, and export named helpers.
 
-- **Purpose**: Primary and secondary action buttons
-- **Variants**: Default, outline, ghost, link
-- **Sizes**: Default, sm, lg, icon
-- **Usage**: Fetch Papers, Clear Selection buttons
+## Usage Tips
+- Import components via aliases (`@/components/ui/button`). The Next.js `tsconfig` path
+  handles alias resolution.
+- Compose shadcn components using the exported slots: e.g., `Card` + `CardHeader` +
+  `CardContent`. Avoid creating ad-hoc wrappers in page files; extend the primitive if the
+  pattern is shared.
+- Keep props typed – extend `React.ComponentProps<typeof Primitive>` when adding options so
+  TypeScript infers the correct attributes.
 
-### Card (`card.tsx`)
-
-- **Purpose**: Container for paper information
-- **Components**: Card, CardHeader, CardContent, CardFooter
-- **Usage**: Paper display cards with hover effects
-
-### Checkbox (`checkbox.tsx`)
-
-- **Purpose**: Topic selection checkboxes
-- **Features**: Controlled state, accessibility
-- **Usage**: Topic selection grid
-
-### ScrollArea (`scroll-area.tsx`)
-
-- **Purpose**: Scrollable container for paper list
-- **Features**: Custom scrollbar, smooth scrolling
-- **Usage**: Paper preview section
-
-## 🎨 Styling System
-
-### Design Tokens
-
-- **Colors**: Gray palette (900, 800, 700, 600, 500, 400, 300)
-- **Spacing**: Tailwind spacing scale
-- **Typography**: Inter font family
-- **Shadows**: Subtle shadows for depth
-
-### Component Variants
-
-- **Primary**: Blue buttons (`bg-blue-600`)
-- **Secondary**: Gray outline buttons (`border-gray-500`)
-- **Cards**: Dark cards (`bg-gray-700`) with hover (`hover:bg-gray-600`)
-
-## 🔧 Usage Examples
-
-### Button Usage
-
-```tsx
-// Primary button
-<Button className="bg-blue-600 hover:bg-blue-700">
-  Fetch Papers
-</Button>
-
-// Outline button
-<Button variant="outline" className="border-gray-500">
-  Clear Selection
-</Button>
-```
-
-### Card Usage
-
-```tsx
-<Card className="bg-gray-700 border-gray-600 hover:bg-gray-600">
-  <CardContent>
-    <h3>{paper.title}</h3>
-    <p>{paper.authors}</p>
-  </CardContent>
-</Card>
-```
-
-### Checkbox Usage
-
-```tsx
-<Checkbox
-  id={topic.id}
-  checked={selectedTopics.includes(topic.id)}
-  onCheckedChange={() => handleTopicToggle(topic.id)}
-/>
-```
-
-## 🛠️ Development Notes
-
-### Shadcn/UI Integration
-
-- **Installation**: `npx shadcn-ui@latest add [component]`
-- **Customization**: Modify component files directly
-- **Styling**: Use Tailwind CSS classes
-- **Accessibility**: Built-in ARIA attributes
-
-### Component Patterns
-
-- **Composition**: Use compound components (Card + CardContent)
-- **Variants**: Use variant prop for different styles
-- **Forwarding**: Forward refs for proper DOM access
-- **TypeScript**: Full type safety with proper interfaces
-
-## 🐛 Common Issues
-
-### Styling Conflicts
-
-- **Problem**: Tailwind classes not applying
-- **Solution**: Check CSS import order
-- **Debug**: Use browser dev tools
-
-### Accessibility Issues
-
-- **Problem**: Missing ARIA attributes
-- **Solution**: Use Radix UI primitives
-- **Test**: Use screen reader testing
-
-### TypeScript Errors
-
-- **Problem**: Type mismatches
-- **Solution**: Check component prop types
-- **Debug**: Use TypeScript compiler
-
-## 🔍 Testing
-
-### Component Testing
-
-- **Visual**: Test in browser
-- **Accessibility**: Use screen reader
-- **Responsive**: Test on different screen sizes
-- **Interaction**: Test hover/focus states
-
-### Integration Testing
-
-- **State**: Test with React state
-- **Props**: Test different prop combinations
-- **Events**: Test click handlers
-
-## 📝 When Modifying
-
-### Adding New Components
-
-1. Use `npx shadcn-ui@latest add [component]`
-2. Customize styling as needed
-3. Test accessibility
-4. Document usage
-
-### Modifying Existing Components
-
-1. Update component file
-2. Test all usage locations
-3. Ensure backward compatibility
-4. Update documentation
-
-### Styling Changes
-
-1. Modify Tailwind classes
-2. Test responsive design
-3. Ensure contrast ratios
-4. Test dark theme
-
-## 🎯 Agent Instructions
-
-- Always test components in isolation
-- Maintain accessibility standards
-- Use consistent styling patterns
-- Follow Shadcn/UI conventions
-- Test responsive behavior
-- Document component APIs
-- Ensure TypeScript compliance
+## Testing
+- Visual regressions: run the Next.js dev server (`npm run dev`) and inspect focus/hover
+  states in dark/light modes.
+- Accessibility: validate keyboard navigation for DropdownMenu, Sheet, and Tabs when altering
+  markup. Radix handles most ARIA attributes; avoid removing structural wrappers that provide
+  them.

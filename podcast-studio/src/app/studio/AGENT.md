@@ -1,74 +1,95 @@
 # Audio Studio Agent Guide
 
-## 📌 Purpose
-The Audio Studio (`page.tsx`) renders the realtime conversation workspace where a host can talk with an OpenAI-powered expert. It orchestrates the WebRTC session, streams microphone audio in PCM16 batches, and renders the combined live transcript with contextual UI cues.
+## Purpose
+`src/app/studio/page.tsx` renders the realtime production workspace. It restores the paper
+selected on the Research Hub, manages OpenAI realtime sessions (WebRTC + HTTP fallbacks), and
+paints the multi-panel UI (transcript, controls, status sidebar).
 
-## 🧭 Anatomy
-- **Layout chrome**: Reuses `Sidebar` and `Header` for navigation, state banner, and timer.
-- **Paper context**: Reads the last selected research paper from `sessionStorage` and renders fallback messaging if nothing was handed off from the Research Hub.
-- **Recording controls**: Connect/record buttons, manual text input, transcript export, and disconnect actions.
-- **Live transcript**: Scrollable conversation history with live typing animation, user transcription preview, and AI responses.
-- **Hidden audio element**: Plays the expert voice returned over WebRTC.
+The component is a client component that expects to run under the `SidebarProvider` and
+`ApiConfigProvider` wrappers declared in `src/app/layout.tsx`.
 
-## 🗄️ Core State & Refs
-| Identifier | Type | Role |
-| --- | --- | --- |
-| `isConnected`, `isSessionReady`, `isRecording`, `isConnecting` | `boolean` | Connection lifecycle flags that guard user actions.
-| `messages` | `ConversationMessage[]` | Persisted transcript entries rendered in the UI.
-| `currentPaper` / `paperLoadError` | `SelectedPaper \| null` / `string \| null` | Hydrated from `sessionStorage` (`vps:selectedPaper`) and surfaced in the "Current Paper" card, with warnings when parsing fails.
-| `userTranscription` / `isTranscribing` | `string` / `boolean` | Live microphone transcription preview while server VAD is active.
-| `mediaRecorderRef` | `MicrophoneProcessor \| null` | Wraps the ScriptProcessor pipeline so we can stop audio capture quickly.
-| `pcRef` / `dcRef` / `aiTrackRef` | WebRTC handles | Track the active RTCPeerConnection, data channel, and remote audio track for cleanup.
-| `aiTextBufferRef` / `aiTypingIntervalRef` | `string` / `number \| null` | Buffer incoming AI text deltas and drive the typing animation.
-| `micChunkQueueRef` / `isUploadingRef` / `micFlushIntervalRef` | refs | Batch PCM16 frames and flush to `/api/rt/audio-append` every 50 ms without overlapping uploads.
+## Anatomy
+- **Layout chrome** – `Sidebar` and `Header` render navigation and status. Pass
+  `isLiveRecording` to `Sidebar` so the "LIVE" badge tracks the recording state.
+- **Paper context** – Handoff uses `sessionStorage` key `vps:selectedPaper`. Malformed payloads
+  populate `paperLoadError` and surface a prompt to revisit the Research Hub.
+- **Workspace settings** – `useApiConfig()` pulls the active provider + API keys from the
+  Settings sheet (Sheet component). `ensureRealtimeSession` relies on this context before
+  contacting the server.
+- **Realtime state** – Flags for connection (`isConnected`, `isSessionReady`), recording
+  (`isRecording`, `isConnecting`), and timers (`sessionDuration`). `messages` holds the curated
+  transcript history rendered in the scroll area.
+- **Refs** – Extensive refs manage audio streaming:
+  - `pcRef`/`dcRef`/`aiTrackRef` – WebRTC peer connection, data channel, and remote audio track
+    (for playback).
+  - `audioContextRef`, `mediaRecorderRef`, `micChunkQueueRef`, `micFlushIntervalRef`,
+    `isUploadingRef` – control microphone capture, PCM16 encoding, and batching flushes to
+    `/api/rt/audio-append`.
+  - `aiTextBufferRef`, `aiTypingIntervalRef`, `lastAiMessageIdRef` – animate AI text output.
+  - `transcriptEndRef` – ensures auto-scroll as messages update.
 
-Keep all cleanup logic in `teardownRealtime` so any exit path (manual disconnect, component unmount, fatal error) leaves no dangling audio context, timers, or interval handles.
+## Research Hub Handoff
+- On mount, read `sessionStorage.getItem('vps:selectedPaper')`. Store the parsed object in
+  `currentPaper` and log parse errors (the UI shows a recovery message).
+- Listen for `storage` events to support multi-tab workflows. If the user selects a new paper
+  in another tab, this page immediately updates.
+- Keep the stored schema (`SelectedPaper`) aligned with the writer in `src/app/page.tsx`.
+  Added fields should degrade gracefully when missing.
 
-## 🔄 Research Hub Handoff
-- An early `useEffect` reads `sessionStorage.getItem("vps:selectedPaper")`, parsing it into `currentPaper` and clearing the value when missing.
-- Malformed payloads log a console error and populate `paperLoadError` so the UI can guide the user back to the Research Hub.
-- A `storage` event listener keeps multiple tabs in sync—updates to `vps:selectedPaper` immediately refresh the current paper in the Audio Studio.
-- Whenever you extend the stored schema, update both `Home.handleStartAudioStudio` and the `SelectedPaper` interface here.
+## Provider & Session Management
+- `ensureRealtimeSession` validates that the active provider is `openai` (the Google branch is
+  not implemented yet) and that a usable API key exists. It then POSTs to `/api/rt/start` with
+  `{sessionId, provider, apiKey, model}` allowing the server to bootstrap the
+  `rtSessionManager` singleton.
+- Session status polling is available via `/api/rt/status`; use it during debugging to verify
+  the manager is active before sending audio.
+- `handleDisconnect` and `teardownRealtime` must always stop microphone capture, clear timers,
+  close the peer connection/data channel, and notify `/api/rt/stop` to release the session.
 
-## 🔌 Connection Workflow
-1. **`handleConnect`**
-   - Calls `ensureRealtimeSession` (`POST /api/rt/start`) before opening WebRTC.
-   - Instantiates an `RTCPeerConnection`, attaches a send-only microphone track, and negotiates SDP with `/api/rt/webrtc`.
-   - Creates a data channel (`oai-events`) to receive JSON payloads for AI responses, transcription events, and errors.
-   - Updates session settings (`modalities`, `voice`, `turn_detection`) once the data channel opens.
-2. **`handleStartRecording` / `startMicrophoneRecording`**
-   - Requests mic access, creates a 24 kHz `AudioContext`, converts float PCM to PCM16, and queues bytes for the batching loop.
-   - Flush loop concatenates queued chunks, base64-encodes them, and POSTs to `/api/rt/audio-append`.
-3. **`handleSendText`**
-   - Sends typed messages through `/api/rt/text` after confirming the session is live.
-4. **`handleDcMessage`**
-   - Parses data-channel JSON safely. Supports:
-     - `response.*.delta` → buffer AI text for the typing animation.
-     - `response.done` → flush buffers and reset message pointer.
-     - `conversation.item.input_audio_transcription.*` → show live speech preview and emit committed user messages.
-     - `response.error` → surface session errors to the UI.
-5. **`handleStopRecording` / `handleDisconnect` / `teardownRealtime`**
-   - Stop mic capture, close peer connection + data channel, dispose the audio context, and notify `/api/rt/stop`.
+## Connection Workflow
+1. **Connect (`handleConnect`)**
+   - Calls `ensureRealtimeSession` (server boots session manager).
+   - Creates a `RTCPeerConnection`, attaches microphone track, negotiates with
+     `/api/rt/webrtc` (OpenAI SDP exchange), and opens a data channel (`oai-events`).
+   - Once the data channel is ready, send a session settings payload to request audio + text
+     modalities, voice, and VAD.
+2. **Recording (`handleStartRecording` / `startMicrophoneRecording`)**
+   - Requests microphone permission, creates a 24kHz `AudioContext`, and wires a ScriptProcessor
+     that converts Float32 PCM to PCM16.
+   - Queue PCM16 bytes in `micChunkQueueRef`; a 50 ms interval flush posts batched base64 to
+     `/api/rt/audio-append`. Guard against concurrent uploads using `isUploadingRef`.
+   - Call `/api/rt/audio-commit` after each flush to let OpenAI know the turn is complete.
+3. **Text messages (`handleSendText`)**
+   - POST to `/api/rt/text` after ensuring the session is active. Input is trimmed and cleared
+     once the request resolves.
+4. **Server events (`handleDcMessage`)**
+   - Data-channel messages include AI response deltas, transcription updates, and errors. Parse
+     cautiously and always guard unknown payloads with `try/catch`.
+   - SSE listeners (see `useEffect` hooks near the bottom of the file) consume
+     `/api/rt/audio`, `/api/rt/transcripts`, and `/api/rt/user-transcripts`. Each stream must
+     be unsubscribed in `teardownRealtime` to avoid leaking connections.
+5. **Disconnect (`handleStopRecording`, `handleDisconnect`, `teardownRealtime`)**
+   - Stop mic processing, clear buffers/intervals, pause audio playback, close peer/data
+     channels, and call `/api/rt/stop` to dispose of the server session.
 
-## 🖥️ UI Considerations
-- Auto-scroll transcript via `transcriptEndRef` whenever messages or live transcription change.
-- Guard user actions when `isConnected`/`isSessionReady` are false to avoid rejected API calls.
-- Maintain empathetic empty states that guide hosts before the first AI response.
-- Use semantic icons and consistent gradient backgrounds from the global theme.
-- Pass `isLiveRecording` into the `Sidebar` so the "LIVE" badge only appears while a session is actively recording.
+## UI & Interaction Tips
+- Auto-scroll the transcript by calling `scrollIntoView` on `transcriptEndRef` whenever
+  `messages` or transcription preview changes.
+- Disable buttons when `isConnecting`, `isRecording`, or `isSessionReady` states do not allow a
+  given action to prevent accidental double submits.
+- Keep empty/error states empathetic. The current implementation shows helpful messaging when
+  there is no selected paper or when realtime setup fails.
+- `sessionDuration` drives the timer pill in the header; ensure it resets in teardown paths.
 
-## ✅ Testing & Debugging
-Run `npm run lint` from the `podcast-studio/` directory before committing UI or logic changes. The command currently fails due to unrelated modules; still run it and note pre-existing failures in PR summaries.
-
-Manual checklist:
-- Connect, speak, and confirm AI audio plays.
-- Verify text input sends messages and renders in transcript.
-- Ensure disconnect/teardown clears timers, microphone, and transcript state.
-
-## 🧠 When Extending
-- **New transcript features**: Update `ConversationMessage` typings and make sure the render loop handles new message types gracefully.
-- **Additional realtime events**: Extend `handleDcMessage` with explicit type guards. Avoid `any`; prefer discriminated unions.
-- **Multiple experts**: Store participant metadata with each message and surface it in avatars + names.
-- **State refactors**: Keep teardown idempotent and remember to clear `micChunkQueueRef` + `aiTypingIntervalRef`.
-
-Keep this page resilient—treat WebRTC and realtime APIs as unstable networks and handle every promise rejection or parse failure defensively.
+## Testing Checklist
+- Run `npm run lint` from the repository root (known upstream issues may still exist; document
+  them in PRs).
+- Manual:
+  - Start the backend + frontend, select a paper, and confirm it appears in the "Current Paper"
+    card.
+  - Connect to the realtime session, speak into the mic, and verify audio plays back plus
+    transcript/typing updates stream in.
+  - Toggle Settings → Workspace to swap API keys/providers; confirm guardrails block non-OpenAI
+    providers.
+  - Disconnect and ensure timers/audio contexts stop, SSE streams close, and the sidebar LIVE
+    badge clears.

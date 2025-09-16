@@ -1,134 +1,40 @@
-# API Route Agent Guide
+# `/api/papers` Route – Agent Guide
 
-## 🎯 Purpose
+## Responsibility
+This App Router API route proxies Research Hub requests to the FastAPI backend. It enforces
+input validation identical to the backend, forwards the payload, and normalizes error
+responses so the client surfaces meaningful messages.
 
-Next.js API route that acts as a proxy between the frontend and FastAPI backend for fetching research papers. This route serves the Research Hub phase of the Virtual Podcast Studio, providing the foundation for the podcast production pipeline.
-
-## 📁 File Location
-
-```text
+```
 src/app/api/papers/route.ts
 ```
 
-## 🔧 Function Overview
+## Request Lifecycle
+1. Parse the JSON body and ensure `topics` exists, is an array of ≤10 strings, and each value
+   matches `^[a-zA-Z0-9.\-_]+$` with a ≤50 character limit. Keep this logic in sync with
+   `backend/main.py::PaperRequest` + `sanitize_input`.
+2. Forward the sanitized payload to `${BACKEND_URL}/api/papers`. `BACKEND_URL` defaults to
+   `http://localhost:8000`; override via `.env.local` when the backend lives elsewhere.
+3. On non-200 responses, attempt to parse `detail` from the backend error JSON and rethrow it
+   with the same status code. This allows the Research Hub to display specific validation or
+   rate-limit messages.
+4. Catch network failures (`ECONNREFUSED`) and respond with HTTP 503 instructing developers to
+   start the FastAPI server.
+5. Handle preflight requests via the `OPTIONS` export. CORS defaults to `http://localhost:3000`
+   but can be changed with `FRONTEND_URL` in the env.
 
-### `POST` Handler
+## Implementation Guidelines
+- The route currently runs in the default Node.js runtime. If you introduce Node-only APIs,
+  add `export const runtime = "nodejs";` explicitly so Next.js does not attempt to execute it
+  on the edge.
+- Use `cache: 'no-store'` in the frontend fetch call instead of inside this route (the page
+  already sets it). Avoid introducing shared module-level state; App Router may reuse module
+  instances between requests.
+- If you add new backend query parameters, expose them here explicitly (either in the body or
+  query string) and update validation tests.
 
-- **Purpose**: Proxy requests to FastAPI backend
-- **Input**: JSON with topics array
-- **Output**: JSON with papers array
-- **Error Handling**: Catches and formats backend errors
-
-## 🔄 Request/Response Flow
-
-### Request Format
-
-```typescript
-{
-  "topics": ["cs.AI", "cs.LG", "cs.CV", "cs.RO"]
-}
-```
-
-### Response Format
-
-```typescript
-{
-  "papers": [
-    {
-      "id": "2509.09679v1",
-      "title": "Paper Title",
-      "authors": "Author 1, Author 2, et al.",
-      "abstract": "Paper abstract...",
-      "published": "2025-09-11T17:59:59Z",
-      "arxiv_url": "https://arxiv.org/abs/2509.09679v1"
-    }
-  ]
-}
-```
-
-## 🛠️ Implementation Details
-
-### Backend Communication
-
-- **URL**: `http://localhost:8000/api/papers`
-- **Method**: POST
-- **Headers**: Content-Type: application/json
-- **Timeout**: Default fetch timeout
-
-### Error Handling
-
-- **Network Errors**: Catches fetch failures
-- **Backend Errors**: Forwards backend error messages
-- **Validation**: Ensures topics array is provided
-
-### Response Processing
-
-- **Success**: Returns papers array directly
-- **Error**: Returns error message with 500 status
-- **Timeout**: Handles fetch timeouts gracefully
-
-## 🔍 Testing
-
-### Manual Testing
-
-```bash
-# Test API route
-curl -X POST http://localhost:3000/api/papers \
-  -H "Content-Type: application/json" \
-  -d '{"topics": ["cs.AI"]}'
-```
-
-### Expected Responses
-
-- **Success**: 200 status with papers array
-- **Error**: 500 status with error message
-- **Invalid Input**: 500 status with validation error
-
-## 🐛 Common Issues
-
-### Backend Connection
-
-- **Problem**: Backend not running
-- **Solution**: Ensure FastAPI server is running on port 8000
-- **Check**: `curl http://localhost:8000/health`
-
-### CORS Issues
-
-- **Problem**: Cross-origin request blocked
-- **Solution**: Next.js handles CORS automatically
-- **Note**: No additional CORS configuration needed
-
-### Timeout Issues
-
-- **Problem**: Request times out
-- **Solution**: Check backend performance
-- **Debug**: Add timeout handling
-
-## 📝 When Modifying
-
-### Adding New Endpoints
-
-1. Create new route file in `api/` directory
-2. Follow Next.js App Router conventions
-3. Test with curl or frontend
-
-### Changing Request Format
-
-1. Update TypeScript interfaces
-2. Modify request validation
-3. Update frontend to match
-
-### Adding Middleware
-
-1. Use Next.js middleware
-2. Add authentication/authorization
-3. Implement rate limiting
-
-## 🎯 Agent Instructions
-
-- Always test API routes after changes
-- Maintain consistent error handling
-- Use TypeScript for type safety
-- Follow Next.js App Router patterns
-- Handle edge cases gracefully
-- Document any new endpoints
+## Testing
+- With the backend running: `curl -X POST http://localhost:3000/api/papers -H 'Content-Type:
+  application/json' -d '{"topics":["cs.AI"]}'`.
+- Simulate rate limiting or validation failures by sending too many topics; verify the status
+  code and error message bubble up to the UI.
