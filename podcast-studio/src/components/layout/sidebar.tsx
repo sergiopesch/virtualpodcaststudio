@@ -12,15 +12,10 @@ import {
   Headphones,
   Settings,
   User,
-  Bell,
-  HelpCircle,
   ChevronDown,
+  ChevronRight,
   Menu,
   X,
-  Mail,
-  MessageCircle,
-  LifeBuoy,
-  ShieldCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -80,7 +75,7 @@ const navigation = [
   },
 ];
 
-type UserMenuKey = "profile" | "settings" | "notifications" | "support";
+type UserMenuKey = "profile" | "settings";
 
 interface UserMenuItem {
   key: UserMenuKey;
@@ -99,28 +94,19 @@ const userMenuItems: UserMenuItem[] = [
   {
     key: "profile",
     label: "Profile",
-    description: "Update your name, role, and on-air details.",
+    description: "Personalize how you appear on every recording.",
     icon: User,
   },
   {
     key: "settings",
     label: "Workspace Settings",
-    description: "Control appearance and editing defaults.",
+    description: "Tune the studio theme, tools, and AI providers.",
     icon: Settings,
   },
-  {
-    key: "notifications",
-    label: "Notifications",
-    description: "Choose when Virtual Podcast Studio alerts you.",
-    icon: Bell,
-  },
-  {
-    key: "support",
-    label: "Support",
-    description: "Reach our team or browse production resources.",
-    icon: HelpCircle,
-  },
 ];
+
+const baseFieldClass =
+  "w-full rounded-lg border border-gray-300 bg-white/90 px-3 py-2 text-sm text-gray-900 shadow-sm transition focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200";
 
 export function Sidebar({
   children,
@@ -144,12 +130,6 @@ export function Sidebar({
     autoSaveDrafts: true,
     enableTimelineSnapping: true,
     showAdvancedAnalytics: false,
-  });
-  const [notificationPreferences, setNotificationPreferences] = useState({
-    emailAlerts: true,
-    productUpdates: true,
-    securityAlerts: true,
-    digestFrequency: "weekly" as "daily" | "weekly" | "monthly",
   });
   const {
     activeProvider: storedProvider,
@@ -225,11 +205,6 @@ export function Sidebar({
         });
         break;
       }
-      case "notifications":
-        console.info("Notification preferences saved", notificationPreferences);
-        break;
-      case "support":
-        break;
       default:
         break;
     }
@@ -239,124 +214,105 @@ export function Sidebar({
   }, [
     activeUserMenu,
     llmSettings,
-    notificationPreferences,
     persistActiveProvider,
     persistApiKey,
     profileSettings,
     workspacePreferences,
   ]);
 
-  const getPrimaryActionLabel = (key: UserMenuKey) => {
-    switch (key) {
-      case "profile":
-        return "Save profile";
-      case "settings":
-        return "Save workspace";
-      case "notifications":
-        return "Save preferences";
-      case "support":
-        return "Close";
-      default:
-        return "Save";
-    }
-  };
+  const getPrimaryActionLabel = (key: UserMenuKey) =>
+    key === "profile" ? "Save profile" : "Save workspace";
 
   const renderUserConfiguration = () => {
     if (!activeUserMenu) {
       return null;
     }
 
-    switch (activeUserMenu.key) {
-      case "profile":
-        return (
-          <div className="space-y-5 text-sm text-gray-700">
-            <div>
-              <label
-                htmlFor="profile-full-name"
-                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-              >
-                Display name
+    if (activeUserMenu.key === "profile") {
+      return (
+        <div className="space-y-6 text-sm text-gray-700">
+          <section className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Public presence
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label htmlFor="profile-full-name" className="flex flex-col space-y-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Display name
+                </span>
+                <input
+                  id="profile-full-name"
+                  type="text"
+                  value={profileSettings.fullName}
+                  onChange={(event) =>
+                    setProfileSettings((previous) => ({
+                      ...previous,
+                      fullName: event.target.value,
+                    }))
+                  }
+                  className={baseFieldClass}
+                />
               </label>
-              <input
-                id="profile-full-name"
-                type="text"
-                value={profileSettings.fullName}
-                onChange={(event) =>
-                  setProfileSettings((previous) => ({
-                    ...previous,
-                    fullName: event.target.value,
-                  }))
-                }
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="profile-role"
-                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-              >
-                Role
+              <label htmlFor="profile-role" className="flex flex-col space-y-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Role
+                </span>
+                <input
+                  id="profile-role"
+                  type="text"
+                  value={profileSettings.role}
+                  onChange={(event) =>
+                    setProfileSettings((previous) => ({
+                      ...previous,
+                      role: event.target.value,
+                    }))
+                  }
+                  className={baseFieldClass}
+                />
               </label>
-              <input
-                id="profile-role"
-                type="text"
-                value={profileSettings.role}
-                onChange={(event) =>
-                  setProfileSettings((previous) => ({
-                    ...previous,
-                    role: event.target.value,
-                  }))
-                }
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-              />
             </div>
-            <div>
-              <label
-                htmlFor="profile-location"
-                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-              >
-                Location
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label htmlFor="profile-location" className="flex flex-col space-y-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Location
+                </span>
+                <input
+                  id="profile-location"
+                  type="text"
+                  value={profileSettings.location}
+                  onChange={(event) =>
+                    setProfileSettings((previous) => ({
+                      ...previous,
+                      location: event.target.value,
+                    }))
+                  }
+                  className={baseFieldClass}
+                />
               </label>
-              <input
-                id="profile-location"
-                type="text"
-                value={profileSettings.location}
-                onChange={(event) =>
-                  setProfileSettings((previous) => ({
-                    ...previous,
-                    location: event.target.value,
-                  }))
-                }
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="profile-email"
-                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-              >
-                Contact email
+              <label htmlFor="profile-email" className="flex flex-col space-y-2">
+                <span className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Contact email
+                </span>
+                <input
+                  id="profile-email"
+                  type="email"
+                  value={profileSettings.email}
+                  onChange={(event) =>
+                    setProfileSettings((previous) => ({
+                      ...previous,
+                      email: event.target.value,
+                    }))
+                  }
+                  className={baseFieldClass}
+                />
               </label>
-              <input
-                id="profile-email"
-                type="email"
-                value={profileSettings.email}
-                onChange={(event) =>
-                  setProfileSettings((previous) => ({
-                    ...previous,
-                    email: event.target.value,
-                  }))
-                }
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-              />
             </div>
-            <div>
-              <label
-                htmlFor="profile-bio"
-                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-              >
+          </section>
+          <section className="space-y-2">
+            <label htmlFor="profile-bio" className="flex flex-col space-y-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
                 Bio
-              </label>
+              </span>
               <textarea
                 id="profile-bio"
                 value={profileSettings.bio}
@@ -366,25 +322,36 @@ export function Sidebar({
                     bio: event.target.value,
                   }))
                 }
-                rows={3}
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                rows={4}
+                className={`${baseFieldClass} min-h-[120px] resize-none leading-relaxed`}
               />
-              <p className="mt-1 text-xs text-gray-500">
-                Share a short description that appears on your published show pages.
-              </p>
+            </label>
+            <p className="text-xs text-gray-500">
+              Share a short description that appears on your published show pages.
+            </p>
+            <div className="rounded-xl border border-dashed border-purple-200 bg-purple-50/70 p-3 text-xs text-purple-700">
+              Tip: keep your bio warm and concise—around 2–3 sentences perform best for new
+              listeners.
             </div>
-          </div>
-        );
-      case "settings": {
-        const openAiConfigured = (apiKeys.openai ?? "").trim().length > 0;
-        const googleConfigured = (apiKeys.google ?? "").trim().length > 0;
+          </section>
+        </div>
+      );
+    }
 
-        return (
-          <div className="space-y-5 text-sm text-gray-700">
-            <div>
+    if (activeUserMenu.key === "settings") {
+      const openAiConfigured = (apiKeys.openai ?? "").trim().length > 0;
+      const googleConfigured = (apiKeys.google ?? "").trim().length > 0;
+
+      return (
+        <div className="space-y-6 text-sm text-gray-700">
+          <section className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Appearance
+            </p>
+            <div className="flex flex-col space-y-2">
               <label
                 htmlFor="workspace-theme"
-                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+                className="text-xs font-medium uppercase tracking-wide text-gray-500"
               >
                 Theme
               </label>
@@ -397,20 +364,22 @@ export function Sidebar({
                     theme: event.target.value as "system" | "light" | "dark",
                   }))
                 }
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                className={baseFieldClass}
               >
                 <option value="system">Match system</option>
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
               </select>
             </div>
+          </section>
+          <section className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Editing preferences
+            </p>
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Editing preferences
-              </p>
               <label
                 htmlFor="workspace-auto-save"
-                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+                className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200/80 bg-white/90 p-4 shadow-sm transition hover:border-purple-200 hover:bg-purple-50/70"
               >
                 <Checkbox
                   id="workspace-auto-save"
@@ -432,7 +401,7 @@ export function Sidebar({
               </label>
               <label
                 htmlFor="workspace-snapping"
-                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+                className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200/80 bg-white/90 p-4 shadow-sm transition hover:border-purple-200 hover:bg-purple-50/70"
               >
                 <Checkbox
                   id="workspace-snapping"
@@ -454,7 +423,7 @@ export function Sidebar({
               </label>
               <label
                 htmlFor="workspace-analytics"
-                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+                className="flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200/80 bg-white/90 p-4 shadow-sm transition hover:border-purple-200 hover:bg-purple-50/70"
               >
                 <Checkbox
                   id="workspace-analytics"
@@ -475,80 +444,82 @@ export function Sidebar({
                 </div>
               </label>
             </div>
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                AI providers
-              </p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <label
-                  htmlFor="llm-provider-openai"
-                  className={`flex cursor-pointer items-start space-x-3 rounded-xl border p-3 shadow-sm transition ${
-                    llmSettings.activeProvider === "openai"
-                      ? "border-purple-300 bg-purple-50/60"
-                      : "border-gray-200 bg-white hover:border-purple-200"
-                  }`}
-                >
-                  <input
-                    id="llm-provider-openai"
-                    type="radio"
-                    name="llm-provider"
-                    value="openai"
-                    checked={llmSettings.activeProvider === "openai"}
-                    onChange={() =>
-                      setLlmSettings((previous) => ({
-                        ...previous,
-                        activeProvider: "openai",
-                      }))
-                    }
-                    className="mt-0.5 h-4 w-4 text-purple-600 focus:ring-purple-500"
-                  />
-                  <div className="space-y-1">
-                    <span className="text-sm font-medium text-gray-900">OpenAI</span>
-                    <p className="text-xs text-gray-500">
-                      Realtime conversations powered by GPT-4o.
-                    </p>
-                  </div>
-                </label>
-                <label
-                  htmlFor="llm-provider-google"
-                  className={`flex cursor-pointer items-start space-x-3 rounded-xl border p-3 shadow-sm transition ${
-                    llmSettings.activeProvider === "google"
-                      ? "border-purple-300 bg-purple-50/60"
-                      : "border-gray-200 bg-white hover:border-purple-200"
-                  }`}
-                >
-                  <input
-                    id="llm-provider-google"
-                    type="radio"
-                    name="llm-provider"
-                    value="google"
-                    checked={llmSettings.activeProvider === "google"}
-                    onChange={() =>
-                      setLlmSettings((previous) => ({
-                        ...previous,
-                        activeProvider: "google",
-                      }))
-                    }
-                    className="mt-0.5 h-4 w-4 text-purple-600 focus:ring-purple-500"
-                  />
-                  <div className="space-y-1">
-                    <span className="text-sm font-medium text-gray-900">Google</span>
-                    <p className="text-xs text-gray-500">
-                      Gemini responses for research synthesis.
-                    </p>
-                  </div>
-                </label>
-              </div>
+          </section>
+          <section className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+              AI providers
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label
+                htmlFor="llm-provider-openai"
+                className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 shadow-sm transition ${
+                  llmSettings.activeProvider === "openai"
+                    ? "border-purple-300 bg-purple-50/70"
+                    : "border-gray-200/80 bg-white/90 hover:border-purple-200 hover:bg-purple-50/60"
+                }`}
+              >
+                <input
+                  id="llm-provider-openai"
+                  type="radio"
+                  name="llm-provider"
+                  value="openai"
+                  checked={llmSettings.activeProvider === "openai"}
+                  onChange={() =>
+                    setLlmSettings((previous) => ({
+                      ...previous,
+                      activeProvider: "openai",
+                    }))
+                  }
+                  className="mt-0.5 h-4 w-4 text-purple-600 focus:ring-purple-500"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-medium text-gray-900">OpenAI</span>
+                  <p className="text-xs text-gray-500">
+                    Realtime conversations powered by GPT-4o.
+                  </p>
+                </div>
+              </label>
+              <label
+                htmlFor="llm-provider-google"
+                className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 shadow-sm transition ${
+                  llmSettings.activeProvider === "google"
+                    ? "border-purple-300 bg-purple-50/70"
+                    : "border-gray-200/80 bg-white/90 hover:border-purple-200 hover:bg-purple-50/60"
+                }`}
+              >
+                <input
+                  id="llm-provider-google"
+                  type="radio"
+                  name="llm-provider"
+                  value="google"
+                  checked={llmSettings.activeProvider === "google"}
+                  onChange={() =>
+                    setLlmSettings((previous) => ({
+                      ...previous,
+                      activeProvider: "google",
+                    }))
+                  }
+                  className="mt-0.5 h-4 w-4 text-purple-600 focus:ring-purple-500"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-medium text-gray-900">Google</span>
+                  <p className="text-xs text-gray-500">
+                    Gemini responses for research synthesis.
+                  </p>
+                </div>
+              </label>
             </div>
-            <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <div>
+          </section>
+          <section className="space-y-4 rounded-2xl border border-gray-200/80 bg-white/90 p-4 shadow-sm">
+            <div className="space-y-3">
+              <div className="flex flex-col space-y-2">
                 <label
                   htmlFor="openai-api-key"
                   className="text-xs font-semibold uppercase tracking-wide text-gray-500"
                 >
                   OpenAI API key
                 </label>
-                <div className="mt-1 flex items-center gap-2">
+                <div className="flex items-center gap-2">
                   <input
                     id="openai-api-key"
                     type="password"
@@ -561,7 +532,7 @@ export function Sidebar({
                       }))
                     }
                     placeholder="sk-..."
-                    className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    className={`${baseFieldClass} flex-1`}
                   />
                   {llmSettings.openaiKey && (
                     <Button
@@ -579,20 +550,20 @@ export function Sidebar({
                     </Button>
                   )}
                 </div>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="text-xs text-gray-500">
                   {openAiConfigured
                     ? "Saved locally in this browser."
                     : "Paste your OpenAI key (starts with \"sk-\")."}
                 </p>
               </div>
-              <div>
+              <div className="flex flex-col space-y-2">
                 <label
                   htmlFor="google-api-key"
                   className="text-xs font-semibold uppercase tracking-wide text-gray-500"
                 >
                   Google API key
                 </label>
-                <div className="mt-1 flex items-center gap-2">
+                <div className="flex items-center gap-2">
                   <input
                     id="google-api-key"
                     type="password"
@@ -605,7 +576,7 @@ export function Sidebar({
                       }))
                     }
                     placeholder="AIza..."
-                    className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                    className={`${baseFieldClass} flex-1`}
                   />
                   {llmSettings.googleKey && (
                     <Button
@@ -623,180 +594,23 @@ export function Sidebar({
                     </Button>
                   )}
                 </div>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="text-xs text-gray-500">
                   {googleConfigured
                     ? "Saved locally in this browser."
                     : "Use your Google AI Studio key (starts with \"AIza\")."}
                 </p>
               </div>
-              <div className="rounded-lg border border-dashed border-purple-200 bg-purple-50/60 p-3 text-xs text-purple-700">
-                API keys stay on this device and are only sent to Virtual Podcast Studio
-                when you start a conversation or request a summary.
-              </div>
             </div>
-          </div>
-        );
-      }
-      case "notifications":
-        return (
-          <div className="space-y-5 text-sm text-gray-700">
-            <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Delivery channels
-              </p>
-              <label
-                htmlFor="notifications-email"
-                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
-              >
-                <Checkbox
-                  id="notifications-email"
-                  checked={notificationPreferences.emailAlerts}
-                  onCheckedChange={(checked) =>
-                    setNotificationPreferences((previous) => ({
-                      ...previous,
-                      emailAlerts: checked === true,
-                    }))
-                  }
-                  className="mt-0.5"
-                />
-                <div className="space-y-1">
-                  <span className="text-sm font-medium text-gray-900">Email alerts</span>
-                  <p className="text-xs text-gray-500">
-                    Get summaries when renders finish or collaborators comment.
-                  </p>
-                </div>
-              </label>
-              <label
-                htmlFor="notifications-updates"
-                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
-              >
-                <Checkbox
-                  id="notifications-updates"
-                  checked={notificationPreferences.productUpdates}
-                  onCheckedChange={(checked) =>
-                    setNotificationPreferences((previous) => ({
-                      ...previous,
-                      productUpdates: checked === true,
-                    }))
-                  }
-                  className="mt-0.5"
-                />
-                <div className="space-y-1">
-                  <span className="text-sm font-medium text-gray-900">Product updates</span>
-                  <p className="text-xs text-gray-500">
-                    Learn about new editing features and AI workflows.
-                  </p>
-                </div>
-              </label>
-              <label
-                htmlFor="notifications-security"
-                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
-              >
-                <Checkbox
-                  id="notifications-security"
-                  checked={notificationPreferences.securityAlerts}
-                  onCheckedChange={(checked) =>
-                    setNotificationPreferences((previous) => ({
-                      ...previous,
-                      securityAlerts: checked === true,
-                    }))
-                  }
-                  className="mt-0.5"
-                />
-                <div className="space-y-1">
-                  <span className="flex items-center gap-2 text-sm font-medium text-gray-900">
-                    <ShieldCheck className="h-4 w-4 text-green-500" /> Security alerts
-                  </span>
-                  <p className="text-xs text-gray-500">
-                    Immediate notifications for sign-ins and account changes.
-                  </p>
-                </div>
-              </label>
+            <div className="rounded-xl border border-dashed border-purple-200 bg-purple-50/70 p-3 text-xs text-purple-700">
+              API keys stay on this device and are only sent to Virtual Podcast Studio when you
+              start a conversation or request a summary.
             </div>
-            <div>
-              <label
-                htmlFor="notifications-frequency"
-                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-              >
-                Digest frequency
-              </label>
-              <select
-                id="notifications-frequency"
-                value={notificationPreferences.digestFrequency}
-                onChange={(event) =>
-                  setNotificationPreferences((previous) => ({
-                    ...previous,
-                    digestFrequency: event.target.value as "daily" | "weekly" | "monthly",
-                  }))
-                }
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
-              >
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Receive a compiled summary of production metrics.
-              </p>
-            </div>
-          </div>
-        );
-      case "support":
-        return (
-          <div className="space-y-4 text-sm text-gray-700">
-            <p className="text-gray-600">
-              Need a hand? The Virtual Podcast Studio team is here to help with
-              production workflows, account questions, and troubleshooting.
-            </p>
-            <div className="space-y-2">
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                asChild
-              >
-                <a href="mailto:support@virtualpodcast.studio">
-                  <Mail className="mr-2 h-4 w-4 text-purple-600" />
-                  Email support
-                </a>
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                asChild
-              >
-                <a
-                  href="https://virtualpodcast.studio/community"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <MessageCircle className="mr-2 h-4 w-4 text-purple-600" />
-                  Join the creator community
-                </a>
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full justify-start"
-                asChild
-              >
-                <a
-                  href="https://virtualpodcast.studio/academy"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <LifeBuoy className="mr-2 h-4 w-4 text-purple-600" />
-                  Browse tutorials & guides
-                </a>
-              </Button>
-            </div>
-            <div className="rounded-xl border border-dashed border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-700">
-              Our support hours are Monday–Friday, 9am–6pm PT. We typically
-              respond within one business day.
-            </div>
-          </div>
-        );
-      default:
-        return null;
+          </section>
+        </div>
+      );
     }
+
+    return null;
   };
 
   const getBadgeColor = (badge: string) => {
@@ -927,57 +741,111 @@ export function Sidebar({
             title={collapsed ? "John Doe - Creator" : undefined}
             aria-haspopup="menu"
             aria-expanded={showUserMenu}
-            className={`w-full ${collapsed ? "justify-center" : "justify-start"} text-gray-700 hover:bg-gray-50 hover:text-purple-700 p-2 transition-all duration-200`}
+            className={`group w-full rounded-2xl border border-transparent p-2 text-gray-700 transition-all duration-200 ${
+              collapsed
+                ? "justify-center hover:bg-purple-50/80 hover:text-purple-700"
+                : "items-center justify-start hover:border-purple-200 hover:bg-purple-50/80 hover:text-purple-700"
+            }`}
             onClick={() => setShowUserMenu((previous) => !previous)}
           >
-            <div className={`w-8 h-8 bg-gradient-primary rounded-lg flex items-center justify-center ${collapsed ? "mr-0" : "mr-3"} shadow-md`}>
-              <User className="w-4 h-4 text-white" />
+            <div
+              className={`flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-primary shadow-[0_12px_24px_-12px_rgba(99,102,241,0.65)] ${
+                collapsed ? "mr-0" : "mr-3"
+              }`}
+            >
+              <User className="h-4 w-4 text-white" />
             </div>
             {!collapsed && (
-              <>
-                <div className="flex-1 text-left">
-                  <div className="text-sm font-medium text-gray-900">John Doe</div>
-                  <div className="text-xs text-gray-500">Creator</div>
+              <div className="flex flex-1 items-center justify-between gap-3 text-left">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-gray-900 group-hover:text-purple-700">
+                      John Doe
+                    </span>
+                    <span className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Ready
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 group-hover:text-gray-600">
+                    <span>Creator</span>
+                    <span className="h-1 w-1 rounded-full bg-gray-300" />
+                    <span>Premium workspace</span>
+                  </div>
                 </div>
                 <ChevronDown
-                  className={`w-4 h-4 text-gray-400 transition-transform duration-200 ${showUserMenu ? "rotate-180" : ""}`}
+                  className={`h-4 w-4 text-gray-400 transition-transform duration-200 ${showUserMenu ? "rotate-180" : ""}`}
                 />
-              </>
+              </div>
             )}
           </Button>
 
           {/* User Menu Dropdown */}
           {showUserMenu && !collapsed && (
-            <div className="absolute bottom-full left-4 right-4 mb-2 space-y-1 rounded-xl border border-gray-200/60 bg-white/95 p-2 shadow-lg backdrop-blur-sm z-50">
-              {userMenuItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeUserMenu?.key === item.key;
+            <div className="absolute bottom-full left-0 right-0 mb-3 z-50">
+              <div className="rounded-2xl border border-gray-200/80 bg-white/95 p-4 shadow-2xl backdrop-blur">
+                <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-primary text-white shadow-md">
+                    <User className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">John Doe</p>
+                    <p className="text-xs text-gray-500">Creator • Premium workspace</p>
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {userMenuItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeUserMenu?.key === item.key;
 
-                return (
-                  <Button
-                    key={item.key}
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className={`w-full justify-start rounded-lg px-3 py-3 text-left transition-all duration-200 ${
-                      isActive
-                        ? "bg-purple-50 text-purple-700 shadow-inner"
-                        : "text-gray-700 hover:bg-gray-50 hover:text-purple-700"
-                    }`}
-                    onClick={() => handleUserMenuItemSelect(item)}
-                  >
-                    <Icon
-                      className={`mr-3 h-4 w-4 ${
-                        isActive ? "text-purple-600" : "text-gray-500"
-                      }`}
-                    />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium leading-tight">{item.label}</p>
-                      <p className="text-xs text-gray-500">{item.description}</p>
-                    </div>
-                  </Button>
-                );
-              })}
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-all duration-200 ${
+                          isActive
+                            ? "bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-lg ring-1 ring-purple-500/40"
+                            : "text-gray-700 hover:bg-purple-50/70 hover:text-purple-700"
+                        }`}
+                        onClick={() => handleUserMenuItemSelect(item)}
+                      >
+                        <span
+                          className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+                            isActive
+                              ? "bg-white/15 text-white"
+                              : "bg-gray-100 text-gray-500 group-hover:bg-purple-100 group-hover:text-purple-600"
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <span className="flex-1">
+                          <p className={`text-sm font-semibold leading-tight ${isActive ? "text-white" : ""}`}>
+                            {item.label}
+                          </p>
+                          <p
+                            className={`text-xs ${
+                              isActive ? "text-white/80" : "text-gray-500 group-hover:text-purple-600"
+                            }`}
+                          >
+                            {item.description}
+                          </p>
+                        </span>
+                        <ChevronRight
+                          className={`h-4 w-4 transition-transform ${
+                            isActive
+                              ? "text-white"
+                              : "text-gray-400 group-hover:translate-x-0.5 group-hover:text-purple-500"
+                          }`}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 rounded-xl bg-gradient-to-r from-purple-100 via-purple-50 to-blue-100 p-3 text-xs text-gray-600 shadow-inner">
+                  Seamlessly switch between personal details and workspace-wide preferences without
+                  leaving your creative flow.
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1001,8 +869,8 @@ export function Sidebar({
               <SheetFooter className="px-6 pb-6">
                 <Button
                   type="button"
-                  variant={activeUserMenu.key === "support" ? "outline" : "gradient"}
-                  className="w-full"
+                  variant="gradient"
+                  className="w-full shadow-[0_20px_40px_-18px_rgba(99,102,241,0.65)]"
                   onClick={handleUserConfigSave}
                 >
                   {getPrimaryActionLabel(activeUserMenu.key)}
