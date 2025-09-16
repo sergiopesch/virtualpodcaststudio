@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -31,6 +31,10 @@ interface ConversationMessage {
   speaker?: string;
 }
 
+type MicrophoneProcessor = {
+  stop: () => void;
+};
+
 export default function Studio() {
   const { collapsed, toggleCollapsed } = useSidebar();
   
@@ -41,24 +45,17 @@ export default function Studio() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [currentTranscription, setCurrentTranscription] = useState('');
   const [userTranscription, setUserTranscription] = useState(''); // Live user speech
   const [textInput, setTextInput] = useState("");
   const [sessionDuration, setSessionDuration] = useState(0);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [sessionId] = useState(() => `session_${Date.now()}`);
-  
+
   // Refs for real-time functionality
   const audioRef = useRef<HTMLAudioElement>(null);
-  const transcriptEventSourceRef = useRef<EventSource | null>(null);
-  const audioEventSourceRef = useRef<EventSource | null>(null);
-  const userTranscriptEventSourceRef = useRef<EventSource | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Uint8Array[]>([]);
+  const mediaRecorderRef = useRef<MicrophoneProcessor | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const audioBufferRef = useRef<Uint8Array[]>([]);
-  const audioQueueRef = useRef<Uint8Array[]>([]);
-  const isPlayingAudioRef = useRef<boolean>(false);
   const micChunkQueueRef = useRef<Uint8Array[]>([]);
   const micFlushIntervalRef = useRef<number | null>(null);
   const isUploadingRef = useRef<boolean>(false);
@@ -69,6 +66,7 @@ export default function Studio() {
   const aiAudioStartedRef = useRef<boolean>(false);
   const aiTextBufferRef = useRef<string>("");
   const aiTypingIntervalRef = useRef<number | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   const currentPaper = {
     title: "Attention Is All You Need",
@@ -87,101 +85,36 @@ export default function Studio() {
     return () => clearInterval(interval);
   }, [isRecording]);
 
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, userTranscription, isTranscribing]);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Audio playback system for received audio - OPTIMIZED for low latency
-  const playAudioChunk = async (audioData: Uint8Array) => {
+  const ensureRealtimeSession = useCallback(async () => {
+    const response = await fetch('/api/rt/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+      cache: 'no-store'
+    });
+
+    let payload: { error?: string } | null = null;
     try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
-          sampleRate: 24000
-        });
-      }
-
-      const audioContext = audioContextRef.current;
-      
-      // Ensure audio context is resumed (required for some browsers)
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
-      
-      // Convert PCM16 to Float32 with proper scaling
-      const pcm16 = new Int16Array(audioData.buffer, audioData.byteOffset, audioData.byteLength / 2);
-      const float32 = new Float32Array(pcm16.length);
-      
-      for (let i = 0; i < pcm16.length; i++) {
-        // Proper PCM16 to Float32 conversion
-        float32[i] = pcm16[i] / 32768.0; // Use 32768 for proper range
-      }
-
-      // Create audio buffer with matching sample rate
-      const audioBuffer = audioContext.createBuffer(1, float32.length, 24000);
-      audioBuffer.getChannelData(0).set(float32);
-
-      // Create source and play immediately
-      const source = audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      
-      // Add gain control for volume
-      const gainNode = audioContext.createGain();
-      gainNode.gain.value = 0.9; // Good volume level
-      
-      source.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      source.onended = () => {
-        // Immediately play next chunk if available for seamless playback
-        if (audioQueueRef.current.length > 0) {
-          const nextChunk = audioQueueRef.current.shift();
-          if (nextChunk) {
-            playAudioChunk(nextChunk);
-          } else {
-            setIsAudioPlaying(false);
-            isPlayingAudioRef.current = false;
-          }
-        } else {
-          setIsAudioPlaying(false);
-          isPlayingAudioRef.current = false;
-        }
-      };
-
-      setIsAudioPlaying(true);
-      isPlayingAudioRef.current = true;
-      source.start();
-      console.log('[DEBUG] Playing audio chunk immediately', { size: audioData.length });
-      
-    } catch (error) {
-      console.error('[ERROR] Failed to play audio chunk:', error);
-      setIsAudioPlaying(false);
-      isPlayingAudioRef.current = false;
-      
-      // Try to play next chunk if available
-      if (audioQueueRef.current.length > 0) {
-        const nextChunk = audioQueueRef.current.shift();
-        if (nextChunk) {
-          playAudioChunk(nextChunk);
-        }
-      }
+      payload = (await response.json()) as { error?: string };
+    } catch {
+      payload = null;
     }
-  };
 
-  const handleIncomingAudio = (audioData: Uint8Array) => {
-    // Always queue audio for smooth playback
-    audioQueueRef.current.push(audioData);
-    
-    // Start playing immediately if not already playing - NO ARTIFICIAL DELAY
-    if (!isPlayingAudioRef.current) {
-      const firstChunk = audioQueueRef.current.shift();
-      if (firstChunk) {
-        console.log('[DEBUG] Starting audio playback immediately');
-        playAudioChunk(firstChunk);
-      }
+    if (!response.ok || (payload && payload.error)) {
+      const message = payload?.error || `Failed to start realtime session (${response.status})`;
+      throw new Error(message);
     }
-  };
+  }, [sessionId]);
 
   // Fast typing animation helpers for AI transcript
   const startAiTyping = () => {
@@ -225,58 +158,79 @@ export default function Studio() {
   };
 
   const handleSendText = async () => {
-    if (textInput.trim()) {
-      try {
-        // Add user message to state
-        const userMessage: ConversationMessage = {
-          id: `msg_${Date.now()}`,
-          role: 'user',
-          content: textInput,
-          timestamp: new Date(),
-          type: 'text'
-        };
-        
-        setMessages(prev => [...prev, userMessage]);
-        const currentText = textInput;
-        setTextInput("");
+    const trimmed = textInput.trim();
+    if (!trimmed) {
+      return;
+    }
 
-        // Send text to realtime API
-        const response = await fetch('/api/rt/text', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: currentText, sessionId })
-        });
+    if (!isConnected || !isSessionReady) {
+      setError('Connect to the AI session before sending a message.');
+      return;
+    }
 
-        if (!response.ok) {
-          throw new Error('Failed to send text to AI');
-        }
-      } catch (error) {
-        console.error('Error sending text:', error);
-        setError(error instanceof Error ? error.message : 'Failed to send message');
+    try {
+      setError(null);
+      await ensureRealtimeSession();
+
+      const userMessage: ConversationMessage = {
+        id: `msg_${Date.now()}`,
+        role: 'user',
+        content: trimmed,
+        timestamp: new Date(),
+        type: 'text'
+      };
+
+      setMessages(prev => [...prev, userMessage]);
+      setTextInput("");
+
+      const response = await fetch('/api/rt/text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: trimmed, sessionId }),
+        cache: 'no-store'
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || 'Failed to send text to AI');
       }
+    } catch (error) {
+      console.error('Error sending text:', error);
+      setError(error instanceof Error ? error.message : 'Failed to send message');
     }
   };
 
   const startMicrophoneRecording = async () => {
     try {
+      await ensureRealtimeSession();
+    } catch (error) {
+      console.error('[ERROR] Realtime session not ready for microphone recording:', error);
+      setError(error instanceof Error ? error.message : 'Failed to start realtime session.');
+      return false;
+    }
+
+    try {
       console.log('[INFO] Starting microphone recording', { sessionId });
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: { 
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
           sampleRate: 24000,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true
-        } 
+        }
       });
-      
+
       console.log('[DEBUG] Microphone access granted');
       
       // Create AudioContext for proper PCM16 conversion - MUST match input sample rate
       if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
-          sampleRate: 24000
-        });
+        const AudioContextConstructor =
+          window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) {
+          throw new Error('Web Audio API is not supported in this browser.');
+        }
+        audioContextRef.current = new AudioContextConstructor({ sampleRate: 24000 });
       }
       
       const audioContext = audioContextRef.current;
@@ -330,7 +284,8 @@ export default function Studio() {
           let binary = '';
           const CHUNK_SIZE = 0x8000;
           for (let i = 0; i < combined.length; i += CHUNK_SIZE) {
-            binary += String.fromCharCode.apply(null, Array.from(combined.subarray(i, i + CHUNK_SIZE)) as any);
+            const chunk = combined.subarray(i, i + CHUNK_SIZE);
+            binary += String.fromCharCode(...chunk);
           }
           const base64 = btoa(binary);
           const response = await fetch('/api/rt/audio-append', {
@@ -353,7 +308,7 @@ export default function Studio() {
       }
 
       // Store references for cleanup
-      mediaRecorderRef.current = {
+      const processor: MicrophoneProcessor = {
         stop: () => {
           console.log('[INFO] Stopping audio processing');
           source.disconnect();
@@ -364,7 +319,8 @@ export default function Studio() {
             micFlushIntervalRef.current = null;
           }
         }
-      } as any;
+      };
+      mediaRecorderRef.current = processor;
 
       // Don't manually commit - let server VAD handle turn detection
       console.log('[DEBUG] Real-time PCM16 audio processing started - server VAD will detect turn endings');
@@ -399,26 +355,62 @@ export default function Studio() {
   };
 
   const handleConnect = async () => {
+    if (isConnecting) {
+      return;
+    }
+
+    setIsConnecting(true);
+    setError(null);
+    setIsConnected(false);
+    setIsSessionReady(false);
+    setIsAudioPlaying(false);
+
+    let pc: RTCPeerConnection | null = null;
+    let localStream: MediaStream | null = null;
+
     try {
-      setError(null);
-      setIsConnected(false);
-      setIsSessionReady(false);
-      
+      await ensureRealtimeSession();
+
       console.log('[INFO] Starting WebRTC connection process', { sessionId });
 
-      const pc = new RTCPeerConnection({
+      if (pcRef.current) {
+        try {
+          pcRef.current.getSenders().forEach(sender => sender.track?.stop());
+        } catch {}
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+
+      if (dcRef.current) {
+        try { dcRef.current.close(); } catch {}
+        dcRef.current = null;
+      }
+
+      pc = new RTCPeerConnection({
         iceServers: [
           { urls: ['stun:stun.l.google.com:19302'] }
         ]
       });
 
-      // Remote audio playback
       pc.ontrack = (event) => {
         const [remoteStream] = event.streams;
-        const audio = new Audio();
-        audio.srcObject = remoteStream;
-        audio.autoplay = true;
-        audio.play().catch(() => {});
+        const audioElement = audioRef.current;
+
+        if (audioElement) {
+          audioElement.srcObject = remoteStream;
+          const playPromise = audioElement.play();
+          if (playPromise !== undefined) {
+            playPromise.catch(err => {
+              console.warn('[WARN] Autoplay prevented for remote audio:', err);
+            });
+          }
+        } else {
+          const fallback = new Audio();
+          fallback.srcObject = remoteStream;
+          fallback.autoplay = true;
+          fallback.play().catch(() => {});
+        }
+
         const track = event.track;
         aiTrackRef.current = track;
         track.onunmute = () => {
@@ -433,32 +425,48 @@ export default function Studio() {
         };
       };
 
-      // Data channel handling
-      const handleDcMessage = (data: any) => {
+      const handleDcMessage = (data: unknown) => {
+        if (typeof data !== 'string') {
+          return;
+        }
+
         try {
-          const msg = JSON.parse(data);
-          const type = msg.type as string;
-          // Assistant text deltas (output and audio transcript)
+          const msg = JSON.parse(data) as Record<string, unknown>;
+          const type = typeof msg.type === 'string' ? msg.type : '';
+          if (!type) {
+            return;
+          }
+
           if (type === 'response.output_text.delta' || type === 'response.text.delta' || type === 'response.audio_transcript.delta') {
-            const text: string = msg.delta || msg.text || '';
-            if (!text) return;
-            aiTextBufferRef.current += text;
-            if (aiAudioStartedRef.current) startAiTyping();
+            const deltaText = typeof msg.delta === 'string' ? msg.delta : '';
+            const responseText = typeof msg.text === 'string' ? msg.text : '';
+            const text = deltaText || responseText;
+            if (text) {
+              aiTextBufferRef.current += text;
+              startAiTyping();
+            }
           }
+
           if (type === 'response.done' || type === 'response.completed' || type === 'response.output_text.done') {
-            lastAiMessageIdRef.current = null;
             flushAiTyping(true);
+            lastAiMessageIdRef.current = null;
           }
-          // User transcription live and complete
+
+          if (type === 'conversation.item.input_audio_transcription.started' || type === 'input_audio_buffer.transcription.started') {
+            setUserTranscription('');
+            setIsTranscribing(true);
+          }
+
           if (type === 'conversation.item.input_audio_transcription.delta' || type === 'input_audio_buffer.transcription.delta') {
-            const delta: string = msg.delta || '';
+            const delta = typeof msg.delta === 'string' ? msg.delta : '';
             if (delta) {
-              setUserTranscription(prev => prev + delta);
+              setUserTranscription(prev => (prev ? prev + delta : delta));
               setIsTranscribing(true);
             }
           }
+
           if (type === 'conversation.item.input_audio_transcription.completed' || type === 'input_audio_buffer.transcription.completed') {
-            const transcript: string = msg.transcript || '';
+            const transcript = typeof msg.transcript === 'string' ? msg.transcript : '';
             if (transcript.trim()) {
               const userMessage: ConversationMessage = {
                 id: `user_${Date.now()}`,
@@ -472,8 +480,13 @@ export default function Studio() {
             setUserTranscription('');
             setIsTranscribing(false);
           }
-        } catch {
-          // ignore
+
+          if (type === 'response.error') {
+            const message = typeof msg.error === 'string' ? msg.error : 'Realtime session error';
+            setError(message);
+          }
+        } catch (err) {
+          console.debug('[DEBUG] Failed to parse data channel message', err);
         }
       };
 
@@ -483,13 +496,12 @@ export default function Studio() {
         dc.onmessage = (e) => handleDcMessage(e.data);
       };
 
-      // Add microphone track
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
-      mic.getAudioTracks().forEach(t => pc.addTrack(t, mic));
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
+      localStream.getAudioTracks().forEach(track => pc!.addTrack(track, localStream!));
 
-      // Create our outbound data channel to send session.update and text
       const dc = pc.createDataChannel('oai-events');
       dcRef.current = dc;
+      dc.onmessage = (e) => handleDcMessage(e.data);
       dc.onopen = () => {
         try {
           dc.send(JSON.stringify({
@@ -501,14 +513,15 @@ export default function Studio() {
               turn_detection: { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 800 }
             }
           }));
-        } catch {}
+        } catch (err) {
+          console.error('[ERROR] Failed to send session update over data channel:', err);
+        }
       };
-      dc.onmessage = (e) => handleDcMessage(e.data);
 
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await pc.setLocalDescription(offer);
 
-      const resp = await fetch('/api/rt/webrtc?model=gpt-4o-realtime-preview-2024-10-01', { method: 'POST', body: offer.sdp || '' });
+      const resp = await fetch('/api/rt/webrtc?model=gpt-4o-realtime-preview-2024-10-01', { method: 'POST', body: pc.localDescription?.sdp || '', cache: 'no-store' });
       if (!resp.ok) {
         const text = await resp.text();
         throw new Error(`SDP exchange failed: ${resp.status} ${text}`);
@@ -517,137 +530,156 @@ export default function Studio() {
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
       pcRef.current = pc;
-      setIsConnected(true);
-      setIsSessionReady(true);
 
-      // Set up audio streaming (but don't start automatically)
       if (audioRef.current) {
-        audioRef.current.onplay = () => {
+        const el = audioRef.current;
+        el.onplay = () => {
           console.log('[DEBUG] Audio started playing');
           setIsAudioPlaying(true);
         };
-        audioRef.current.onpause = () => {
+        el.onpause = () => {
           console.log('[DEBUG] Audio paused');
           setIsAudioPlaying(false);
         };
-        audioRef.current.onended = () => {
+        el.onended = () => {
           console.log('[DEBUG] Audio ended');
           setIsAudioPlaying(false);
         };
-        audioRef.current.onerror = (e) => {
+        el.onerror = (e) => {
           console.log('[DEBUG] Audio element error (this is expected initially):', e);
-          // Don't treat this as a critical error
         };
       }
 
+      setSessionDuration(0);
       setIsConnected(true);
       setIsSessionReady(true);
-      
-      console.log('[INFO] Connection successful, sending greeting');
-      
-      console.log('[INFO] Connection successful - ready for conversation');
-      
-      // Don't send automatic greeting - wait for user to initiate
+      setUserTranscription('');
+      setIsTranscribing(false);
 
+      console.log('[INFO] Connection successful - ready for conversation');
     } catch (error) {
       console.error('[ERROR] Connection failed:', error);
       setError(error instanceof Error ? error.message : 'Failed to connect to AI');
       setIsConnected(false);
       setIsSessionReady(false);
-      
-      // Clean up on failure
-      if (transcriptEventSourceRef.current) {
-        transcriptEventSourceRef.current.close();
-        transcriptEventSourceRef.current = null;
+      setIsAudioPlaying(false);
+
+      if (pc) {
+        try {
+          pc.getSenders().forEach(sender => sender.track?.stop());
+        } catch {}
+        pc.close();
       }
-      if (audioRef.current) {
-        audioRef.current.src = '';
+
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
       }
+
+      if (pcRef.current) {
+        try {
+          pcRef.current.getSenders().forEach(sender => sender.track?.stop());
+        } catch {}
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+
+      if (dcRef.current) {
+        try { dcRef.current.close(); } catch {}
+        dcRef.current = null;
+      }
+
+      if (aiTrackRef.current) {
+        aiTrackRef.current.stop();
+        aiTrackRef.current = null;
+      }
+    } finally {
+      setIsConnecting(false);
     }
   };
 
-  const handleDisconnect = async () => {
+  const teardownRealtime = useCallback(async () => {
     try {
-      // Stop recording if active
-      if (isRecording) {
-        handleStopRecording();
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current = null;
       }
 
-      // Close transcript stream
-      if (transcriptEventSourceRef.current) {
-        transcriptEventSourceRef.current.close();
-        transcriptEventSourceRef.current = null;
-      }
-
-      // Stop audio
       if (audioRef.current) {
         audioRef.current.pause();
+        audioRef.current.srcObject = null;
         audioRef.current.src = '';
       }
 
-      // Stop the realtime session
+      if (dcRef.current) {
+        try { dcRef.current.close(); } catch {}
+        dcRef.current = null;
+      }
+
+      if (pcRef.current) {
+        try {
+          pcRef.current.getSenders().forEach(sender => sender.track?.stop());
+        } catch {}
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+
+      if (aiTrackRef.current) {
+        aiTrackRef.current.stop();
+        aiTrackRef.current = null;
+      }
+
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+
       await fetch('/api/rt/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId })
-      });
-
+        body: JSON.stringify({ sessionId }),
+        cache: 'no-store'
+      }).catch(() => {});
     } catch (error) {
       console.error('Error disconnecting:', error);
     }
 
-    setIsConnected(false);
-    setIsSessionReady(false);
-    setIsRecording(false);
-    setMessages([]);
-    setError(null);
-    setIsTranscribing(false);
-    setCurrentTranscription('');
-    setIsAudioPlaying(false);
+    if (micFlushIntervalRef.current != null) {
+      clearInterval(micFlushIntervalRef.current);
+      micFlushIntervalRef.current = null;
+    }
+
+    micChunkQueueRef.current = [];
+    isUploadingRef.current = false;
+
+    aiTextBufferRef.current = '';
+    lastAiMessageIdRef.current = null;
+
     if (aiTypingIntervalRef.current != null) {
       clearInterval(aiTypingIntervalRef.current);
       aiTypingIntervalRef.current = null;
     }
+  }, [sessionId]);
+
+  const handleDisconnect = async () => {
+    await teardownRealtime();
+
+    setIsConnecting(false);
+    setIsConnected(false);
+    setIsSessionReady(false);
+    setIsRecording(false);
+    setSessionDuration(0);
+    setMessages([]);
+    setError(null);
+    setIsTranscribing(false);
+    setUserTranscription('');
+    setIsAudioPlaying(false);
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (transcriptEventSourceRef.current) {
-        transcriptEventSourceRef.current.close();
-      }
-      if (audioEventSourceRef.current) {
-        audioEventSourceRef.current.close();
-        audioEventSourceRef.current = null;
-      }
-      if (userTranscriptEventSourceRef.current) {
-        userTranscriptEventSourceRef.current.close();
-        userTranscriptEventSourceRef.current = null;
-      }
-      if (mediaRecorderRef.current) {
-        mediaRecorderRef.current.stop();
-      }
-      if (micFlushIntervalRef.current != null) {
-        clearInterval(micFlushIntervalRef.current);
-        micFlushIntervalRef.current = null;
-      }
-      if (aiTypingIntervalRef.current != null) {
-        clearInterval(aiTypingIntervalRef.current);
-        aiTypingIntervalRef.current = null;
-      }
+      teardownRealtime().catch(() => {});
     };
-  }, []);
-
-  // Helper: fast base64 decode in browser to Uint8Array
-  const base64ToUint8Array = (b64: string): Uint8Array => {
-    const binaryString = atob(b64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes;
-  };
+  }, [teardownRealtime]);
 
   const handleExportTranscript = () => {
     const transcriptText = messages.map((msg: ConversationMessage) => 
@@ -743,14 +775,15 @@ export default function Studio() {
                     
                     <div className="flex space-x-2">
                       {!isConnected ? (
-                        <Button 
+                        <Button
                           onClick={handleConnect}
                           variant="default"
                           size="lg"
                           className="flex-1"
+                          disabled={isConnecting}
                         >
                           <Brain className="w-4 h-4 mr-2" />
-                          Connect to AI
+                          {isConnecting ? 'Connecting...' : 'Connect to AI'}
                         </Button>
                       ) : !isRecording ? (
                         <Button 
@@ -783,11 +816,16 @@ export default function Studio() {
                         onChange={(e) => setTextInput(e.target.value)}
                         placeholder="Type your message..."
                         className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                        onKeyPress={(e) => e.key === 'Enter' && handleSendText()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendText();
+                          }
+                        }}
                       />
-                      <Button 
+                      <Button
                         onClick={handleSendText}
-                        disabled={!textInput.trim()}
+                        disabled={!textInput.trim() || !isConnected || !isSessionReady}
                         size="lg"
                       >
                         <Send className="w-4 h-4" />
@@ -840,11 +878,11 @@ export default function Studio() {
                             <Brain className="w-16 h-16 mx-auto mb-4 opacity-50" />
                             <div className="space-y-2">
                               {!isSessionReady ? (
-                                <p>Click 'Connect to AI' to begin your conversation</p>
+                                <p>Click &ldquo;Connect to AI&rdquo; to begin your conversation</p>
                               ) : (
                                 <>
                                   <p className="font-medium">Ready for podcast conversation!</p>
-                                  <p className="text-sm">• Click 'Start Voice Recording' and speak</p>
+                                  <p className="text-sm">• Click &ldquo;Start Voice Recording&rdquo; and speak</p>
                                   <p className="text-sm">• Wait 1 second of silence after speaking</p>
                                   <p className="text-sm">• Dr. Sarah will respond with voice and text</p>
                                   <p className="text-sm">• Or type a message to start</p>
@@ -947,6 +985,7 @@ export default function Studio() {
                             </div>
                           </div>
                         )}
+                        <div ref={transcriptEndRef} />
                       </div>
                     </ScrollArea>
                   
