@@ -1,138 +1,93 @@
 # Backend Agent Guide
 
-## 🎯 Purpose
+## Overview
+The backend is a single FastAPI application defined in [`main.py`](./main.py). It exposes
+REST and WebSocket endpoints that either proxy to arXiv for research papers or bridge a
+browser client to OpenAI's Realtime API. Everything runs inside one module, so edits in
+this file affect the entire service.
 
-FastAPI backend that powers the Virtual Podcast Studio's research phase by fetching research papers from arXiv API. This backend serves as the foundation for the podcast production pipeline, providing curated research content that feeds into the Audio Studio, Video Studio, and Publisher phases.
-
-## 📁 File Structure
-
-```text
+```
 backend/
-├── main.py              # Main FastAPI application
-├── requirements.txt      # Python dependencies
-├── venv/               # Virtual environment (don't modify)
-└── AGENT.md            # This file
+├── main.py            # FastAPI app, models, realtime bridge, rate limiter
+├── requirements.txt   # Python dependencies (FastAPI, httpx, websockets, etc.)
+└── AGENT.md           # This guide
 ```
 
-## 🚀 Key Functions
+## Runtime Building Blocks
+- **FastAPI app** – created at module import, configured with CORS middleware using the
+  `ALLOWED_ORIGINS` environment variable.
+- **Rate limiting** – `check_rate_limit` keeps a per-IP sliding window (100 requests in
+  60 seconds) shared by both HTTP and WebSocket handlers. Respect it when adding new
+  entry points.
+- **Pydantic models** – `PaperRequest`, `Paper`, and `PaperResponse` define the schema
+  shared with the frontend.
+- **RealtimeSession** – lightweight bridge that connects the client WebSocket to
+  `wss://api.openai.com/v1/realtime`, relays audio/text events, and pushes typing/speech
+  markers back to the browser.
 
-### `main.py`
+## Endpoints & Flow
+| Path | Handler | Notes |
+| --- | --- | --- |
+| `GET /` | `root` | Simple health banner. |
+| `GET /health` | `health_check` | Returns `{status, timestamp}` for readiness probes. |
+| `POST /api/papers` | `fetch_papers` | Validates topic payload, rate-limits by IP, calls `fetch_arxiv_papers`, de-duplicates, sorts, and returns up to 10 results. |
+| `WS /ws/conversation` | `websocket_conversation` | Accepts JSON messages with `{type: 'audio'|'text'}` and proxies them to OpenAI. Emits deltas for audio/text plus speech boundary events. |
 
-- **`/health`**: Health check endpoint
-- **`/api/papers`**: Main endpoint for fetching papers
-- **`fetch_papers_from_arxiv()`**: Core function that queries arXiv API
-- **`parse_arxiv_response()`**: Parses XML response from arXiv
+### Paper fetching workflow
+1. Input is validated twice: Pydantic (`PaperRequest.topics`) and `sanitize_input` to
+   strip invalid characters and enforce a 50-character limit.
+2. For each topic we build an Atom query and fetch with `httpx.AsyncClient`. This is done
+   sequentially inside an `async` loop; if you add concurrency, reuse a single client and
+   keep timeouts at 30s or lower.
+3. `feedparser` turns the Atom feed into entries. We canonicalize authors, trim abstracts,
+   and track the most recent publication dates.
+4. Duplicate IDs are removed before sorting by `published` descending. The result list is
+   truncated to `max_results` (defaults to 10) so the frontend never receives more than it
+   expects.
+5. Errors raise HTTP 503 for upstream failures or 500 for unknown issues. Keep error text
+   generic—frontend surfaces the message to end users.
 
-## 🔧 API Endpoints
+### Realtime workflow
+1. Each WebSocket client gets its own `RealtimeSession`. The OpenAI API key is read from
+   `OPENAI_API_KEY`; abort early if it is missing.
+2. On connect we immediately send a `session.update` event that sets modalities,
+   transcription, voice, and server-side VAD config. Update this payload carefully—browser
+   code assumes both text and audio are enabled.
+3. Incoming client messages:
+   - `{type: 'audio', audio: <base64 PCM16>}` → `conversation.item.create` with
+     `input_audio` content followed by `response.create`.
+   - `{type: 'text', text: string}` → same flow with `input_text`.
+4. Downstream messages from OpenAI are streamed back to the browser as JSON events:
+   `session_ready`, `audio_delta`, `text_delta`, `response_done`, `speech_started`, and
+   `speech_stopped`. When extending, coordinate any new event names with the frontend
+   WebSocket client (`useRealtimeConversation`).
+5. `websocket_conversation` keeps an asyncio task (`handle_openai_response`) alive while
+   relaying user events. Always cancel it on disconnect to avoid leaked coroutines.
 
-### `GET /health`
+## Environment & Secrets
+Create `backend/.env` with at least:
+- `OPENAI_API_KEY` – required for realtime bridging.
+- `ALLOWED_ORIGINS` – optional CSV list to widen CORS beyond `http://localhost:3000`.
+- `OPENAI_REALTIME_MODEL`/`VOICE` – optional overrides for realtime sessions.
 
-- **Purpose**: Health check
-- **Response**: `{"status": "healthy"}`
-- **Usage**: Test if backend is running
+Never commit `.env` files. `requirements.txt` lists additional security deps (slowapi,
+python-jose, passlib) that are not wired in yet—add usage deliberately.
 
-### `POST /api/papers`
+## Implementation Guidelines
+- Keep HTTP and WebSocket handlers **async**. Avoid blocking calls inside handlers; use
+  `asyncio` primitives when scheduling new tasks.
+- Mirror validation logic with the frontend (`/api/papers` route and `transformPapers`).
+  Schema changes must be updated in both services before deployment.
+- When modifying realtime flows, verify both the FastAPI WebSocket and the Next.js
+  WebRTC/SSE paths. The frontend still uses this legacy WS for fallback mode.
+- Maintain structured logging (`logger.info/error`). Do not log API keys or full OpenAI
+  responses.
+- If you add in-memory caches, make them IP-aware so they respect the rate limiter.
 
-- **Purpose**: Fetch papers from arXiv
-- **Request Body**: `{"topics": ["cs.AI", "cs.LG"]}`
-- **Response**: `{"papers": [{"id": "...", "title": "...", "authors": "...", "abstract": "...", "published": "...", "arxiv_url": "..."}]}`
-- **Max Results**: 10 papers per topic (configurable)
-
-## 🔄 Data Processing
-
-### arXiv API Integration
-
-- **URL**: `https://export.arxiv.org/api/query`
-- **Query Format**: `cat:cs.AI&start=0&max_results=10&sortBy=submittedDate&sortOrder=descending`
-- **Response**: XML format
-- **Parsing**: Extracts id, title, authors, abstract, published date, arxiv_url
-
-### Deduplication Logic
-
-```python
-# Remove duplicates based on paper ID
-unique_papers = {}
-for paper in papers:
-    if paper.id not in unique_papers:
-        unique_papers[paper.id] = paper
-```
-
-### Sorting
-
-- Papers are sorted by publication date (most recent first)
-- Limited to max_results per request
-
-## 🛠️ Development Notes
-
-### Error Handling
-
-- **HTTP Errors**: Catches and logs arXiv API errors
-- **Validation**: Validates topic list is not empty
-- **Logging**: Uses Python logging for debugging
-
-### Dependencies
-
-- **fastapi**: Web framework
-- **httpx**: HTTP client for arXiv API
-- **uvicorn**: ASGI server
-- **python-dotenv**: Environment variables
-
-### Environment
-
-- **Virtual Environment**: Always activate with `source venv/bin/activate`
-- **Port**: Runs on 8000 by default
-- **Reload**: Auto-reloads on file changes with `--reload`
-
-## 🐛 Common Issues
-
-### arXiv API
-
-- **HTTPS Required**: Always use `https://export.arxiv.org` (not http)
-- **Rate Limiting**: arXiv has rate limits, be respectful
-- **XML Parsing**: Response is XML, not JSON
-
-### Performance
-
-- **Concurrent Requests**: Multiple topics are fetched concurrently
-- **Timeout**: httpx has default timeout settings
-- **Memory**: Papers are stored in memory, not persisted
-
-## 🔍 Testing
-
-```bash
-# Health check
-curl http://localhost:8000/health
-
-# Fetch papers
-curl -X POST http://localhost:8000/api/papers \
-  -H "Content-Type: application/json" \
-  -d '{"topics": ["cs.AI"]}'
-```
-
-## 📝 When Modifying
-
-### Adding New Topics
-
-1. Update topic validation in `main.py`
-2. Test with arXiv API to ensure category exists
-3. Update frontend topic list
-
-### Changing API Response
-
-1. Modify `Paper` model
-2. Update `parse_arxiv_response()` function
-3. Update frontend to handle new fields
-
-### Performance Optimization
-
-1. Add caching for arXiv responses
-2. Implement pagination
-3. Add request rate limiting
-
-## 🎯 Agent Instructions
-
-- Always test API endpoints after changes
-- Check arXiv API documentation for new features
-- Maintain backward compatibility with frontend
-- Use proper error handling and logging
-- Follow FastAPI best practices for async/await
+## Testing Checklist
+- `uvicorn main:app --reload --host 0.0.0.0 --port 8000`
+- `curl http://localhost:8000/health`
+- `curl -X POST http://localhost:8000/api/papers -H 'Content-Type: application/json' -d '{"topics":["cs.AI"]}'`
+- Exercise `/ws/conversation` using the frontend fallback (`useRealtimeConversation`) or a
+  custom WebSocket client. Confirm audio/text events round-trip and rate limiting enforces
+  429/1008 responses under load.
