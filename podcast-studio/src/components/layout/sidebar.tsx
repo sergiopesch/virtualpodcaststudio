@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -17,8 +17,22 @@ import {
   ChevronDown,
   Menu,
   X,
+  Mail,
+  MessageCircle,
+  LifeBuoy,
+  ShieldCheck,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 interface SidebarProps {
   children?: React.ReactNode;
@@ -65,6 +79,42 @@ const navigation = [
   },
 ];
 
+type UserMenuKey = "profile" | "settings" | "notifications" | "support";
+
+interface UserMenuItem {
+  key: UserMenuKey;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+}
+
+const userMenuItems: UserMenuItem[] = [
+  {
+    key: "profile",
+    label: "Profile",
+    description: "Update your name, role, and on-air details.",
+    icon: User,
+  },
+  {
+    key: "settings",
+    label: "Workspace Settings",
+    description: "Control appearance and editing defaults.",
+    icon: Settings,
+  },
+  {
+    key: "notifications",
+    label: "Notifications",
+    description: "Choose when Virtual Podcast Studio alerts you.",
+    icon: Bell,
+  },
+  {
+    key: "support",
+    label: "Support",
+    description: "Reach our team or browse production resources.",
+    icon: HelpCircle,
+  },
+];
+
 export function Sidebar({
   children,
   collapsed = false,
@@ -73,6 +123,455 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isUserConfigOpen, setIsUserConfigOpen] = useState(false);
+  const [activeUserMenu, setActiveUserMenu] = useState<UserMenuItem | null>(null);
+  const [profileSettings, setProfileSettings] = useState({
+    fullName: "John Doe",
+    role: "Creator",
+    location: "San Francisco, CA",
+    email: "john.doe@example.com",
+    bio: "Hosts AI-powered conversations and curates research-backed stories.",
+  });
+  const [workspacePreferences, setWorkspacePreferences] = useState({
+    theme: "system" as "system" | "light" | "dark",
+    autoSaveDrafts: true,
+    enableTimelineSnapping: true,
+    showAdvancedAnalytics: false,
+  });
+  const [notificationPreferences, setNotificationPreferences] = useState({
+    emailAlerts: true,
+    productUpdates: true,
+    securityAlerts: true,
+    digestFrequency: "weekly" as "daily" | "weekly" | "monthly",
+  });
+
+  const handleUserMenuItemSelect = useCallback((item: UserMenuItem) => {
+    setActiveUserMenu(item);
+    setShowUserMenu(false);
+    setIsUserConfigOpen(true);
+  }, []);
+
+  const handleUserConfigSheetChange = useCallback((open: boolean) => {
+    setIsUserConfigOpen(open);
+    if (!open) {
+      setActiveUserMenu(null);
+    }
+  }, []);
+
+  const handleUserConfigSave = useCallback(() => {
+    if (!activeUserMenu) {
+      return;
+    }
+
+    switch (activeUserMenu.key) {
+      case "profile":
+        console.info("Profile settings saved", profileSettings);
+        break;
+      case "settings":
+        console.info("Workspace preferences saved", workspacePreferences);
+        break;
+      case "notifications":
+        console.info("Notification preferences saved", notificationPreferences);
+        break;
+      case "support":
+        break;
+      default:
+        break;
+    }
+
+    setIsUserConfigOpen(false);
+    setActiveUserMenu(null);
+  }, [activeUserMenu, notificationPreferences, profileSettings, workspacePreferences]);
+
+  const getPrimaryActionLabel = (key: UserMenuKey) => {
+    switch (key) {
+      case "profile":
+        return "Save profile";
+      case "settings":
+        return "Save workspace";
+      case "notifications":
+        return "Save preferences";
+      case "support":
+        return "Close";
+      default:
+        return "Save";
+    }
+  };
+
+  const renderUserConfiguration = () => {
+    if (!activeUserMenu) {
+      return null;
+    }
+
+    switch (activeUserMenu.key) {
+      case "profile":
+        return (
+          <div className="space-y-5 text-sm text-gray-700">
+            <div>
+              <label
+                htmlFor="profile-full-name"
+                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Display name
+              </label>
+              <input
+                id="profile-full-name"
+                type="text"
+                value={profileSettings.fullName}
+                onChange={(event) =>
+                  setProfileSettings((previous) => ({
+                    ...previous,
+                    fullName: event.target.value,
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="profile-role"
+                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Role
+              </label>
+              <input
+                id="profile-role"
+                type="text"
+                value={profileSettings.role}
+                onChange={(event) =>
+                  setProfileSettings((previous) => ({
+                    ...previous,
+                    role: event.target.value,
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="profile-location"
+                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Location
+              </label>
+              <input
+                id="profile-location"
+                type="text"
+                value={profileSettings.location}
+                onChange={(event) =>
+                  setProfileSettings((previous) => ({
+                    ...previous,
+                    location: event.target.value,
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="profile-email"
+                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Contact email
+              </label>
+              <input
+                id="profile-email"
+                type="email"
+                value={profileSettings.email}
+                onChange={(event) =>
+                  setProfileSettings((previous) => ({
+                    ...previous,
+                    email: event.target.value,
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="profile-bio"
+                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Bio
+              </label>
+              <textarea
+                id="profile-bio"
+                value={profileSettings.bio}
+                onChange={(event) =>
+                  setProfileSettings((previous) => ({
+                    ...previous,
+                    bio: event.target.value,
+                  }))
+                }
+                rows={3}
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Share a short description that appears on your published show pages.
+              </p>
+            </div>
+          </div>
+        );
+      case "settings":
+        return (
+          <div className="space-y-5 text-sm text-gray-700">
+            <div>
+              <label
+                htmlFor="workspace-theme"
+                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Theme
+              </label>
+              <select
+                id="workspace-theme"
+                value={workspacePreferences.theme}
+                onChange={(event) =>
+                  setWorkspacePreferences((previous) => ({
+                    ...previous,
+                    theme: event.target.value as "system" | "light" | "dark",
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+              >
+                <option value="system">Match system</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Editing preferences
+              </p>
+              <label
+                htmlFor="workspace-auto-save"
+                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+              >
+                <Checkbox
+                  id="workspace-auto-save"
+                  checked={workspacePreferences.autoSaveDrafts}
+                  onCheckedChange={(checked) =>
+                    setWorkspacePreferences((previous) => ({
+                      ...previous,
+                      autoSaveDrafts: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-medium text-gray-900">Auto-save drafts</span>
+                  <p className="text-xs text-gray-500">
+                    Store timeline changes automatically every 30 seconds.
+                  </p>
+                </div>
+              </label>
+              <label
+                htmlFor="workspace-snapping"
+                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+              >
+                <Checkbox
+                  id="workspace-snapping"
+                  checked={workspacePreferences.enableTimelineSnapping}
+                  onCheckedChange={(checked) =>
+                    setWorkspacePreferences((previous) => ({
+                      ...previous,
+                      enableTimelineSnapping: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-medium text-gray-900">Enable timeline snapping</span>
+                  <p className="text-xs text-gray-500">
+                    Align clips to bars and markers for frame-perfect edits.
+                  </p>
+                </div>
+              </label>
+              <label
+                htmlFor="workspace-analytics"
+                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+              >
+                <Checkbox
+                  id="workspace-analytics"
+                  checked={workspacePreferences.showAdvancedAnalytics}
+                  onCheckedChange={(checked) =>
+                    setWorkspacePreferences((previous) => ({
+                      ...previous,
+                      showAdvancedAnalytics: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-medium text-gray-900">Show advanced analytics</span>
+                  <p className="text-xs text-gray-500">
+                    Surface engagement metrics alongside every render.
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+        );
+      case "notifications":
+        return (
+          <div className="space-y-5 text-sm text-gray-700">
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Delivery channels
+              </p>
+              <label
+                htmlFor="notifications-email"
+                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+              >
+                <Checkbox
+                  id="notifications-email"
+                  checked={notificationPreferences.emailAlerts}
+                  onCheckedChange={(checked) =>
+                    setNotificationPreferences((previous) => ({
+                      ...previous,
+                      emailAlerts: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-medium text-gray-900">Email alerts</span>
+                  <p className="text-xs text-gray-500">
+                    Get summaries when renders finish or collaborators comment.
+                  </p>
+                </div>
+              </label>
+              <label
+                htmlFor="notifications-updates"
+                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+              >
+                <Checkbox
+                  id="notifications-updates"
+                  checked={notificationPreferences.productUpdates}
+                  onCheckedChange={(checked) =>
+                    setNotificationPreferences((previous) => ({
+                      ...previous,
+                      productUpdates: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <span className="text-sm font-medium text-gray-900">Product updates</span>
+                  <p className="text-xs text-gray-500">
+                    Learn about new editing features and AI workflows.
+                  </p>
+                </div>
+              </label>
+              <label
+                htmlFor="notifications-security"
+                className="flex cursor-pointer items-start space-x-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-purple-200"
+              >
+                <Checkbox
+                  id="notifications-security"
+                  checked={notificationPreferences.securityAlerts}
+                  onCheckedChange={(checked) =>
+                    setNotificationPreferences((previous) => ({
+                      ...previous,
+                      securityAlerts: checked === true,
+                    }))
+                  }
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <span className="flex items-center gap-2 text-sm font-medium text-gray-900">
+                    <ShieldCheck className="h-4 w-4 text-green-500" /> Security alerts
+                  </span>
+                  <p className="text-xs text-gray-500">
+                    Immediate notifications for sign-ins and account changes.
+                  </p>
+                </div>
+              </label>
+            </div>
+            <div>
+              <label
+                htmlFor="notifications-frequency"
+                className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+              >
+                Digest frequency
+              </label>
+              <select
+                id="notifications-frequency"
+                value={notificationPreferences.digestFrequency}
+                onChange={(event) =>
+                  setNotificationPreferences((previous) => ({
+                    ...previous,
+                    digestFrequency: event.target.value as "daily" | "weekly" | "monthly",
+                  }))
+                }
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Receive a compiled summary of production metrics.
+              </p>
+            </div>
+          </div>
+        );
+      case "support":
+        return (
+          <div className="space-y-4 text-sm text-gray-700">
+            <p className="text-gray-600">
+              Need a hand? The Virtual Podcast Studio team is here to help with
+              production workflows, account questions, and troubleshooting.
+            </p>
+            <div className="space-y-2">
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                asChild
+              >
+                <a href="mailto:support@virtualpodcast.studio">
+                  <Mail className="mr-2 h-4 w-4 text-purple-600" />
+                  Email support
+                </a>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                asChild
+              >
+                <a
+                  href="https://virtualpodcast.studio/community"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MessageCircle className="mr-2 h-4 w-4 text-purple-600" />
+                  Join the creator community
+                </a>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                asChild
+              >
+                <a
+                  href="https://virtualpodcast.studio/academy"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <LifeBuoy className="mr-2 h-4 w-4 text-purple-600" />
+                  Browse tutorials & guides
+                </a>
+              </Button>
+            </div>
+            <div className="rounded-xl border border-dashed border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-700">
+              Our support hours are Monday–Friday, 9am–6pm PT. We typically
+              respond within one business day.
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
 
   const getBadgeColor = (badge: string) => {
     if (badge === "LIVE") return "bg-red-500 text-white";
@@ -197,10 +696,13 @@ export function Sidebar({
       <div className={`${collapsed ? "p-2" : "p-4"} border-t border-gray-200/60 flex-shrink-0 relative z-20 bg-white`}>
         <div className="relative">
           <Button
+            type="button"
             variant="ghost"
             title={collapsed ? "John Doe - Creator" : undefined}
+            aria-haspopup="menu"
+            aria-expanded={showUserMenu}
             className={`w-full ${collapsed ? "justify-center" : "justify-start"} text-gray-700 hover:bg-gray-50 hover:text-purple-700 p-2 transition-all duration-200`}
-            onClick={() => setShowUserMenu(!showUserMenu)}
+            onClick={() => setShowUserMenu((previous) => !previous)}
           >
             <div className={`w-8 h-8 bg-gradient-primary rounded-lg flex items-center justify-center ${collapsed ? "mr-0" : "mr-3"} shadow-md`}>
               <User className="w-4 h-4 text-white" />
@@ -220,45 +722,70 @@ export function Sidebar({
 
           {/* User Menu Dropdown */}
           {showUserMenu && !collapsed && (
-            <div className="absolute bottom-full left-4 right-4 mb-2 bg-white border border-gray-200/60 rounded-xl shadow-lg backdrop-blur-sm p-2 space-y-1 z-50">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start hover:bg-gray-50 transition-colors"
-              >
-                <User className="w-4 h-4 mr-2 text-gray-600" />
-                <span className="text-gray-700">Profile</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start hover:bg-gray-50 transition-colors"
-              >
-                <Settings className="w-4 h-4 mr-2 text-gray-600" />
-                <span className="text-gray-700">Settings</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start hover:bg-gray-50 transition-colors"
-              >
-                <Bell className="w-4 h-4 mr-2 text-gray-600" />
-                <span className="text-gray-700">Notifications</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start hover:bg-gray-50 transition-colors"
-              >
-                <HelpCircle className="w-4 h-4 mr-2 text-gray-600" />
-                <span className="text-gray-700">Help</span>
-              </Button>
+            <div className="absolute bottom-full left-4 right-4 mb-2 space-y-1 rounded-xl border border-gray-200/60 bg-white/95 p-2 shadow-lg backdrop-blur-sm z-50">
+              {userMenuItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeUserMenu?.key === item.key;
+
+                return (
+                  <Button
+                    key={item.key}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={`w-full justify-start rounded-lg px-3 py-3 text-left transition-all duration-200 ${
+                      isActive
+                        ? "bg-purple-50 text-purple-700 shadow-inner"
+                        : "text-gray-700 hover:bg-gray-50 hover:text-purple-700"
+                    }`}
+                    onClick={() => handleUserMenuItemSelect(item)}
+                  >
+                    <Icon
+                      className={`mr-3 h-4 w-4 ${
+                        isActive ? "text-purple-600" : "text-gray-500"
+                      }`}
+                    />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium leading-tight">{item.label}</p>
+                      <p className="text-xs text-gray-500">{item.description}</p>
+                    </div>
+                  </Button>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
 
       {children}
+      <Sheet open={isUserConfigOpen} onOpenChange={handleUserConfigSheetChange}>
+        <SheetContent side="right" className="sm:max-w-md p-0">
+          {activeUserMenu ? (
+            <>
+              <SheetHeader className="border-b border-gray-200 px-6 pt-6 pb-4">
+                <SheetTitle>{activeUserMenu.label}</SheetTitle>
+                <SheetDescription>{activeUserMenu.description}</SheetDescription>
+              </SheetHeader>
+              <div
+                className="px-6 py-4"
+                style={{ maxHeight: "calc(100vh - 16rem)", overflowY: "auto" }}
+              >
+                {renderUserConfiguration()}
+              </div>
+              <SheetFooter className="px-6 pb-6">
+                <Button
+                  type="button"
+                  variant={activeUserMenu.key === "support" ? "outline" : "gradient"}
+                  className="w-full"
+                  onClick={handleUserConfigSave}
+                >
+                  {getPrimaryActionLabel(activeUserMenu.key)}
+                </Button>
+              </SheetFooter>
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
