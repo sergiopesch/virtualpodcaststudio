@@ -1,11 +1,21 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import { Sidebar } from "@/components/layout/sidebar";
-import { Header } from "@/components/layout/header";
+// Removed Header to avoid a second page-level nav on this route
 import { useSidebar } from "@/contexts/sidebar-context";
 import {
   Video,
@@ -14,48 +24,179 @@ import {
   Pause,
   Square,
   FileText,
-  Download,
   Camera,
-  Layers,
-  Zap,
   Image,
   SkipBack,
   SkipForward,
   Volume2,
   Scissors,
-  Copy,
-  Trash2,
   Plus,
   ZoomIn,
   ZoomOut,
+  VolumeX,
+  Magnet,
+  Menu,
+  MoreHorizontal,
+  Folder,
+  Sliders,
+  Search,
+  Layers,
+  Wand2,
+  Palette,
+  Filter,
+  Download,
+  Upload,
+  Copy,
+  Trash2,
+  RotateCcw,
+  RotateCw,
+  FlipHorizontal,
+  FlipVertical,
+  Crop,
+  Move,
+  MousePointer2,
+  Hand,
+  Type,
+  Music,
+  Mic,
+  Headphones,
+  Eye,
+  EyeOff,
+  Lock,
+  Unlock,
+  Star,
+  Sparkles,
+  Zap,
+  Target,
+  Grid,
+  Maximize2,
+  Minimize2,
+  FullScreen,
+  PictureInPicture,
+  Rewind,
+  FastForward,
+  SkipBackward,
+  SkipForward as SkipForwardIcon,
 } from "lucide-react";
+
+// Shared util so both the main component and SimpleInspectorPanel can render icons
+function getClipTypeIcon(type: VideoClip["type"], size = "w-4 h-4") {
+  const iconClass = `${size} flex-shrink-0`;
+  switch (type) {
+    case "video":
+      return <Video className={`${iconClass} text-blue-600`} />;
+    case "audio":
+      return <Volume2 className={`${iconClass} text-green-600`} />;
+    case "image":
+      return <Image className={`${iconClass} text-purple-600`} />;
+    case "text":
+      return <Type className={`${iconClass} text-orange-600`} />;
+    case "effect":
+      return <Wand2 className={`${iconClass} text-pink-600`} />;
+    case "transition":
+      return <Sparkles className={`${iconClass} text-indigo-600`} />;
+    default:
+      return <FileText className={`${iconClass} text-gray-600`} />;
+  }
+}
 
 interface VideoClip {
   id: string;
-  type: "video" | "audio" | "image" | "text";
+  type: "video" | "audio" | "image" | "text" | "effect" | "transition";
   name: string;
   startTime: number;
   duration: number;
   track: number;
   speaker?: "Host" | "Expert";
   content?: string;
-  visualStyle?: "talking-head" | "paper-visual" | "diagram" | "transition";
+  visualStyle?: "talking-head" | "paper-visual" | "diagram" | "transition" | "overlay" | "background";
   thumbnailUrl?: string;
+  volume?: number;
+  fadeInSec?: number;
+  fadeOutSec?: number;
+  // Advanced properties
+  opacity?: number;
+  scale?: number;
+  rotation?: number;
+  x?: number;
+  y?: number;
+  filters?: {
+    brightness?: number;
+    contrast?: number;
+    saturation?: number;
+    hue?: number;
+    blur?: number;
+    sharpen?: number;
+  };
+  keyframes?: {
+    time: number;
+    properties: Record<string, number>;
+  }[];
+  locked?: boolean;
+  muted?: boolean;
+  solo?: boolean;
+  color?: string;
+  waveform?: number[];
 }
 
+interface TimelineMarker {
+  id: string;
+  time: number;
+  label?: string;
+  color?: string;
+  type?: "marker" | "chapter" | "cut" | "bookmark";
+}
+
+interface Effect {
+  id: string;
+  name: string;
+  category: "color" | "blur" | "distort" | "stylize" | "noise" | "light";
+  icon: React.ReactNode;
+  previewUrl?: string;
+  parameters: {
+    name: string;
+    type: "slider" | "color" | "dropdown" | "checkbox";
+    min?: number;
+    max?: number;
+    default: any;
+    options?: string[];
+  }[];
+}
+
+interface Transition {
+  id: string;
+  name: string;
+  duration: number;
+  type: "fade" | "slide" | "zoom" | "wipe" | "dissolve" | "push";
+  direction?: "left" | "right" | "up" | "down";
+  easing?: "linear" | "ease-in" | "ease-out" | "ease-in-out";
+  previewUrl?: string;
+}
+
+type Tool = "select" | "razor" | "hand" | "zoom" | "text" | "crop";
+
+type ViewMode = "timeline" | "storyboard" | "multicam" | "color";
+
 export default function VideoStudio() {
-  const [isRendering, setIsRendering] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [renderProgress, setRenderProgress] = useState(0);
+  // Core playback and timeline state
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [selectedClips, setSelectedClips] = useState<string[]>([]);
-  const [trimMode, setTrimMode] = useState(false);
-  const [trimmingClip, setTrimmingClip] = useState<string | null>(null);
-  const timelineRef = useRef<HTMLDivElement>(null);
-  const { collapsed, toggleCollapsed } = useSidebar();
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [volume, setVolume] = useState(0.75);
 
+  // UI state for responsive layout
+  const [activeTab, setActiveTab] = useState("media");
+  const [showWaveforms, setShowWaveforms] = useState(true);
+
+  // Refs
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { } = useSidebar();
+
+  // Enhanced sample data with professional features
   const [videoClips, setVideoClips] = useState<VideoClip[]>([
     {
       id: "1",
@@ -67,6 +208,22 @@ export default function VideoStudio() {
       speaker: "Host",
       content: "Welcome to today's AI Research Podcast",
       visualStyle: "talking-head",
+      volume: 0.8,
+      opacity: 1,
+      scale: 1,
+      rotation: 0,
+      x: 0,
+      y: 0,
+      color: "#3b82f6",
+      filters: {
+        brightness: 100,
+        contrast: 100,
+        saturation: 100,
+        hue: 0,
+        blur: 0,
+        sharpen: 0,
+      },
+      waveform: [],
     },
     {
       id: "2",
@@ -75,6 +232,11 @@ export default function VideoStudio() {
       startTime: 0,
       duration: 45,
       track: 3,
+      volume: 0.3,
+      fadeInSec: 2,
+      fadeOutSec: 3,
+      color: "#10b981",
+      waveform: [],
     },
     {
       id: "3",
@@ -86,6 +248,19 @@ export default function VideoStudio() {
       speaker: "Expert",
       content: "The authors were addressing fundamental limitations",
       visualStyle: "paper-visual",
+      volume: 0.9,
+      opacity: 1,
+      scale: 1.05,
+      color: "#8b5cf6",
+      filters: {
+        brightness: 105,
+        contrast: 110,
+        saturation: 95,
+        hue: 0,
+        blur: 0,
+        sharpen: 0,
+      },
+      waveform: [],
     },
     {
       id: "4",
@@ -95,10 +270,44 @@ export default function VideoStudio() {
       duration: 10,
       track: 2,
       visualStyle: "diagram",
+      opacity: 0.9,
+      scale: 1,
+      color: "#f59e0b",
     },
   ]);
 
-  const [renderDuration, setRenderDuration] = useState(0);
+  const [viewportWidthPx, setViewportWidthPx] = useState(0);
+
+  // Simplified media library
+  const [mediaQuery, setMediaQuery] = useState("");
+  const [mediaFilter, setMediaFilter] = useState<"all" | "video" | "audio" | "image">("all");
+  
+  const mediaAssets = React.useMemo(() => ([
+    { name: "Host Avatar", type: "video" as const, duration: "0:45" },
+    { name: "Paper Visual", type: "image" as const, duration: "static" },
+    { name: "Background Music", type: "audio" as const, duration: "2:30" },
+    { name: "Diagram Animation", type: "video" as const, duration: "0:30" },
+    { name: "Logo Intro", type: "video" as const, duration: "0:10" },
+  ]), []);
+
+  const filteredMediaAssets = React.useMemo(() => {
+    const q = mediaQuery.trim().toLowerCase();
+    return mediaAssets.filter(a =>
+      (mediaFilter === "all" || a.type === mediaFilter) &&
+      (q === "" || a.name.toLowerCase().includes(q))
+    );
+  }, [mediaAssets, mediaFilter, mediaQuery]);
+
+  // Simplified track settings
+  const [trackSettings, setTrackSettings] = useState<Record<number, { 
+    mute: boolean; 
+    volume: number; 
+    name: string;
+  }>>({
+    1: { mute: false, volume: 1, name: "Video" },
+    2: { mute: false, volume: 1, name: "Audio" },
+    3: { mute: false, volume: 0.7, name: "Music" },
+  });
 
   const currentPaper = {
     title: "Attention Is All You Need",
@@ -106,51 +315,97 @@ export default function VideoStudio() {
     audioFile: "conversation_20240101_143000.wav",
   };
 
-  // Simulate render timer
-  React.useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isRendering && !isPaused) {
-      interval = setInterval(() => {
-        setRenderDuration((prev) => prev + 1);
-        setRenderProgress((prev) => Math.min(prev + 0.5, 100));
-      }, 1000);
+  // Timeline calculations
+  const totalDuration = Math.max(
+    ...videoClips.map((clip) => clip.startTime + clip.duration),
+    60
+  );
+  const pixelsPerSecond = zoomLevel * 10;
+  
+  // Deterministic waveform generation to avoid hydration mismatch
+  const seededRandom = (seed: number) => {
+    let t = seed >>> 0;
+    return () => {
+      // xorshift32
+      t ^= t << 13; t ^= t >>> 17; t ^= t << 5;
+      // map to 0..1
+      return ((t >>> 0) / 4294967295);
+    };
+  };
+
+  const generateWaveform = useCallback((id: string, length: number, amplitude = 1, floor = 0.1) => {
+    const seed = Array.from(id).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+    const rnd = seededRandom(seed);
+    const values: number[] = [];
+    for (let i = 0; i < length; i++) {
+      const v = rnd() * amplitude + floor;
+      values.push(Math.max(0, Math.min(1, v)));
     }
+    return values;
+  }, []);
+
+  // Populate waveforms once on mount (SSR-safe, deterministic)
+  useEffect(() => {
+    setVideoClips(prev => prev.map(clip => {
+      if (clip.type === "audio") {
+        const len = Math.max(30, Math.floor(clip.duration * 10));
+        return { ...clip, waveform: clip.waveform?.length ? clip.waveform : generateWaveform(clip.id, len, 0.6, 0.05) };
+      }
+      if (clip.type === "video") {
+        const len = Math.max(30, Math.floor(clip.duration * 6));
+        return { ...clip, waveform: clip.waveform?.length ? clip.waveform : generateWaveform(clip.id, len, 0.4, 0.05) };
+      }
+      return clip;
+    }));
+  }, [generateWaveform]);
+
+  const updateViewport = () => {
+    if (scrollerRef.current) {
+      setViewportWidthPx(scrollerRef.current.clientWidth || 0);
+    }
+  };
+
+  // Playback simulation
+  useEffect(() => {
+    if (!isPlaying) return;
+    const interval = setInterval(() => {
+      setCurrentTime((prev) => {
+        const next = prev + 0.1;
+        if (next >= totalDuration) {
+          clearInterval(interval);
+          return totalDuration;
+        }
+        return next;
+      });
+    }, 100);
     return () => clearInterval(interval);
-  }, [isRendering, isPaused]);
+  }, [isPlaying, totalDuration]);
 
+  // Enhanced utility functions
   const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    const frames = Math.floor((seconds % 1) * 30); // 30 FPS
+    
+    if (hours > 0) {
+      return `${hours}:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}.${frames.toString().padStart(2, "0")}`;
+    }
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}.${frames.toString().padStart(2, "0")}`;
   };
 
-  const handleStartRender = () => {
-    setIsRendering(true);
-    setIsPaused(false);
-    setRenderProgress(0);
-  };
+  // getClipTypeIcon moved to module scope above
 
-  const handlePauseRender = () => {
-    setIsPaused(!isPaused);
+  // Event handlers
+  const handlePlayPause = () => setIsPlaying(!isPlaying);
+  const handleStop = () => {
+    setIsPlaying(false);
+    setCurrentTime(0);
   };
-
-  const handleStopRender = () => {
-    setIsRendering(false);
-    setIsPaused(false);
-    setRenderDuration(0);
-    setRenderProgress(0);
-  };
-
-  const handlePlayPause = () => {
-    setIsPlaying(!isPlaying);
-  };
-
-  const handleZoomIn = () => {
-    setZoomLevel((prev) => Math.min(prev * 1.5, 4));
-  };
-
-  const handleZoomOut = () => {
-    setZoomLevel((prev) => Math.max(prev / 1.5, 0.25));
+  const handleZoomIn = () => setZoomLevel((prev) => Math.min(prev * 1.5, 3));
+  const handleZoomOut = () => setZoomLevel((prev) => Math.max(prev / 1.5, 0.25));
+  const handleSkip = (deltaSeconds: number) => {
+    setCurrentTime((prev) => Math.max(0, Math.min(prev + deltaSeconds, totalDuration)));
   };
 
   const handleClipSelect = (clipId: string, multiSelect = false) => {
@@ -165,567 +420,371 @@ export default function VideoStudio() {
     }
   };
 
-  const handleDeleteClip = () => {
-    setVideoClips((prev) =>
-      prev.filter((clip) => !selectedClips.includes(clip.id))
-    );
-    setSelectedClips([]);
+  const toggleTrackMute = (track: number) => {
+    setTrackSettings((prev) => ({
+      ...prev,
+      [track]: { ...prev[track], mute: !prev[track].mute }
+    }));
   };
 
-  const handleTrimMode = () => {
-    setTrimMode(!trimMode);
-    if (trimMode) {
-      setTrimmingClip(null);
-    }
+  const handleAddClipClick = () => {
+    fileInputRef.current?.click();
   };
 
-  const handleTrimClip = (clipId: string) => {
-    if (trimMode) {
-      setTrimmingClip(clipId);
-    }
+  const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files) return;
+    // Handle file upload logic here
+    console.log("Files selected:", files);
   };
-
-  const handleSplitClip = (clipId: string, splitTime: number) => {
-    const clip = videoClips.find((c) => c.id === clipId);
-    if (!clip) return;
-
-    const splitPosition = splitTime - clip.startTime;
-    if (splitPosition <= 0 || splitPosition >= clip.duration) return;
-
-    const newClip: VideoClip = {
-      ...clip,
-      id: `${clip.id}_split`,
-      startTime: clip.startTime + splitPosition,
-      duration: clip.duration - splitPosition,
-    };
-
-    setVideoClips((prev) =>
-      prev
-        .map((c) => (c.id === clipId ? { ...c, duration: splitPosition } : c))
-        .concat(newClip)
-    );
-  };
-
-  const getTrackColor = (track: number) => {
-    const colors = [
-      "bg-purple-100",
-      "bg-blue-100",
-      "bg-green-100",
-      "bg-orange-100",
-    ];
-    return colors[track - 1] || "bg-gray-100";
-  };
-
-  const getClipTypeIcon = (type: string) => {
-    switch (type) {
-      case "video":
-        return <Video className="w-3 h-3" />;
-      case "audio":
-        return <Volume2 className="w-3 h-3" />;
-      case "image":
-        // eslint-disable-next-line jsx-a11y/alt-text
-        return <Image className="w-3 h-3" />;
-      case "text":
-        return <FileText className="w-3 h-3" />;
-      default:
-        return <Layers className="w-3 h-3" />;
-    }
-  };
-
-  // Calculate total project duration
-  const totalDuration = Math.max(
-    ...videoClips.map((clip) => clip.startTime + clip.duration),
-    60
-  );
-  const pixelsPerSecond = zoomLevel * 10;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
-      <div className="flex">
-        <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
-
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar */}
+        <div className="hidden md:flex w-56">
+          <Sidebar />
+        </div>
+        
         {/* Main Content */}
-        <div className="flex-1">
-          <Header
-            title="Video Studio"
-            description="Generate video rendering from conversation transcripts"
-            status={{
-              label: isRendering
-                ? isPaused
-                  ? "PAUSED"
-                  : "RENDERING"
-                : "READY",
-              color: isRendering ? "green" : "gray",
-              active: isRendering,
-            }}
-            timer={{
-              duration: renderDuration,
-              format: formatTime,
-            }}
-            actions={
-              <div className="flex items-center space-x-4">
-                {isRendering && (
-                  <div className="flex items-center space-x-2">
-                    <div className="w-32 bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-green-600 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${renderProgress}%` }}
-                      ></div>
-                    </div>
-                    <span className="text-xs text-gray-500">
-                      {Math.round(renderProgress)}%
-                    </span>
-                  </div>
-                )}
-                <Button variant="ghost" size="sm" className="text-gray-600">
-                  <Settings className="w-4 h-4" />
-                </Button>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Video Preview */}
+          <div className="p-4 bg-white border-b border-gray-200">
+            <div className="max-w-4xl mx-auto aspect-video bg-black rounded-lg relative overflow-hidden">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-white/70 text-center">
+                  <Camera className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Video Preview</p>
+                  <p className="text-xs opacity-70">{formatTime(currentTime)} / {formatTime(totalDuration)}</p>
+                </div>
               </div>
-            }
-          />
-
-          <div className="p-4 md:p-6 space-y-6">
-            {/* Video Editor - Main Component */}
-            <div className="space-y-6">
-              {/* Top Panel: Preview + Controls */}
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-[400px]">
-                {/* Video Preview - 3/4 width */}
-                <div className="lg:col-span-3">
-                  <Card className="h-full border border-gray-200 shadow-sm">
-                    <CardContent className="p-6 h-full flex flex-col bg-white">
-                      <div className="bg-black rounded-lg aspect-video flex items-center justify-center mb-6 flex-1 min-h-[200px]">
-                        <div className="text-center text-gray-400">
-                          <Camera className="w-16 h-16 mx-auto mb-3 opacity-50" />
-                          <p className="text-lg">Video Preview</p>
-                          <p className="text-sm">
-                            Time: {formatTime(currentTime)}
-                          </p>
-                        </div>
+              {/* Inline essential controls */}
+              <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => handleSkip(-10)}>
+                    <Rewind className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={handlePlayPause}>
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => handleSkip(10)}>
+                    <FastForward className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={handleStop}>
+                    <Square className="w-4 h-4" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" onClick={handleZoomOut}>
+                    <ZoomOut className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={handleZoomIn}>
+                    <ZoomIn className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={handleAddClipClick}>
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              
+              {/* Simple scrubber */}
+              <div className="absolute bottom-16 left-4 right-4">
+                <div className="bg-white/20 h-1 rounded-full">
+                  <div 
+                    className="bg-purple-500 h-1 rounded-full transition-all"
+                    style={{ width: `${(currentTime / totalDuration) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Timeline */}
+          <div className="flex-1 bg-white border-t border-gray-200 flex">
+            {/* Track Labels */}
+            <div className="w-32 bg-gray-50 border-r border-gray-200">
+              <div className="h-8 border-b border-gray-200 flex items-center px-3">
+                <span className="text-xs font-semibold text-gray-600">TRACKS</span>
+              </div>
+              {Object.entries(trackSettings).map(([trackNum, settings]) => (
+                <div key={trackNum} className="h-16 border-b border-gray-200 flex items-center justify-between px-2">
+                  <span className="text-xs text-gray-600">{settings.name}</span>
+                  <Button
+                    size="xs"
+                    variant={settings.mute ? "destructive" : "ghost"}
+                    onClick={() => toggleTrackMute(parseInt(trackNum))}
+                  >
+                    {settings.mute ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                  </Button>
+                </div>
+              ))}
+            </div>
+            
+            {/* Timeline Area */}
+            <div className="flex-1 overflow-x-auto" ref={scrollerRef}>
+              <div
+                ref={timelineRef}
+                className="relative bg-white"
+                style={{
+                  width: `${totalDuration * pixelsPerSecond}px`,
+                  minWidth: "100%",
+                  height: "100%",
+                }}
+              >
+                {/* Time Ruler */}
+                <div className="h-8 border-b border-gray-200 bg-gray-50 relative">
+                  {Array.from({ length: Math.ceil(totalDuration / 10) + 1 }, (_, i) => i * 10).map((time) => (
+                    <div key={time}>
+                      <div
+                        className="absolute border-l border-gray-300"
+                        style={{
+                          left: `${time * pixelsPerSecond}px`,
+                          top: 0,
+                          bottom: 0,
+                        }}
+                      />
+                      <div
+                        className="absolute text-xs text-gray-600 ml-1"
+                        style={{ left: `${time * pixelsPerSecond}px`, top: 2 }}
+                      >
+                        {formatTime(time)}
                       </div>
+                    </div>
+                  ))}
 
-                      {/* Playback Controls */}
-                      <div className="flex items-center justify-between flex-shrink-0">
-                        <div className="flex items-center space-x-3">
-                          <Button size="sm" variant="ghost">
-                            <SkipBack className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            onClick={handlePlayPause}
-                            size="lg"
-                            className="bg-blue-600 hover:bg-blue-700"
-                          >
-                            {isPlaying ? (
-                              <Pause className="w-5 h-5" />
-                            ) : (
-                              <Play className="w-5 h-5" />
-                            )}
-                          </Button>
-                          <Button size="sm" variant="ghost">
-                            <SkipForward className="w-4 h-4" />
-                          </Button>
-                          <div className="flex items-center space-x-2 ml-4">
-                            <Volume2 className="w-4 h-4 text-gray-500" />
-                            <div className="w-16 h-1 bg-gray-300 rounded-full">
-                              <div className="w-3/4 h-1 bg-blue-600 rounded-full"></div>
+                  {/* Playhead */}
+                  <div
+                    className="absolute top-0 z-20 pointer-events-none"
+                    style={{ left: `${currentTime * pixelsPerSecond}px` }}
+                  >
+                    <div className="relative -translate-x-1/2">
+                      <div className="w-0 h-0 border-l-[6px] border-r-[6px] border-b-[8px] border-l-transparent border-r-transparent border-b-purple-500" />
+                      <div className="absolute top-2 left-1/2 -translate-x-1/2 w-[2px] bg-purple-500" style={{ height: '200px' }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tracks */}
+                {Object.keys(trackSettings).map((trackNum) => (
+                  <div key={trackNum} className="h-16 border-b border-gray-200 relative">
+                    {videoClips
+                      .filter((clip) => clip.track === parseInt(trackNum))
+                      .map((clip) => (
+                        <div
+                          key={clip.id}
+                          className={`absolute h-12 mt-2 rounded border-2 cursor-pointer transition-all ${
+                            selectedClips.includes(clip.id)
+                              ? "border-purple-500 bg-purple-100"
+                              : "border-gray-300 bg-white hover:border-gray-400"
+                          }`}
+                          style={{
+                            left: `${clip.startTime * pixelsPerSecond}px`,
+                            width: `${clip.duration * pixelsPerSecond}px`,
+                            minWidth: "60px",
+                          }}
+                          onClick={() => handleClipSelect(clip.id)}
+                        >
+                          <div className="p-2 h-full flex items-center">
+                            <div className="flex items-center space-x-1">
+                              {getClipTypeIcon(clip.type)}
+                              <span className="text-xs font-medium truncate">
+                                {clip.name}
+                              </span>
                             </div>
                           </div>
-                        </div>
-
-                        <div className="flex items-center space-x-2">
-                          <div className="text-sm font-mono text-gray-500">
-                            00:02:34 / 00:05:15
-                          </div>
-                          {!isRendering ? (
-                            <Button
-                              onClick={handleStartRender}
-                              className="bg-green-600 hover:bg-green-700 text-white"
-                            >
-                              <Play className="w-4 h-4 mr-2" />
-                              Render
-                            </Button>
-                          ) : (
-                            <div className="flex items-center space-x-2">
-                              <Button
-                                onClick={handlePauseRender}
-                                variant="outline"
-                                size="sm"
-                              >
-                                {isPaused ? (
-                                  <Play className="w-4 h-4" />
-                                ) : (
-                                  <Pause className="w-4 h-4" />
-                                )}
-                              </Button>
-                              <Button
-                                onClick={handleStopRender}
-                                variant="outline"
-                                size="sm"
-                              >
-                                <Square className="w-4 h-4" />
-                              </Button>
+                          
+                          {/* Simple waveform for audio */}
+                          {clip.type === "audio" && clip.waveform && showWaveforms && (
+                            <div className="absolute bottom-1 left-1 right-1 h-2 flex items-end space-x-px">
+                              {clip.waveform.slice(0, Math.floor(clip.duration * 2)).map((amplitude, i) => (
+                                <div
+                                  key={i}
+                                  className="bg-purple-400 opacity-60 flex-1"
+                                  style={{ height: `${amplitude * 100}%`, minHeight: '1px' }}
+                                />
+                              ))}
                             </div>
                           )}
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {/* Right Panel: Source & Settings - 1/4 width */}
-                <div className="lg:col-span-1 space-y-6">
-                  {/* Source Audio */}
-                  <Card className="border border-gray-200 shadow-sm">
-                    <CardHeader className="pb-2 bg-gray-50/30 border-b border-gray-100">
-                      <CardTitle className="text-sm flex items-center space-x-2">
-                        <FileText className="w-4 h-4 text-purple-600" />
-                        <span>Source</span>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3 p-4">
-                      <div>
-                        <h4 className="text-xs font-semibold text-gray-900 line-clamp-2 mb-1 leading-tight">
-                          {currentPaper.title}
-                        </h4>
-                        <p className="text-xs text-gray-600 mb-2 truncate">
-                          {currentPaper.authors}
-                        </p>
-                        <div className="flex items-center space-x-1 text-xs text-gray-500 bg-gray-50 p-1 rounded">
-                          <FileText className="w-3 h-3" />
-                          <span className="truncate">
-                            {currentPaper.audioFile}
-                          </span>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* Quick Settings */}
-                  <Card className="border border-gray-200 shadow-sm">
-                    <CardHeader className="pb-2 bg-gray-50/30 border-b border-gray-100">
-                      <CardTitle className="text-sm flex items-center space-x-2">
-                        <Settings className="w-4 h-4 text-gray-600" />
-                        <span>Settings</span>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4 bg-white p-4">
-                      <div>
-                        <label className="text-xs font-medium text-gray-700 block mb-1">Resolution</label>
-                        <select className="w-full text-xs border border-gray-300 rounded-md p-2 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                          <option>1080p HD</option>
-                          <option>720p HD</option>
-                          <option>4K UHD</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium text-gray-700 block mb-1">Style</label>
-                        <select className="w-full text-xs border border-gray-300 rounded-md p-2 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                          <option>Professional</option>
-                          <option>Academic</option>
-                          <option>Podcast</option>
-                        </select>
-                      </div>
-                      <div className="flex space-x-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="flex-1 text-xs"
-                        >
-                          <Download className="w-3 h-3 mr-1" />
-                          Export
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-
-              {/* Timeline Editor - Main Focus */}
-              <Card className="min-h-[400px] max-h-[500px] flex flex-col border border-gray-200 shadow-sm">
-                <CardHeader className="border-b border-gray-200 pb-3 bg-gray-50/30 flex-shrink-0">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center space-x-2">
-                      <Layers className="w-5 h-5 text-blue-600" />
-                      <span>Timeline Editor</span>
-                    </CardTitle>
-                    <div className="flex items-center space-x-2 flex-wrap gap-2 max-w-full overflow-x-auto">
-                      <Button size="sm" variant="ghost" onClick={handleZoomOut}>
-                        <ZoomOut className="w-4 h-4" />
-                      </Button>
-                      <span className="text-xs text-gray-500 font-mono">
-                        {Math.round(zoomLevel * 100)}%
-                      </span>
-                      <Button size="sm" variant="ghost" onClick={handleZoomIn}>
-                        <ZoomIn className="w-4 h-4" />
-                      </Button>
-                      <div className="h-4 w-px bg-gray-300 mx-2"></div>
-                      <Button
-                        size="sm"
-                        variant={trimMode ? "default" : "ghost"}
-                        onClick={handleTrimMode}
-                        className={
-                          trimMode
-                            ? "bg-orange-600 hover:bg-orange-700 text-white"
-                            : ""
-                        }
-                      >
-                        <Scissors className="w-4 h-4 mr-1" />
-                        {trimMode ? "Exit Trim" : "Trim Mode"}
-                      </Button>
-                      <Button size="sm" variant="ghost">
-                        <Plus className="w-4 h-4 mr-1" />
-                        Add Clip
-                      </Button>
-                      {selectedClips.length > 0 && (
-                        <>
-                          <Button size="sm" variant="ghost">
-                            <Copy className="w-4 h-4 mr-1" />
-                            Copy
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() =>
-                              selectedClips.forEach((clipId) =>
-                                handleSplitClip(clipId, currentTime)
-                              )
-                            }
-                          >
-                            <Scissors className="w-4 h-4 mr-1" />
-                            Split at Playhead
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={handleDeleteClip}
-                          >
-                            <Trash2 className="w-4 h-4 mr-1" />
-                            Delete
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </CardHeader>
-
-                <CardContent className="flex-1 flex flex-col p-0 overflow-hidden bg-white min-h-0">
-                  <div className="flex h-full">
-                    {/* Track Labels */}
-                    <div className="w-24 flex-shrink-0 bg-gray-50 border-r border-gray-200">
-                      <div className="h-8 border-b border-gray-200 flex items-center px-3">
-                        <span className="text-xs font-semibold text-gray-600">
-                          TRACKS
-                        </span>
-                      </div>
-                      {[1, 2, 3, 4].map((trackNum) => (
-                        <div
-                          key={trackNum}
-                          className="h-16 border-b border-gray-200 flex items-center px-3"
-                        >
-                          <span className="text-xs text-gray-500">
-                            Track {trackNum}
-                          </span>
                         </div>
                       ))}
-                    </div>
-
-                    {/* Timeline Area */}
-                    <div className="flex-1 overflow-x-auto overflow-y-hidden">
-                      <div
-                        ref={timelineRef}
-                        className="relative"
-                        style={{
-                          width: `${totalDuration * pixelsPerSecond}px`,
-                          minWidth: "100%",
-                        }}
-                      >
-                        {/* Time Ruler */}
-                        <div className="h-8 border-b border-gray-200 bg-gray-50 relative">
-                          {Array.from(
-                            { length: Math.ceil(totalDuration / 5) },
-                            (_, i) => (
-                              <div
-                                key={i}
-                                className="absolute border-l border-gray-300"
-                                style={{ left: `${i * 5 * pixelsPerSecond}px` }}
-                              >
-                                <span className="text-xs text-gray-600 ml-1">
-                                  {formatTime(i * 5)}
-                                </span>
-                              </div>
-                            )
-                          )}
-                          {/* Playhead */}
-                          <div
-                            className="absolute top-0 w-px bg-red-500 h-full z-10"
-                            style={{
-                              left: `${currentTime * pixelsPerSecond}px`,
-                            }}
-                          >
-                            <div className="w-3 h-3 bg-red-500 rounded-full transform -translate-x-1/2 -translate-y-1"></div>
-                          </div>
-                        </div>
-
-                        {/* Tracks */}
-                        {[1, 2, 3, 4].map((trackNum) => (
-                          <div
-                            key={trackNum}
-                            className="h-16 border-b border-gray-200 relative bg-white"
-                          >
-                            {videoClips
-                              .filter((clip) => clip.track === trackNum)
-                              .map((clip) => (
-                                <div
-                                  key={clip.id}
-                                  className={`absolute h-12 mt-2 rounded border-2 cursor-pointer transition-all ${
-                                    selectedClips.includes(clip.id)
-                                      ? "border-blue-500 bg-blue-100"
-                                      : trimMode && trimmingClip === clip.id
-                                        ? "border-orange-500 bg-orange-100"
-                                        : `border-gray-300 ${getTrackColor(trackNum)} hover:border-gray-400`
-                                  }`}
-                                  style={{
-                                    left: `${clip.startTime * pixelsPerSecond}px`,
-                                    width: `${clip.duration * pixelsPerSecond}px`,
-                                    minWidth: "60px",
-                                  }}
-                                  onClick={(e) => {
-                                    if (trimMode) {
-                                      handleTrimClip(clip.id);
-                                    } else {
-                                      handleClipSelect(
-                                        clip.id,
-                                        e.metaKey || e.ctrlKey
-                                      );
-                                    }
-                                  }}
-                                >
-                                  <div className="p-2 h-full flex items-center overflow-hidden">
-                                    <div className="flex items-center space-x-1 min-w-0 overflow-hidden">
-                                      {getClipTypeIcon(clip.type)}
-                                      <span className="text-xs font-medium truncate text-gray-800">
-                                        {clip.name}
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* Trim handles - only show in trim mode */}
-                                  {trimMode && trimmingClip === clip.id && (
-                                    <>
-                                      {/* Left trim handle */}
-                                      <div className="absolute left-0 top-0 w-2 h-full bg-orange-600 cursor-ew-resize flex items-center justify-center">
-                                        <div className="w-1 h-6 bg-white rounded"></div>
-                                      </div>
-                                      {/* Right trim handle */}
-                                      <div className="absolute right-0 top-0 w-2 h-full bg-orange-600 cursor-ew-resize flex items-center justify-center">
-                                        <div className="w-1 h-6 bg-white rounded"></div>
-                                      </div>
-                                      {/* Trim overlay */}
-                                      <div className="absolute inset-0 border-2 border-orange-500 rounded pointer-events-none">
-                                        <div className="absolute -top-6 left-0 text-xs text-orange-600 font-semibold bg-white px-1 rounded">
-                                          TRIMMING
-                                        </div>
-                                      </div>
-                                    </>
-                                  )}
-
-                                  {/* Regular resize handles - only show when not in trim mode */}
-                                  {!trimMode && (
-                                    <>
-                                      <div className="absolute left-0 top-0 w-1 h-full bg-blue-600 opacity-0 hover:opacity-100 cursor-ew-resize"></div>
-                                      <div className="absolute right-0 top-0 w-1 h-full bg-blue-600 opacity-0 hover:opacity-100 cursor-ew-resize"></div>
-                                    </>
-                                  )}
-                                </div>
-                              ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
-                </CardContent>
-              </Card>
-
-              {/* Media Browser & Asset Library */}
-              <Card className="border border-gray-200 shadow-sm">
-                <CardHeader className="pb-3 bg-gray-50/30 border-b border-gray-100">
-                  <CardTitle className="text-sm flex items-center space-x-2">
-                    {/* eslint-disable-next-line jsx-a11y/alt-text */}
-                    <Image className="w-4 h-4 text-orange-600" />
-                    <span>Media Library</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-4">
-                  <ScrollArea className="h-24">
-                      <div className="flex space-x-4">
-                        {[
-                          {
-                            name: "Host Avatar",
-                            type: "video",
-                            duration: "0:45",
-                          },
-                          {
-                            name: "Paper Visual",
-                            type: "image",
-                            duration: "static",
-                          },
-                          {
-                            name: "Background Music",
-                            type: "audio",
-                            duration: "2:30",
-                          },
-                          {
-                            name: "Transition Effect",
-                            type: "effect",
-                            duration: "0:05",
-                          },
-                          {
-                            name: "Diagram Animation",
-                            type: "video",
-                            duration: "0:30",
-                          },
-                          {
-                            name: "Logo Intro",
-                            type: "video",
-                            duration: "0:10",
-                          },
-                        ].map((asset, i) => (
-                          <div
-                            key={i}
-                            className="flex-shrink-0 w-20 h-16 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                          >
-                            <div className="flex items-center justify-center w-6 h-6 mb-1">
-                              {asset.type === "video" ? (
-                                <Video className="w-4 h-4 text-blue-600" />
-                              ) : asset.type === "audio" ? (
-                                <Volume2 className="w-4 h-4 text-green-600" />
-                              ) : asset.type === "image" ? (
-                                // eslint-disable-next-line jsx-a11y/alt-text
-                                <Image className="w-4 h-4 text-purple-600" />
-                              ) : (
-                                <Zap className="w-4 h-4 text-orange-600" />
-                              )}
-                            </div>
-                            <div className="text-xs text-center leading-tight px-1">
-                              <div className="font-medium truncate w-full text-gray-800">
-                                {asset.name}
-                              </div>
-                              <div className="text-gray-500 text-xs">
-                                {asset.duration}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        <div className="flex-shrink-0 w-20 h-16 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-green-400 hover:bg-green-50 transition-colors">
-                          <Plus className="w-6 h-6 text-gray-400" />
-                        </div>
-                      </div>
-                    </ScrollArea>
-                  </CardContent>
-                </Card>
+                ))}
+              </div>
             </div>
           </div>
         </div>
+        
+        {/* Inspector Panel */}
+        <div className="hidden lg:flex w-80 bg-white border-l border-gray-200">
+          <SimpleInspectorPanel
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            mediaAssets={filteredMediaAssets}
+            mediaQuery={mediaQuery}
+            setMediaQuery={setMediaQuery}
+            mediaFilter={mediaFilter}
+            setMediaFilter={setMediaFilter}
+            selectedClips={selectedClips}
+            videoClips={videoClips}
+            volume={volume}
+            setVolume={setVolume}
+          />
+        </div>
       </div>
+      
+      {/* Hidden file input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="video/*,audio/*,image/*"
+        multiple
+        className="hidden"
+        onChange={handleFilesSelected}
+      />
     </div>
+  );
+}
+
+// Simplified Inspector Panel
+function SimpleInspectorPanel({
+  activeTab,
+  setActiveTab,
+  mediaAssets,
+  mediaQuery,
+  setMediaQuery,
+  mediaFilter,
+  setMediaFilter,
+  selectedClips,
+  videoClips,
+  volume,
+  setVolume,
+}: {
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
+  mediaAssets: any[];
+  mediaQuery: string;
+  setMediaQuery: (query: string) => void;
+  mediaFilter: "all" | "video" | "audio" | "image";
+  setMediaFilter: (filter: "all" | "video" | "audio" | "image") => void;
+  selectedClips: string[];
+  videoClips: VideoClip[];
+  volume: number;
+  setVolume: (volume: number) => void;
+}) {
+  const selectedClip = selectedClips.length === 1 ? videoClips.find(c => c.id === selectedClips[0]) : null;
+
+  return (
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+      <TabsList className="grid w-full grid-cols-2 shrink-0">
+        <TabsTrigger value="media" className="flex items-center space-x-1">
+          <Folder className="w-4 h-4" />
+          <span className="hidden sm:inline">Media</span>
+        </TabsTrigger>
+        <TabsTrigger value="properties" className="flex items-center space-x-1">
+          <Sliders className="w-4 h-4" />
+          <span className="hidden sm:inline">Properties</span>
+        </TabsTrigger>
+      </TabsList>
+
+      <div className="flex-1 overflow-hidden">
+        <TabsContent value="media" className="h-full">
+          <div className="h-full flex flex-col">
+            <div className="p-4 border-b border-gray-200 space-y-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search media..."
+                  value={mediaQuery}
+                  onChange={(e) => setMediaQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+              <div className="flex space-x-1">
+                {["all", "video", "audio", "image"].map((filter) => (
+                  <button
+                    key={filter}
+                    onClick={() => setMediaFilter(filter as any)}
+                    className={`px-3 py-1 text-xs rounded ${
+                      mediaFilter === filter
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {filter.charAt(0).toUpperCase() + filter.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <ScrollArea className="flex-1">
+              <div className="p-4 space-y-2">
+                {mediaAssets.map((asset, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer border border-gray-200"
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                      {asset.type === "video" ? (
+                        <Video className="w-5 h-5 text-purple-600" />
+                      ) : asset.type === "audio" ? (
+                        <Volume2 className="w-5 h-5 text-purple-600" />
+                      ) : (
+                        <Image className="w-5 h-5 text-purple-600" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">{asset.name}</div>
+                      <div className="text-xs text-gray-500">{asset.type.toUpperCase()} • {asset.duration}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="properties" className="h-full">
+          <ScrollArea className="h-full">
+            <div className="p-4 space-y-4">
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 mb-2">Master Volume</h3>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={volume}
+                  onChange={(e) => setVolume(parseFloat(e.target.value))}
+                  className="w-full"
+                />
+                <div className="text-xs text-gray-500 mt-1">{Math.round(volume * 100)}%</div>
+              </div>
+
+              {selectedClip && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-900 mb-2">Selected Clip</h3>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <div className="flex items-center space-x-2 mb-2">
+                      {getClipTypeIcon(selectedClip.type)}
+                      <span className="text-sm font-medium">{selectedClip.name}</span>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      Duration: {selectedClip.duration}s • Track: {selectedClip.track}
+                    </div>
+                    {selectedClip.volume !== undefined && (
+                      <div className="mt-2">
+                        <label className="text-xs text-gray-600">Volume</label>
+                        <div className="text-xs text-gray-500">{Math.round(selectedClip.volume * 100)}%</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </TabsContent>
+      </div>
+    </Tabs>
   );
 }
