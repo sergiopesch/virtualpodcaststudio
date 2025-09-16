@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -33,6 +33,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useApiConfig, type LlmProvider } from "@/contexts/api-config-context";
 
 interface SidebarProps {
   children?: React.ReactNode;
@@ -86,6 +87,12 @@ interface UserMenuItem {
   label: string;
   description: string;
   icon: LucideIcon;
+}
+
+interface LlmSettingsState {
+  activeProvider: LlmProvider;
+  openaiKey: string;
+  googleKey: string;
 }
 
 const userMenuItems: UserMenuItem[] = [
@@ -144,6 +151,35 @@ export function Sidebar({
     securityAlerts: true,
     digestFrequency: "weekly" as "daily" | "weekly" | "monthly",
   });
+  const {
+    activeProvider: storedProvider,
+    apiKeys,
+    setActiveProvider: persistActiveProvider,
+    setApiKey: persistApiKey,
+  } = useApiConfig();
+  const [llmSettings, setLlmSettings] = useState<LlmSettingsState>({
+    activeProvider: storedProvider,
+    openaiKey: apiKeys.openai ?? "",
+    googleKey: apiKeys.google ?? "",
+  });
+
+  useEffect(() => {
+    if (!isUserConfigOpen || activeUserMenu?.key !== "settings") {
+      return;
+    }
+
+    setLlmSettings({
+      activeProvider: storedProvider,
+      openaiKey: apiKeys.openai ?? "",
+      googleKey: apiKeys.google ?? "",
+    });
+  }, [
+    isUserConfigOpen,
+    activeUserMenu,
+    storedProvider,
+    apiKeys.openai,
+    apiKeys.google,
+  ]);
 
   const handleUserMenuItemSelect = useCallback((item: UserMenuItem) => {
     setActiveUserMenu(item);
@@ -167,9 +203,28 @@ export function Sidebar({
       case "profile":
         console.info("Profile settings saved", profileSettings);
         break;
-      case "settings":
+      case "settings": {
+        const trimmedOpenAiKey = llmSettings.openaiKey.trim();
+        const trimmedGoogleKey = llmSettings.googleKey.trim();
+
+        persistActiveProvider(llmSettings.activeProvider);
+        persistApiKey("openai", trimmedOpenAiKey);
+        persistApiKey("google", trimmedGoogleKey);
+
+        setLlmSettings((previous) => ({
+          ...previous,
+          openaiKey: trimmedOpenAiKey,
+          googleKey: trimmedGoogleKey,
+        }));
+
         console.info("Workspace preferences saved", workspacePreferences);
+        console.info("LLM provider preferences saved", {
+          provider: llmSettings.activeProvider,
+          hasOpenAiKey: trimmedOpenAiKey.length > 0,
+          hasGoogleKey: trimmedGoogleKey.length > 0,
+        });
         break;
+      }
       case "notifications":
         console.info("Notification preferences saved", notificationPreferences);
         break;
@@ -181,7 +236,15 @@ export function Sidebar({
 
     setIsUserConfigOpen(false);
     setActiveUserMenu(null);
-  }, [activeUserMenu, notificationPreferences, profileSettings, workspacePreferences]);
+  }, [
+    activeUserMenu,
+    llmSettings,
+    notificationPreferences,
+    persistActiveProvider,
+    persistApiKey,
+    profileSettings,
+    workspacePreferences,
+  ]);
 
   const getPrimaryActionLabel = (key: UserMenuKey) => {
     switch (key) {
@@ -312,7 +375,10 @@ export function Sidebar({
             </div>
           </div>
         );
-      case "settings":
+      case "settings": {
+        const openAiConfigured = (apiKeys.openai ?? "").trim().length > 0;
+        const googleConfigured = (apiKeys.google ?? "").trim().length > 0;
+
         return (
           <div className="space-y-5 text-sm text-gray-700">
             <div>
@@ -409,8 +475,168 @@ export function Sidebar({
                 </div>
               </label>
             </div>
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                AI providers
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label
+                  htmlFor="llm-provider-openai"
+                  className={`flex cursor-pointer items-start space-x-3 rounded-xl border p-3 shadow-sm transition ${
+                    llmSettings.activeProvider === "openai"
+                      ? "border-purple-300 bg-purple-50/60"
+                      : "border-gray-200 bg-white hover:border-purple-200"
+                  }`}
+                >
+                  <input
+                    id="llm-provider-openai"
+                    type="radio"
+                    name="llm-provider"
+                    value="openai"
+                    checked={llmSettings.activeProvider === "openai"}
+                    onChange={() =>
+                      setLlmSettings((previous) => ({
+                        ...previous,
+                        activeProvider: "openai",
+                      }))
+                    }
+                    className="mt-0.5 h-4 w-4 text-purple-600 focus:ring-purple-500"
+                  />
+                  <div className="space-y-1">
+                    <span className="text-sm font-medium text-gray-900">OpenAI</span>
+                    <p className="text-xs text-gray-500">
+                      Realtime conversations powered by GPT-4o.
+                    </p>
+                  </div>
+                </label>
+                <label
+                  htmlFor="llm-provider-google"
+                  className={`flex cursor-pointer items-start space-x-3 rounded-xl border p-3 shadow-sm transition ${
+                    llmSettings.activeProvider === "google"
+                      ? "border-purple-300 bg-purple-50/60"
+                      : "border-gray-200 bg-white hover:border-purple-200"
+                  }`}
+                >
+                  <input
+                    id="llm-provider-google"
+                    type="radio"
+                    name="llm-provider"
+                    value="google"
+                    checked={llmSettings.activeProvider === "google"}
+                    onChange={() =>
+                      setLlmSettings((previous) => ({
+                        ...previous,
+                        activeProvider: "google",
+                      }))
+                    }
+                    className="mt-0.5 h-4 w-4 text-purple-600 focus:ring-purple-500"
+                  />
+                  <div className="space-y-1">
+                    <span className="text-sm font-medium text-gray-900">Google</span>
+                    <p className="text-xs text-gray-500">
+                      Gemini responses for research synthesis.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div>
+                <label
+                  htmlFor="openai-api-key"
+                  className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+                >
+                  OpenAI API key
+                </label>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    id="openai-api-key"
+                    type="password"
+                    autoComplete="off"
+                    value={llmSettings.openaiKey}
+                    onChange={(event) =>
+                      setLlmSettings((previous) => ({
+                        ...previous,
+                        openaiKey: event.target.value,
+                      }))
+                    }
+                    placeholder="sk-..."
+                    className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                  />
+                  {llmSettings.openaiKey && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        setLlmSettings((previous) => ({
+                          ...previous,
+                          openaiKey: "",
+                        }))
+                      }
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {openAiConfigured
+                    ? "Saved locally in this browser."
+                    : "Paste your OpenAI key (starts with \"sk-\")."}
+                </p>
+              </div>
+              <div>
+                <label
+                  htmlFor="google-api-key"
+                  className="text-xs font-semibold uppercase tracking-wide text-gray-500"
+                >
+                  Google API key
+                </label>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    id="google-api-key"
+                    type="password"
+                    autoComplete="off"
+                    value={llmSettings.googleKey}
+                    onChange={(event) =>
+                      setLlmSettings((previous) => ({
+                        ...previous,
+                        googleKey: event.target.value,
+                      }))
+                    }
+                    placeholder="AIza..."
+                    className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                  />
+                  {llmSettings.googleKey && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        setLlmSettings((previous) => ({
+                          ...previous,
+                          googleKey: "",
+                        }))
+                      }
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {googleConfigured
+                    ? "Saved locally in this browser."
+                    : "Use your Google AI Studio key (starts with \"AIza\")."}
+                </p>
+              </div>
+              <div className="rounded-lg border border-dashed border-purple-200 bg-purple-50/60 p-3 text-xs text-purple-700">
+                API keys stay on this device and are only sent to Virtual Podcast Studio
+                when you start a conversation or request a summary.
+              </div>
+            </div>
           </div>
         );
+      }
       case "notifications":
         return (
           <div className="space-y-5 text-sm text-gray-700">
