@@ -28,6 +28,7 @@ podcast-studio/
 - **Navigation**: Sidebar with Audio Studio, Video Studio, Publisher, and Team sections
 - **Topic Selection**: Grid of clickable cards for 4 research topics (AI, ML, Computer Vision, Robotics)
 - **Action Buttons**: "Start Audio Studio" and "Clear Selection"
+- **Audio Handoff**: "Start Audio Studio" persists the selected paper to `sessionStorage` (`vps:selectedPaper`) before navigating to `/studio`.
 - **Paper Display**: Scrollable cards showing paper details with author and publication info
 - **Status Indicators**: Shows selected topics and loaded papers count
 
@@ -38,6 +39,8 @@ podcast-studio/
 - **Recording Controls**: Play, pause, stop, and download functionality
 - **Transcript Display**: Real-time conversation transcript with timestamps
 - **AI Participants**: Simulated AI experts for different research topics
+- **Current Paper**: Card hydrates from the Research Hub handoff, falling back to guidance copy when no paper is stored.
+- **Live Badge**: Sidebar only shows the "LIVE" pill while `isRecording` is true.
 
 ### Layout (`src/app/layout.tsx`)
 
@@ -120,6 +123,12 @@ const topics = [
 - Clears selected topics
 - Clears loaded papers
 - Clears error messages
+
+### `handleStartAudioStudio(paper)`
+
+- Serializes `PaperCardData` into `sessionStorage` under `vps:selectedPaper`
+- Navigates to `/studio` using the Next.js router
+- Logs storage failures so the Audio Studio can surface an empty-state warning
 
 ## 🛠️ Development Notes
 

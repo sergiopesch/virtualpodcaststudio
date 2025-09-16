@@ -35,6 +35,17 @@ type MicrophoneProcessor = {
   stop: () => void;
 };
 
+interface SelectedPaper {
+  id: string;
+  title: string;
+  authors: string;
+  abstract: string;
+  arxiv_url?: string;
+  primaryAuthor?: string;
+  hasAdditionalAuthors?: boolean;
+  formattedPublishedDate?: string;
+}
+
 export default function Studio() {
   const { collapsed, toggleCollapsed } = useSidebar();
   
@@ -51,6 +62,8 @@ export default function Studio() {
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [sessionId] = useState(() => `session_${Date.now()}`);
+  const [currentPaper, setCurrentPaper] = useState<SelectedPaper | null>(null);
+  const [paperLoadError, setPaperLoadError] = useState<string | null>(null);
 
   // Refs for real-time functionality
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -66,13 +79,55 @@ export default function Studio() {
   const aiAudioStartedRef = useRef<boolean>(false);
   const aiTextBufferRef = useRef<string>("");
   const aiTypingIntervalRef = useRef<number | null>(null);
+
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
-  const currentPaper = {
-    title: "Attention Is All You Need",
-    authors: "Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit",
-    abstract: "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely."
-  };
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const loadSelectedPaper = () => {
+      const stored = sessionStorage.getItem("vps:selectedPaper");
+
+      if (!stored) {
+        setCurrentPaper(null);
+        setPaperLoadError(null);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stored) as SelectedPaper | null;
+
+        if (!parsed || typeof parsed !== "object" || !("id" in parsed) || !parsed.id) {
+          throw new Error("Invalid stored paper payload");
+        }
+
+        setCurrentPaper(parsed);
+        setPaperLoadError(null);
+      } catch (error) {
+        console.error("Failed to load stored paper:", error);
+        setCurrentPaper(null);
+        setPaperLoadError(
+          "We couldn't load the selected paper. Please return to the Research Hub and choose a paper before starting the Audio Studio.",
+        );
+      }
+    };
+
+    loadSelectedPaper();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea === sessionStorage && event.key === "vps:selectedPaper") {
+        loadSelectedPaper();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
 
   // Timer for session duration
   useEffect(() => {
@@ -700,9 +755,10 @@ export default function Studio() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
       <div className="flex">
-        <Sidebar 
+        <Sidebar
           collapsed={collapsed}
           onToggleCollapse={toggleCollapsed}
+          isLiveRecording={isRecording}
         />
         
         {/* Main Content */}
@@ -733,28 +789,63 @@ export default function Studio() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div>
-                      <h3 className="font-semibold text-gray-900 mb-2 line-clamp-2 leading-tight">
-                        {currentPaper.title}
-                      </h3>
-                      <p className="text-sm text-gray-600 mb-3 truncate">
-                        {currentPaper.authors}
-                      </p>
-                      <p className="text-sm text-gray-500 line-clamp-3 leading-relaxed">
-                        {currentPaper.abstract}
-                      </p>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Button variant="outline" className="w-full">
-                        <FileText className="w-4 h-4 mr-2" />
-                        View Full Paper
-                      </Button>
-                      <Button variant="outline" className="w-full">
-                        <Brain className="w-4 h-4 mr-2" />
-                        AI Summary
-                      </Button>
-                    </div>
+                    {paperLoadError ? (
+                      <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-3">
+                        {paperLoadError}
+                      </div>
+                    ) : currentPaper ? (
+                      <>
+                        <div className="space-y-3">
+                          <h3 className="font-semibold text-gray-900 mb-1 line-clamp-2 leading-tight">
+                            {currentPaper.title}
+                          </h3>
+                          <div className="text-xs text-gray-500 uppercase tracking-wide">
+                            Published {currentPaper.formattedPublishedDate ?? "(date unavailable)"}
+                          </div>
+                          <p className="text-sm text-gray-600">
+                            {currentPaper.primaryAuthor
+                              ? `${currentPaper.primaryAuthor}${currentPaper.hasAdditionalAuthors ? " et al." : ""}`
+                              : currentPaper.authors}
+                          </p>
+                          <p className="text-sm text-gray-500 line-clamp-4 leading-relaxed">
+                            {currentPaper.abstract}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          {currentPaper.arxiv_url ? (
+                            <Button asChild variant="outline" className="w-full">
+                              <a
+                                href={currentPaper.arxiv_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <FileText className="w-4 h-4 mr-2" />
+                                View Full Paper
+                              </a>
+                            </Button>
+                          ) : (
+                            <Button variant="outline" className="w-full" disabled>
+                              <FileText className="w-4 h-4 mr-2" />
+                              View Full Paper
+                            </Button>
+                          )}
+                          <Button variant="outline" className="w-full" disabled>
+                            <Brain className="w-4 h-4 mr-2" />
+                            AI Summary
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-sm text-gray-600 space-y-2">
+                        <p className="font-medium text-gray-700">
+                          Select a research paper from the Research Hub to populate this view.
+                        </p>
+                        <p className="text-gray-500">
+                          Your selected paper details will appear here automatically once you start the Audio Studio from a research card.
+                        </p>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 

@@ -45,6 +45,12 @@ Research Hub layout
 
 Keep this pattern intact when adding new async operations so race conditions remain handled.
 
+## Audio Studio Handoff
+
+- `handleStartAudioStudio` persists the clicked `PaperCardData` into `sessionStorage` using the `vps:selectedPaper` key before routing to `/studio`.
+- Extend that stored payload whenever you add new paper fields that the Audio Studio needs (mirror any schema updates in `studio/page.tsx`).
+- Storage writes are wrapped in `try/catch`; surface meaningful errors in the console if persistence fails so the Audio Studio can warn users when no paper is available.
+
 ## Styling Conventions
 
 - Tailwind CSS with gradient backgrounds (`gradient-primary`, `shadow-glow`) defined in `globals.css`. Reuse existing utility classes instead of inlining custom CSS.

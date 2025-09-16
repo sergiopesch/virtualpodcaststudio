@@ -24,6 +24,7 @@ interface SidebarProps {
   children?: React.ReactNode;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  isLiveRecording?: boolean;
 }
 
 const navigation = [
@@ -68,6 +69,7 @@ export function Sidebar({
   children,
   collapsed = false,
   onToggleCollapse,
+  isLiveRecording = false,
 }: SidebarProps) {
   const pathname = usePathname();
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -130,6 +132,7 @@ export function Sidebar({
         {navigation.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
+          const badge = item.badge === "LIVE" && !isLiveRecording ? null : item.badge;
 
           return (
             <Link
@@ -160,11 +163,11 @@ export function Sidebar({
                       {item.name}
                     </span>
                     <div className="flex items-center space-x-2">
-                      {item.badge && (
+                      {badge && (
                         <span
-                          className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${getBadgeColor(item.badge)}`}
+                          className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${getBadgeColor(badge)}`}
                         >
-                          {item.badge}
+                          {badge}
                         </span>
                       )}
                     </div>
