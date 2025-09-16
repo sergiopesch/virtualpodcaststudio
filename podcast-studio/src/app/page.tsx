@@ -1,17 +1,18 @@
 "use client";
 
-import React, { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useSidebar } from "@/contexts/sidebar-context";
-import { 
-  BookOpen, 
-  Brain, 
-  Eye, 
-  Cpu, 
+import { cn } from "@/lib/utils";
+import {
+  BookOpen,
+  Brain,
+  Eye,
+  Cpu,
   Settings, 
   Search,
   Play,
@@ -69,7 +70,7 @@ const stats = [
   { label: "Research Hours", value: "156", icon: Clock, color: "text-orange-600" },
 ];
 
-interface Paper {
+interface PaperApi {
   id: string;
   title: string;
   authors: string;
@@ -78,64 +79,146 @@ interface Paper {
   arxiv_url: string;
 }
 
+interface PaperApiResponse {
+  papers?: PaperApi[];
+  error?: string;
+}
+
+interface PaperCardData extends PaperApi {
+  primaryAuthor: string;
+  hasAdditionalAuthors: boolean;
+  formattedPublishedDate: string;
+}
+
+const transformPapers = (papers: PaperApi[] = []): PaperCardData[] => {
+  const seen = new Set<string>();
+  const parsed: PaperCardData[] = [];
+
+  for (const paper of papers) {
+    if (seen.has(paper.id)) {
+      continue;
+    }
+
+    seen.add(paper.id);
+
+    const authors = paper.authors
+      .split(",")
+      .map((author) => author.trim())
+      .filter(Boolean);
+
+    const publishedDate = new Date(paper.published);
+    const formattedPublishedDate = Number.isNaN(publishedDate.getTime())
+      ? paper.published
+      : publishedDate.toLocaleDateString();
+
+    parsed.push({
+      ...paper,
+      primaryAuthor: authors[0] ?? "Unknown author",
+      hasAdditionalAuthors: authors.length > 1,
+      formattedPublishedDate,
+    });
+  }
+
+  return parsed;
+};
+
 export default function Home() {
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
-  const [papers, setPapers] = useState<Paper[]>([]);
+  const [papers, setPapers] = useState<PaperCardData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { collapsed, toggleCollapsed } = useSidebar();
 
-  const handleTopicChange = (topicId: string, checked: boolean) => {
-    setSelectedTopics((prev) =>
-      checked
-        ? [...prev, topicId]
-        : prev.filter((id) => id !== topicId)
-    );
-  };
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const handleFetchPapers = async () => {
-    if (selectedTopics.length === 0) return;
-    
+  const selectedTopicSet = useMemo(() => new Set(selectedTopics), [selectedTopics]);
+  const selectedTopicCount = selectedTopics.length;
+  const hasSelectedTopics = selectedTopicCount > 0;
+  const hasPapers = papers.length > 0;
+
+  const handleTopicToggle = useCallback((topicId: string) => {
+    setSelectedTopics((previous) => {
+      const next = new Set(previous);
+
+      if (next.has(topicId)) {
+        next.delete(topicId);
+      } else {
+        next.add(topicId);
+      }
+
+      return topics
+        .filter((topic) => next.has(topic.id))
+        .map((topic) => topic.id);
+    });
+  }, []);
+
+  const handleFetchPapers = useCallback(async () => {
+    const topicsPayload = [...selectedTopics];
+
+    if (topicsPayload.length === 0) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
-    
+
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const response = await fetch("/api/papers", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ topics: selectedTopics }),
+        body: JSON.stringify({ topics: topicsPayload }),
+        cache: "no-store",
+        signal: controller.signal,
       });
-      
+
+      const result = (await response.json()) as PaperApiResponse;
+
       if (!response.ok) {
-        throw new Error("Failed to fetch papers");
+        throw new Error(result.error ?? "Failed to fetch papers");
       }
-      
-      const data = await response.json();
-      // Remove duplicate papers based on ID
-      const uniquePapers = data.papers.filter((paper: Paper, index: number, self: Paper[]) => 
-        index === self.findIndex(p => p.id === paper.id)
-      );
-      setPapers(uniquePapers);
+
+      setPapers(transformPapers(result.papers));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
+
+      const message = err instanceof Error ? err.message : "An unexpected error occurred";
+      setError(message);
       console.error("Error fetching papers:", err);
     } finally {
-      setLoading(false);
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+        setLoading(false);
+      }
     }
-  };
+  }, [selectedTopics]);
 
-  const handleClearSelection = () => {
+  const handleClearSelection = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setSelectedTopics([]);
     setPapers([]);
     setError(null);
-  };
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
       <div className="flex">
-        <Sidebar 
+        <Sidebar
           collapsed={collapsed}
           onToggleCollapse={toggleCollapsed}
         />
@@ -187,41 +270,54 @@ export default function Home() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {topics.map((topic) => {
                       const IconComponent = topic.icon;
-                      const isSelected = selectedTopics.includes(topic.id);
-                      
+                      const isSelected = selectedTopicSet.has(topic.id);
+
                       return (
-                        <div
+                        <button
                           key={topic.id}
-                          className={`group p-4 border-2 rounded-xl cursor-pointer transition-all duration-200 hover:scale-[1.02] ${
+                          type="button"
+                          onClick={() => handleTopicToggle(topic.id)}
+                          aria-pressed={isSelected}
+                          className={cn(
+                            "group flex w-full items-center space-x-4 rounded-xl border-2 p-4 text-left transition-all duration-200 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-200",
                             isSelected
                               ? `${topic.bgColor} ${topic.borderColor} border-opacity-60 shadow-md`
-                              : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
-                          }`}
-                          onClick={() => handleTopicChange(topic.id, !isSelected)}
+                              : "bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm"
+                          )}
                         >
-                          <div className="flex items-center space-x-4">
-                            <div className={`w-10 h-10 rounded-lg ${isSelected ? topic.bgColor : 'bg-gray-50'} flex items-center justify-center transition-colors`}>
-                              <IconComponent className={`w-5 h-5 ${topic.color}`} />
-                            </div>
-                            <div className="flex-1">
-                              <div className="flex items-center space-x-3 mb-1">
-                                <div className={`w-4 h-4 border-2 rounded flex items-center justify-center transition-colors ${
-                                  isSelected 
-                                    ? 'bg-purple-600 border-purple-600' 
-                                    : 'border-gray-300 bg-white group-hover:border-gray-400'
-                                }`}>
-                                  {isSelected && (
-                                    <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                    </svg>
-                                  )}
-                                </div>
-                                <span className="font-medium text-gray-900">{topic.label}</span>
-                              </div>
-                              <p className="text-xs text-gray-600 ml-7">{topic.description}</p>
-                            </div>
+                          <div
+                            className={cn(
+                              "flex size-10 items-center justify-center rounded-lg transition-colors",
+                              isSelected ? topic.bgColor : "bg-gray-50"
+                            )}
+                          >
+                            <IconComponent className={cn("size-5", topic.color)} />
                           </div>
-                        </div>
+                          <div className="flex-1">
+                            <div className="mb-1 flex items-center space-x-3">
+                              <div
+                                className={cn(
+                                  "flex size-4 items-center justify-center rounded border-2 transition-colors",
+                                  isSelected
+                                    ? "border-purple-600 bg-purple-600"
+                                    : "border-gray-300 bg-white group-hover:border-gray-400"
+                                )}
+                              >
+                                {isSelected && (
+                                  <svg className="size-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                    <path
+                                      fillRule="evenodd"
+                                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                                      clipRule="evenodd"
+                                    />
+                                  </svg>
+                                )}
+                              </div>
+                              <span className="font-medium text-gray-900">{topic.label}</span>
+                            </div>
+                            <p className="ml-7 text-xs text-gray-600">{topic.description}</p>
+                          </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -239,7 +335,7 @@ export default function Home() {
                       size="lg"
                       className="flex-1"
                       onClick={handleFetchPapers}
-                      disabled={selectedTopics.length === 0 || loading}
+                      disabled={!hasSelectedTopics || loading}
                     >
                       {loading ? (
                         <>
@@ -257,23 +353,23 @@ export default function Home() {
                       variant="outline"
                       size="lg"
                       onClick={handleClearSelection}
-                      disabled={selectedTopics.length === 0 && papers.length === 0}
+                      disabled={!hasSelectedTopics && !hasPapers}
                     >
                       Clear
                     </Button>
                   </div>
-                  
-                  {(selectedTopics.length > 0 || papers.length > 0) && (
+
+                  {(hasSelectedTopics || hasPapers) && (
                     <div className="pt-4 border-t border-gray-200">
                       <div className="flex justify-between items-center text-sm">
-                        {selectedTopics.length > 0 && (
+                        {hasSelectedTopics && (
                           <span className="text-gray-600">
-                            {selectedTopics.length} topic{selectedTopics.length !== 1 ? 's' : ''} selected
+                            {selectedTopicCount} topic{selectedTopicCount !== 1 ? "s" : ""} selected
                           </span>
                         )}
-                        {papers.length > 0 && (
+                        {hasPapers && (
                           <span className="text-green-600 font-medium">
-                            {papers.length} paper{papers.length !== 1 ? 's' : ''} found
+                            {papers.length} paper{papers.length !== 1 ? "s" : ""} found
                           </span>
                         )}
                       </div>
@@ -304,11 +400,11 @@ export default function Home() {
                         <p className="text-red-600 font-medium mb-2">Error loading papers</p>
                         <p className="text-gray-500 text-sm">{error}</p>
                       </div>
-                    ) : papers.length > 0 ? (
+                    ) : hasPapers ? (
                       <div className="p-6 space-y-4">
-                        {papers.map((paper, index) => (
+                        {papers.map((paper) => (
                           <Card
-                            key={`${paper.id}-${index}`}
+                            key={paper.id}
                             className="border border-gray-200 hover:border-purple-300 hover:shadow-lg transition-all duration-300 interactive"
                           >
                             <CardContent className="p-6">
@@ -323,31 +419,29 @@ export default function Home() {
                                   <div className="flex items-center space-x-4 text-sm text-gray-600 mb-3">
                                     <span className="flex items-center">
                                       <Users className="w-3 h-3 mr-1" />
-                                      {paper.authors.split(',')[0]}
-                                      {paper.authors.split(',').length > 1 && ' et al.'}
+                                      {paper.primaryAuthor}
+                                      {paper.hasAdditionalAuthors && " et al."}
                                     </span>
                                     <span className="flex items-center">
                                       <Clock className="w-3 h-3 mr-1" />
-                                      {new Date(paper.published).toLocaleDateString()}
+                                      {paper.formattedPublishedDate}
                                     </span>
                                   </div>
                                   <p className="text-gray-700 text-sm line-clamp-3 mb-4 leading-relaxed">
                                     {paper.abstract}
                                   </p>
                                   <div className="flex items-center space-x-3">
-                                    <Link href="/studio">
-                                      <Button variant="gradient" size="sm">
+                                    <Button asChild variant="gradient" size="sm">
+                                      <Link href="/studio">
                                         <Play className="w-4 h-4 mr-2" />
                                         Start Audio Studio
-                                      </Button>
-                                    </Link>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => window.open(paper.arxiv_url, '_blank')}
-                                    >
-                                      <FileText className="w-4 h-4 mr-2" />
-                                      Read Paper
+                                      </Link>
+                                    </Button>
+                                    <Button asChild variant="outline" size="sm">
+                                      <a href={paper.arxiv_url} target="_blank" rel="noopener noreferrer">
+                                        <FileText className="w-4 h-4 mr-2" />
+                                        Read Paper
+                                      </a>
                                     </Button>
                                   </div>
                                 </div>
