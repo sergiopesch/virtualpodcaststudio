@@ -1,8 +1,7 @@
 "use client";
 
 import React from "react";
-import { Button } from "@/components/ui/button";
-import { Settings, Clock, Search } from "lucide-react";
+import { Clock, Search } from "lucide-react";
 
 interface HeaderProps {
   title: string;
@@ -116,10 +115,6 @@ export function Header({
           )}
           
           {actions}
-          
-          <Button variant="ghost" size="sm" className="text-gray-600 hover:text-purple-700 hover:bg-purple-50">
-            <Settings className="w-4 h-4" />
-          </Button>
         </div>
       </div>
     </header>
