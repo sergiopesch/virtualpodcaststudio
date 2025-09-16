@@ -5,7 +5,7 @@ The Audio Studio (`page.tsx`) renders the realtime conversation workspace where 
 
 ## 🧭 Anatomy
 - **Layout chrome**: Reuses `Sidebar` and `Header` for navigation, state banner, and timer.
-- **Paper context**: Static card showing the active research paper (placeholder data today).
+- **Paper context**: Reads the last selected research paper from `sessionStorage` and renders fallback messaging if nothing was handed off from the Research Hub.
 - **Recording controls**: Connect/record buttons, manual text input, transcript export, and disconnect actions.
 - **Live transcript**: Scrollable conversation history with live typing animation, user transcription preview, and AI responses.
 - **Hidden audio element**: Plays the expert voice returned over WebRTC.
@@ -15,6 +15,7 @@ The Audio Studio (`page.tsx`) renders the realtime conversation workspace where 
 | --- | --- | --- |
 | `isConnected`, `isSessionReady`, `isRecording`, `isConnecting` | `boolean` | Connection lifecycle flags that guard user actions.
 | `messages` | `ConversationMessage[]` | Persisted transcript entries rendered in the UI.
+| `currentPaper` / `paperLoadError` | `SelectedPaper \| null` / `string \| null` | Hydrated from `sessionStorage` (`vps:selectedPaper`) and surfaced in the "Current Paper" card, with warnings when parsing fails.
 | `userTranscription` / `isTranscribing` | `string` / `boolean` | Live microphone transcription preview while server VAD is active.
 | `mediaRecorderRef` | `MicrophoneProcessor \| null` | Wraps the ScriptProcessor pipeline so we can stop audio capture quickly.
 | `pcRef` / `dcRef` / `aiTrackRef` | WebRTC handles | Track the active RTCPeerConnection, data channel, and remote audio track for cleanup.
@@ -22,6 +23,12 @@ The Audio Studio (`page.tsx`) renders the realtime conversation workspace where 
 | `micChunkQueueRef` / `isUploadingRef` / `micFlushIntervalRef` | refs | Batch PCM16 frames and flush to `/api/rt/audio-append` every 50 ms without overlapping uploads.
 
 Keep all cleanup logic in `teardownRealtime` so any exit path (manual disconnect, component unmount, fatal error) leaves no dangling audio context, timers, or interval handles.
+
+## 🔄 Research Hub Handoff
+- An early `useEffect` reads `sessionStorage.getItem("vps:selectedPaper")`, parsing it into `currentPaper` and clearing the value when missing.
+- Malformed payloads log a console error and populate `paperLoadError` so the UI can guide the user back to the Research Hub.
+- A `storage` event listener keeps multiple tabs in sync—updates to `vps:selectedPaper` immediately refresh the current paper in the Audio Studio.
+- Whenever you extend the stored schema, update both `Home.handleStartAudioStudio` and the `SelectedPaper` interface here.
 
 ## 🔌 Connection Workflow
 1. **`handleConnect`**
@@ -48,6 +55,7 @@ Keep all cleanup logic in `teardownRealtime` so any exit path (manual disconnect
 - Guard user actions when `isConnected`/`isSessionReady` are false to avoid rejected API calls.
 - Maintain empathetic empty states that guide hosts before the first AI response.
 - Use semantic icons and consistent gradient backgrounds from the global theme.
+- Pass `isLiveRecording` into the `Sidebar` so the "LIVE" badge only appears while a session is actively recording.
 
 ## ✅ Testing & Debugging
 Run `npm run lint` from the `podcast-studio/` directory before committing UI or logic changes. The command currently fails due to unrelated modules; still run it and note pre-existing failures in PR summaries.

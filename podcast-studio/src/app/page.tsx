@@ -22,7 +22,7 @@ import {
   Clock,
   Users
 } from "lucide-react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 const topics = [
   { 
@@ -128,6 +128,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { collapsed, toggleCollapsed } = useSidebar();
+  const router = useRouter();
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -208,6 +209,32 @@ export default function Home() {
     setError(null);
     setLoading(false);
   }, []);
+
+  const handleStartAudioStudio = useCallback(
+    (paper: PaperCardData) => {
+      try {
+        if (typeof window !== "undefined") {
+          const payload = {
+            id: paper.id,
+            title: paper.title,
+            authors: paper.authors,
+            abstract: paper.abstract,
+            arxiv_url: paper.arxiv_url,
+            primaryAuthor: paper.primaryAuthor,
+            hasAdditionalAuthors: paper.hasAdditionalAuthors,
+            formattedPublishedDate: paper.formattedPublishedDate,
+            storedAt: Date.now(),
+          };
+          sessionStorage.setItem("vps:selectedPaper", JSON.stringify(payload));
+        }
+      } catch (storageError) {
+        console.error("Failed to persist selected paper:", storageError);
+      }
+
+      router.push("/studio");
+    },
+    [router],
+  );
 
   useEffect(() => {
     return () => {
@@ -431,11 +458,14 @@ export default function Home() {
                                     {paper.abstract}
                                   </p>
                                   <div className="flex items-center space-x-3">
-                                    <Button asChild variant="gradient" size="sm">
-                                      <Link href="/studio">
-                                        <Play className="w-4 h-4 mr-2" />
-                                        Start Audio Studio
-                                      </Link>
+                                    <Button
+                                      type="button"
+                                      variant="gradient"
+                                      size="sm"
+                                      onClick={() => handleStartAudioStudio(paper)}
+                                    >
+                                      <Play className="w-4 h-4 mr-2" />
+                                      Start Audio Studio
                                     </Button>
                                     <Button asChild variant="outline" size="sm">
                                       <a href={paper.arxiv_url} target="_blank" rel="noopener noreferrer">
