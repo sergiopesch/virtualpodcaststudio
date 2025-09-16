@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Clock, Search } from "lucide-react";
+import { UserMenu } from "./user-menu";
 
 interface HeaderProps {
   title: string;
@@ -80,7 +81,7 @@ export function Header({
           )}
         </div>
         
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center gap-3">
           {timer && (
             <div className="flex items-center space-x-2 text-sm font-mono bg-gray-50 px-3 py-2 rounded-lg">
               <Clock className="w-4 h-4 text-gray-400" />
@@ -91,8 +92,8 @@ export function Header({
           {progress && (
             <div className="flex items-center space-x-3">
               <div className="w-32 bg-gray-200 rounded-full h-2">
-                <div 
-                  className="bg-gradient-primary h-2 rounded-full transition-all duration-500 ease-out"
+                <div
+                  className="gradient-primary h-2 rounded-full transition-all duration-500 ease-out"
                   style={{ width: `${progress.value}%` }}
                 ></div>
               </div>
@@ -113,8 +114,9 @@ export function Header({
               />
             </div>
           )}
-          
+
           {actions}
+          <UserMenu />
         </div>
       </div>
     </header>

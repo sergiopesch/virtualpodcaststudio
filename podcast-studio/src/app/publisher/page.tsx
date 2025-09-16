@@ -245,7 +245,7 @@ export default function Publisher() {
                         <div className="mt-3 flex items-center space-x-3">
                           <div className="w-40 bg-gray-200 rounded-full h-2">
                             <div
-                              className="bg-gradient-primary h-2 rounded-full transition-all duration-500 ease-out"
+                              className="gradient-primary h-2 rounded-full transition-all duration-500 ease-out"
                               style={{ width: `${publishProgress}%` }}
                             />
                           </div>
