@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useSidebar } from "@/contexts/sidebar-context";
+import { useApiConfig } from "@/contexts/api-config-context";
 import { 
   Mic, 
   BookOpen, 
@@ -48,7 +49,10 @@ interface SelectedPaper {
 
 export default function Studio() {
   const { collapsed, toggleCollapsed } = useSidebar();
-  
+  const { activeProvider, apiKeys } = useApiConfig();
+  const activeApiKey = (apiKeys[activeProvider] ?? "").trim();
+  const providerLabel = activeProvider === "openai" ? "OpenAI" : "Google";
+
   // State for the realtime studio
   const [isConnected, setIsConnected] = useState(false);
   const [isSessionReady, setIsSessionReady] = useState(false);
@@ -151,10 +155,20 @@ export default function Studio() {
   };
 
   const ensureRealtimeSession = useCallback(async () => {
+    const friendlyProvider = activeProvider === "openai" ? "OpenAI" : "Google";
+
+    if (!activeApiKey) {
+      throw new Error(`Add your ${friendlyProvider} API key in Settings before connecting.`);
+    }
+
+    if (activeProvider === "google") {
+      throw new Error("Realtime studio currently supports only OpenAI sessions. Switch your active provider in Settings to continue.");
+    }
+
     const response = await fetch('/api/rt/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
+      body: JSON.stringify({ sessionId, provider: activeProvider, apiKey: activeApiKey }),
       cache: 'no-store'
     });
 
@@ -169,7 +183,7 @@ export default function Studio() {
       const message = payload?.error || `Failed to start realtime session (${response.status})`;
       throw new Error(message);
     }
-  }, [sessionId]);
+  }, [activeApiKey, activeProvider, sessionId]);
 
   // Fast typing animation helpers for AI transcript
   const startAiTyping = () => {
@@ -424,6 +438,18 @@ export default function Studio() {
     let localStream: MediaStream | null = null;
 
     try {
+      if (!activeApiKey) {
+        setError(`Add your ${providerLabel} API key in Settings before connecting.`);
+        setIsConnecting(false);
+        return;
+      }
+
+      if (activeProvider === "google") {
+        setError("Google's Gemini APIs do not support realtime audio in this studio yet. Switch to OpenAI to continue.");
+        setIsConnecting(false);
+        return;
+      }
+
       await ensureRealtimeSession();
 
       console.log('[INFO] Starting WebRTC connection process', { sessionId });
@@ -576,7 +602,17 @@ export default function Studio() {
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await pc.setLocalDescription(offer);
 
-      const resp = await fetch('/api/rt/webrtc?model=gpt-4o-realtime-preview-2024-10-01', { method: 'POST', body: pc.localDescription?.sdp || '', cache: 'no-store' });
+      const resp = await fetch('/api/rt/webrtc?model=gpt-4o-realtime-preview-2024-10-01', {
+        method: 'POST',
+        body: pc.localDescription?.sdp || '',
+        cache: 'no-store',
+        headers: {
+          'Content-Type': 'application/sdp',
+          'X-LLM-Provider': activeProvider,
+          'X-LLM-Api-Key': activeApiKey,
+          'X-LLM-Model': 'gpt-4o-realtime-preview-2024-10-01',
+        },
+      });
       if (!resp.ok) {
         const text = await resp.text();
         throw new Error(`SDP exchange failed: ${resp.status} ${text}`);

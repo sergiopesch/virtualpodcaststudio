@@ -15,7 +15,8 @@ export async function GET(req: Request) {
     const status = manager.getStatus();
     const isActive = manager.isActive();
     const isStarting = manager.isStarting();
-    
+    const config = manager.getConfiguration();
+
     const response = {
       ok: true,
       sessionId,
@@ -23,11 +24,14 @@ export async function GET(req: Request) {
       isActive,
       isStarting,
       activeSessionCount: rtSessionManager.getActiveSessionCount(),
+      provider: config.provider,
+      hasApiKey: config.hasApiKey,
+      model: config.model,
       timestamp: new Date().toISOString()
     };
-    
+
     console.log(`[DEBUG] Status response`, response);
-    
+
     return NextResponse.json(response);
     
   } catch (error: any) {

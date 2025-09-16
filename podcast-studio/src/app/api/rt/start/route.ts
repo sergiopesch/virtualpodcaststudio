@@ -17,37 +17,66 @@ export async function POST(req: Request) {
     
     const manager = rtSessionManager.getSession(sessionId);
     const currentStatus = manager.getStatus();
-    
-    console.log(`[INFO] Current session status`, { sessionId, status: currentStatus });
-    
-    // If already active, return success immediately
-    if (currentStatus === 'active') {
-      console.log(`[INFO] Session already active`, { sessionId });
-      return NextResponse.json({ 
-        ok: true, 
+
+    const provider: 'openai' | 'google' =
+      typeof body.provider === 'string' && body.provider.toLowerCase() === 'google'
+        ? 'google'
+        : 'openai';
+    const incomingKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const resolvedKey = provider === 'openai'
+      ? incomingKey || process.env.OPENAI_API_KEY || ''
+      : incomingKey;
+    const model = typeof body.model === 'string' ? body.model.trim() : undefined;
+
+    if (!resolvedKey) {
+      const label = provider === 'openai' ? 'OpenAI' : 'Google';
+      return NextResponse.json({
+        error: `Missing API key for ${label}`,
+        sessionId,
+      }, { status: 400 });
+    }
+
+    const configChanged = manager.configure({ provider, apiKey: resolvedKey, model });
+
+    console.log(`[INFO] Current session status`, {
+      sessionId,
+      status: currentStatus,
+      provider,
+      configChanged,
+    });
+
+    if (currentStatus === 'active' && !configChanged) {
+      console.log(`[INFO] Session already active with same configuration`, { sessionId });
+      return NextResponse.json({
+        ok: true,
         sessionId,
         status: 'active',
-        message: 'Session already active' 
+        message: 'Session already active',
+        provider,
       });
     }
-    
-    // If starting, wait for it to complete
-    if (currentStatus === 'starting') {
-      console.log(`[INFO] Session already starting, waiting...`, { sessionId });
+
+    if (currentStatus === 'active' && configChanged) {
+      console.log(`[INFO] Configuration changed, restarting session`, { sessionId, provider });
+      await manager.stop();
     }
-    
-    // Start or wait for session
+
+    if (manager.getStatus() === 'starting') {
+      console.log(`[INFO] Session already starting, waiting...`, { sessionId, provider });
+    }
+
     await manager.start();
-    
+
     const duration = Date.now() - startTime;
-    console.log(`[INFO] Session started successfully`, { sessionId, duration });
-    
-    return NextResponse.json({ 
-      ok: true, 
+    console.log(`[INFO] Session started successfully`, { sessionId, duration, provider });
+
+    return NextResponse.json({
+      ok: true,
       sessionId,
       status: 'active',
       duration,
-      message: 'Realtime session started successfully' 
+      provider,
+      message: 'Realtime session started successfully'
     });
     
   } catch (error: any) {

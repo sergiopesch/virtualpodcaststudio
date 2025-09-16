@@ -26,6 +26,17 @@ interface RealtimeEvent {
   [key: string]: any;
 }
 
+const DEFAULT_OPENAI_REALTIME_MODEL =
+  process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-10-01';
+
+type SupportedProvider = 'openai' | 'google';
+
+interface ProviderConfiguration {
+  provider: SupportedProvider;
+  apiKey: string;
+  model?: string;
+}
+
 class RTManager extends EventEmitter {
   private ws: WebSocket | null = null;
   starting = false;
@@ -33,10 +44,57 @@ class RTManager extends EventEmitter {
   private startPromise?: Promise<void>;
   private connectionTimeout?: NodeJS.Timeout;
   private responseInFlight: boolean = false;
+  private provider: SupportedProvider = 'openai';
+  private apiKey: string | null = process.env.OPENAI_API_KEY || null;
+  private model: string = DEFAULT_OPENAI_REALTIME_MODEL;
 
   constructor(sessionId?: string) {
     super();
     this.sessionId = sessionId || 'default';
+  }
+
+  configure(config: ProviderConfiguration): boolean {
+    let changed = false;
+    const normalizedProvider: SupportedProvider =
+      config.provider === 'google' ? 'google' : 'openai';
+
+    if (normalizedProvider !== this.provider) {
+      this.provider = normalizedProvider;
+      changed = true;
+    }
+
+    const trimmedKey = (config.apiKey || '').trim();
+    const fallbackKey =
+      trimmedKey ||
+      (normalizedProvider === 'openai' ? process.env.OPENAI_API_KEY || '' : '');
+    const resolvedKey = fallbackKey.trim();
+
+    if (!resolvedKey) {
+      if (this.apiKey !== null) {
+        this.apiKey = null;
+        changed = true;
+      }
+    } else if (this.apiKey !== resolvedKey) {
+      this.apiKey = resolvedKey;
+      changed = true;
+    }
+
+    const trimmedModel = (config.model || '').trim();
+    const resolvedModel = trimmedModel || DEFAULT_OPENAI_REALTIME_MODEL;
+    if (resolvedModel !== this.model) {
+      this.model = resolvedModel;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  getConfiguration() {
+    return {
+      provider: this.provider,
+      hasApiKey: !!this.apiKey,
+      model: this.model,
+    };
   }
 
   async start(): Promise<void> {
@@ -104,46 +162,56 @@ class RTManager extends EventEmitter {
   }
 
   private async _establishConnection(): Promise<void> {
-    // Validate environment
-    if (!process.env.OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY environment variable is required');
+    const key = (this.apiKey || '').trim();
+
+    if (!key) {
+      const providerName = this.provider === 'openai' ? 'OpenAI' : 'Google';
+      throw new Error(`${providerName} API key is required to start a realtime session`);
+    }
+
+    if (this.provider !== 'openai') {
+      throw new Error('Google provider is not supported for realtime audio sessions yet');
     }
 
     return new Promise((resolve, reject) => {
-      log.info(`Creating WebSocket connection`, { sessionId: this.sessionId });
-      
+      log.info(`Creating WebSocket connection`, {
+        sessionId: this.sessionId,
+        provider: this.provider,
+        model: this.model,
+      });
+
       // First, let's test if we can reach OpenAI API with a simple HTTP request
       fetch('https://api.openai.com/v1/models', {
         headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Authorization': `Bearer ${key}`,
           'Content-Type': 'application/json'
         }
       }).then(response => {
-        log.info(`OpenAI API test`, { 
-          sessionId: this.sessionId, 
+        log.info(`OpenAI API test`, {
+          sessionId: this.sessionId,
           status: response.status,
-          ok: response.ok 
+          ok: response.ok
         });
-        
+
         if (!response.ok) {
           reject(new Error(`OpenAI API authentication failed: ${response.status}`));
           return;
         }
-        
+
         // Now try the WebSocket connection
-        const wsUrl = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01';
+        const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
         log.info(`Connecting to OpenAI Realtime API`, { sessionId: this.sessionId, url: wsUrl });
-        
+
         const ws = new WebSocket(wsUrl, {
           headers: {
-            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+            'Authorization': `Bearer ${key}`,
             'OpenAI-Beta': 'realtime=v1'
           }
         });
 
         this.ws = ws;
         this._setupWebSocketHandlers(ws, resolve, reject);
-        
+
       }).catch(error => {
         log.error(`Failed to test OpenAI API connection`, { sessionId: this.sessionId, error: error.message });
         reject(new Error(`Cannot connect to OpenAI API: ${error.message}`));

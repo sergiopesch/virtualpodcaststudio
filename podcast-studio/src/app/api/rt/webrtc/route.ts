@@ -14,14 +14,31 @@ export async function POST(req: Request) {
       return new NextResponse(JSON.stringify({ error: "Invalid SDP offer" }), { status: 400 });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
-      return new NextResponse(JSON.stringify({ error: "Server missing OPENAI_API_KEY" }), { status: 500 });
+    const providerHeader = req.headers.get('x-llm-provider')?.toLowerCase();
+    const provider: 'openai' | 'google' = providerHeader === 'google' ? 'google' : 'openai';
+    const headerModel = req.headers.get('x-llm-model');
+    if (headerModel) {
+      model = headerModel;
+    }
+
+    const headerKey = req.headers.get('x-llm-api-key')?.trim() || '';
+    const resolvedKey = provider === 'openai'
+      ? headerKey || process.env.OPENAI_API_KEY || ''
+      : headerKey;
+
+    if (!resolvedKey) {
+      const label = provider === 'openai' ? 'OpenAI' : 'Google';
+      return new NextResponse(JSON.stringify({ error: `Missing API key for ${label}` }), { status: 400 });
+    }
+
+    if (provider !== 'openai') {
+      return new NextResponse(JSON.stringify({ error: 'Google provider does not support WebRTC conversations yet.' }), { status: 501 });
     }
 
     const resp = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${resolvedKey}`,
         'Content-Type': 'application/sdp',
         'Accept': 'application/sdp',
         'OpenAI-Beta': 'realtime=v1'
