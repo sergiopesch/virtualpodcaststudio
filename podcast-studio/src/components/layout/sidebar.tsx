@@ -39,13 +39,6 @@ const navigation: NavigationItem[] = [
     badge: null,
   },
   {
-    name: "Analytics",
-    href: "/analytics",
-    icon: LineChart,
-    description: "Track performance insights",
-    badge: null,
-  },
-  {
     name: "Audio Studio",
     href: "/studio",
     icon: Mic,
@@ -72,6 +65,13 @@ const navigation: NavigationItem[] = [
     icon: Archive,
     description: "Manage episodes",
     badge: "12",
+  },
+  {
+    name: "Analytics",
+    href: "/analytics",
+    icon: LineChart,
+    description: "Track performance insights",
+    badge: null,
   },
 ];
 
