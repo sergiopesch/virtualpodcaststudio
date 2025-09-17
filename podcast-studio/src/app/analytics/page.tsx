@@ -129,17 +129,16 @@ export default function AnalyticsPage() {
     let published = 0;
     let processing = 0;
     let draft = 0;
-    let views = 0;
+    let publishedViews = 0;
     const episodesWithSeason: (Episode & { seasonTitle: string })[] = [];
 
-    const episodeTotal = seasons.reduce((sum, season) => sum + season.episodeCount, 0);
-
     seasons.forEach((season) => {
-      views += season.totalViews;
       season.episodes.forEach((episode) => {
         episodesWithSeason.push({ ...episode, seasonTitle: season.title });
+
         if (episode.status === "published") {
           published += 1;
+          publishedViews += episode.views;
         } else if (episode.status === "processing") {
           processing += 1;
         } else if (episode.status === "draft") {
@@ -147,6 +146,8 @@ export default function AnalyticsPage() {
         }
       });
     });
+
+    const totalEpisodeCount = episodesWithSeason.length;
 
     const highlights: EpisodeHighlight[] = episodesWithSeason
       .filter((episode) => episode.status === "published" && episode.views > 0)
@@ -159,14 +160,14 @@ export default function AnalyticsPage() {
         seasonTitle: episode.seasonTitle,
       }));
 
-    const avgViews = published > 0 ? Math.round(views / published) : 0;
+    const avgViews = published > 0 ? Math.round(publishedViews / published) : 0;
 
     return {
-      totalEpisodes: episodeTotal,
+      totalEpisodes: totalEpisodeCount,
       publishedEpisodes: published,
       processingEpisodes: processing,
       draftEpisodes: draft,
-      totalViews: views,
+      totalViews: publishedViews,
       averageViews: avgViews,
       topEpisodes: highlights,
     };
