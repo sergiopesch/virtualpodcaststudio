@@ -526,15 +526,6 @@ export default function VideoStudio() {
     );
   };
 
-  const handleNudgeClip = (clipId: string, delta: number) => {
-    setVideoClips((previous) =>
-      previous.map((clip) =>
-        clip.id === clipId
-          ? { ...clip, startTime: Math.max(0, clip.startTime + delta) }
-          : clip,
-      )
-    );
-  };
 
   const handleFilesSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -883,7 +874,6 @@ export default function VideoStudio() {
                     setMasterVolume={setMasterVolume}
                     onAddAssetToTimeline={handleAddAssetToTimeline}
                     onUpdateClip={handleUpdateClip}
-                    onNudgeClip={handleNudgeClip}
                     trackOptions={trackOptions}
                     formatTime={formatTime}
                   />
@@ -1008,7 +998,6 @@ function SimpleInspectorPanel({
   setMasterVolume,
   onAddAssetToTimeline,
   onUpdateClip,
-  onNudgeClip,
   trackOptions,
   formatTime,
 }: {
@@ -1025,7 +1014,6 @@ function SimpleInspectorPanel({
   setMasterVolume: (value: number) => void;
   onAddAssetToTimeline: (asset: MediaAsset) => void;
   onUpdateClip: (clipId: string, updates: Partial<VideoClip>) => void;
-  onNudgeClip: (clipId: string, delta: number) => void;
   trackOptions: { id: number; name: string }[];
   formatTime: (seconds: number) => string;
 }) {
