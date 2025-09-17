@@ -13,12 +13,11 @@ import {
   Brain,
   Eye,
   Cpu,
-  Settings, 
+  Settings,
   Search,
   Play,
   FileText,
   Sparkles,
-  TrendingUp,
   Clock,
   Users
 } from "lucide-react";
@@ -61,13 +60,6 @@ const topics = [
     borderColor: "border-orange-200",
     description: "Robotic systems and automation"
   },
-];
-
-const stats = [
-  { label: "Papers Analyzed", value: "1,247", icon: BookOpen, color: "text-purple-600" },
-  { label: "Episodes Created", value: "89", icon: Brain, color: "text-blue-600" },
-  { label: "Total Views", value: "12.4K", icon: TrendingUp, color: "text-green-600" },
-  { label: "Research Hours", value: "156", icon: Clock, color: "text-orange-600" },
 ];
 
 interface PaperApi {
@@ -262,28 +254,6 @@ export default function Home() {
           />
 
           <main className="p-6 space-y-8">
-            {/* Stats Overview */}
-            <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {stats.map((stat, index) => {
-                const IconComponent = stat.icon;
-                return (
-                  <Card key={index} className="animate-fade-in" style={{ animationDelay: `${index * 100}ms` }}>
-                    <CardContent className="p-6">
-                      <div className="flex items-center space-x-4">
-                        <div className={`w-12 h-12 rounded-xl bg-gray-50 flex items-center justify-center`}>
-                          <IconComponent className={`w-6 h-6 ${stat.color}`} />
-                        </div>
-                        <div>
-                          <p className="text-2xl font-bold text-gray-900">{stat.value}</p>
-                          <p className="text-sm text-gray-600">{stat.label}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </section>
-
             {/* Topic Selection */}
             <section className="animate-slide-up">
               <Card>
