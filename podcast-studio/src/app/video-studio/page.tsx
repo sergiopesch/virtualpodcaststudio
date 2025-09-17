@@ -404,9 +404,10 @@ export default function VideoStudio() {
   };
 
   const handleTrackVolumeChange = (track: number, volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
     setTrackSettings((previous) => ({
       ...previous,
-      [track]: { ...previous[track], volume },
+      [track]: { ...previous[track], volume: clamped },
     }));
   };
 
