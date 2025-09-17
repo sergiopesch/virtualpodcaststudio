@@ -11,6 +11,7 @@ import {
   Headphones,
   Menu,
   X,
+  LineChart,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,13 @@ const navigation: NavigationItem[] = [
     href: "/",
     icon: Search,
     description: "Discover research papers",
+    badge: null,
+  },
+  {
+    name: "Analytics",
+    href: "/analytics",
+    icon: LineChart,
+    description: "Track performance insights",
     badge: null,
   },
   {
