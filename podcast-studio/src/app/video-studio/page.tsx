@@ -97,8 +97,13 @@ const applyAlphaToHex = (hex: string, alpha: number) => {
   return `#${sanitized}${alphaHex}`;
 };
 
+const TIMELINE_HEADER_HEIGHT = 48;
+const TIMELINE_TRACK_HEIGHT = 96;
+const TIMELINE_VERTICAL_PADDING = 24;
+const TIMELINE_MIN_CLIP_WIDTH = 120;
+
 const isValidNumber = (value: unknown): value is number =>
-  typeof value === "number" && !Number.isNaN(value);
+  typeof value === "number" && Number.isFinite(value);
 
 type ClipType = "video" | "audio" | "image" | "text" | "effect" | "transition";
 
@@ -338,7 +343,10 @@ export default function VideoStudio() {
     [videoClips],
   );
 
-  const timelineIndicatorHeight = 48 + sortedTrackEntries.length * 96 + 16;
+  const timelineIndicatorHeight =
+    TIMELINE_HEADER_HEIGHT +
+    sortedTrackEntries.length * TIMELINE_TRACK_HEIGHT +
+    TIMELINE_VERTICAL_PADDING;
 
   const pixelsPerSecond = zoomLevel * 10;
 
@@ -539,7 +547,7 @@ export default function VideoStudio() {
             if (value === undefined || value === null) {
               return;
             }
-            if (typeof value === "number" && Number.isNaN(value)) {
+            if (typeof value === "number" && !isValidNumber(value)) {
               return;
             }
             next[key] = value as VideoClip[keyof VideoClip];
@@ -876,7 +884,7 @@ export default function VideoStudio() {
                                   const clipStart = clip.startTime * pixelsPerSecond;
                                   const clipWidth = Math.max(
                                     clip.duration * pixelsPerSecond,
-                                    120,
+                                    TIMELINE_MIN_CLIP_WIDTH,
                                   );
                                   const fadeInWidth = Math.min(
                                     (clip.fadeInSec ?? 0) * pixelsPerSecond,
@@ -907,7 +915,7 @@ export default function VideoStudio() {
                                       style={{
                                         left: `${clipStart}px`,
                                         width: `${clipWidth}px`,
-                                        minWidth: "120px",
+                                        minWidth: `${TIMELINE_MIN_CLIP_WIDTH}px`,
                                         background: clipBackground,
                                         borderColor: clipBorderColor,
                                       }}
