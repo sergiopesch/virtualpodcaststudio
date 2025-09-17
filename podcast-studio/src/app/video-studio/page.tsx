@@ -170,6 +170,10 @@ function getClipTypeIcon(type: ClipType, size = "w-4 h-4") {
   }
 }
 
+const WAVEFORM_HEIGHT = 36;
+const MIN_WAVEFORM_SAMPLES = 24;
+const WAVEFORM_VERTICAL_PADDING = 2;
+
 const createDefaultMediaAssets = (): MediaAsset[] => [
   { id: createId(), name: "Host Avatar", type: "video", duration: "0:45", source: "library" },
   { id: createId(), name: "Paper Visual", type: "image", duration: "Static", source: "library" },
@@ -329,6 +333,64 @@ export default function VideoStudio() {
 
   const pixelsPerSecond = zoomLevel * 10;
 
+  const timelineTicks = useMemo(() => {
+    const stepSeconds = 10;
+    const tickCount = Math.ceil(totalDuration / stepSeconds) + 1;
+    return Array.from({ length: tickCount }, (_, index) => index * stepSeconds);
+  }, [totalDuration]);
+
+  const clipsByTrack = useMemo(() => {
+    const trackMap = new Map<number, VideoClip[]>();
+    sortedTrackEntries.forEach(([trackNum]) => {
+      trackMap.set(Number(trackNum), []);
+    });
+    videoClips.forEach((clip) => {
+      if (!trackMap.has(clip.track)) {
+        trackMap.set(clip.track, []);
+      }
+      trackMap.get(clip.track)!.push(clip);
+    });
+    trackMap.forEach((clips) => {
+      clips.sort((a, b) => a.startTime - b.startTime);
+    });
+    return trackMap;
+  }, [sortedTrackEntries, videoClips]);
+
+  const clipWaveformPaths = useMemo(() => {
+    const usableHeight = WAVEFORM_HEIGHT - WAVEFORM_VERTICAL_PADDING * 2;
+    const baseline = usableHeight + WAVEFORM_VERTICAL_PADDING;
+    const paths: Record<string, string> = {};
+    videoClips.forEach((clip) => {
+      const values = clip.waveform;
+      if (!values || values.length < 2) {
+        return;
+      }
+      const width = clip.duration * pixelsPerSecond;
+      if (!Number.isFinite(width) || width <= 0) {
+        return;
+      }
+      const lastIndex = values.length - 1;
+      const sampleTarget = Math.max(Math.round(width / 4), MIN_WAVEFORM_SAMPLES);
+      const step = Math.max(1, Math.floor(lastIndex / sampleTarget));
+      const commands: string[] = [];
+      const firstValue = Math.max(0, Math.min(1, values[0]!));
+      const firstY = (1 - firstValue) * usableHeight + WAVEFORM_VERTICAL_PADDING;
+      commands.push(`L 0 ${firstY.toFixed(2)}`);
+      for (let index = step; index < lastIndex; index += step) {
+        const value = Math.max(0, Math.min(1, values[index]!));
+        const x = (index / lastIndex) * width;
+        const y = (1 - value) * usableHeight + WAVEFORM_VERTICAL_PADDING;
+        commands.push(`L ${x.toFixed(2)} ${y.toFixed(2)}`);
+      }
+      const lastValue = Math.max(0, Math.min(1, values[lastIndex]!));
+      const lastY = (1 - lastValue) * usableHeight + WAVEFORM_VERTICAL_PADDING;
+      commands.push(`L ${width.toFixed(2)} ${lastY.toFixed(2)}`);
+      const path = `M 0 ${baseline.toFixed(2)} ${commands.join(" ")} L ${width.toFixed(2)} ${baseline.toFixed(2)} Z`;
+      paths[clip.id] = path;
+    });
+    return paths;
+  }, [videoClips, pixelsPerSecond]);
+
   useEffect(() => {
     if (!isPlaying) return;
     const interval = setInterval(() => {
@@ -365,6 +427,15 @@ export default function VideoStudio() {
     return `${mins.toString().padStart(2, "0")}:${secs
       .toString()
       .padStart(2, "0")}.${frames.toString().padStart(2, "0")}`;
+  }, []);
+
+  const formatDurationLabel = useCallback((seconds: number) => {
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return "0s";
+    }
+    return Number.isInteger(seconds)
+      ? `${seconds}s`
+      : `${seconds.toFixed(1)}s`;
   }, []);
 
   const handlePlayPause = () => setIsPlaying((previous) => !previous);
@@ -518,13 +589,16 @@ export default function VideoStudio() {
     setActiveTab("properties");
   };
 
-  const handleUpdateClip = (clipId: string, updates: Partial<VideoClip>) => {
-    setVideoClips((previous) =>
-      previous.map((clip) =>
-        clip.id === clipId ? { ...clip, ...updates } : clip
-      )
-    );
-  };
+  const handleUpdateClip = useCallback(
+    (clipId: string, updates: Partial<VideoClip>) => {
+      setVideoClips((previous) =>
+        previous.map((clip) =>
+          clip.id === clipId ? { ...clip, ...updates } : clip,
+        ),
+      );
+    },
+    [],
+  );
 
 
   const handleFilesSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -770,7 +844,7 @@ export default function VideoStudio() {
                         }}
                       >
                         <div className="relative h-12 border-b border-gray-200 bg-gray-50">
-                          {Array.from({ length: Math.ceil(totalDuration / 10) + 1 }, (_, index) => index * 10).map((time) => (
+                          {timelineTicks.map((time) => (
                             <div key={time}>
                               <div
                                 className="absolute inset-y-0 border-l border-gray-300"
@@ -800,56 +874,89 @@ export default function VideoStudio() {
                         {sortedTrackEntries.map(([trackNum, settings]) => {
                           const trackNumber = Number(trackNum);
                           const trackMuted = settings.mute;
+                          const trackClips = clipsByTrack.get(trackNumber) ?? [];
                           return (
                             <div key={trackNum} className="relative border-b border-gray-200">
-                              {videoClips
-                                .filter((clip) => clip.track === trackNumber)
-                                .map((clip) => {
-                                  const clipColor = clip.color ?? "#6366f1";
-                                  const { r, g, b } = hexToRgb(clipColor);
-                                  const clipStart = clip.startTime * pixelsPerSecond;
-                                  const clipWidth = clip.duration * pixelsPerSecond;
-                                  const fadeInWidth = (clip.fadeInSec ?? 0) * pixelsPerSecond;
-                                  const fadeOutWidth = (clip.fadeOutSec ?? 0) * pixelsPerSecond;
-                                  return (
-                                    <div
-                                      key={clip.id}
-                                      className={`absolute z-10 h-10 rounded-lg border transition-colors cursor-pointer
-                                        ${selectedClips.includes(clip.id) ? "border-purple-500 bg-opacity-80" : "border-transparent bg-opacity-60"}
-                                        ${trackMuted || clip.muted ? "opacity-60" : ""}`}
-                                      style={{
-                                        left: `${clipStart}px`,
-                                        width: `${clipWidth}px`,
-                                        backgroundColor: applyAlphaToHex(clipColor, 0.6),
-                                      }}
-                                      onClick={(event) =>
-                                        handleClipSelect(
-                                          clip.id,
-                                          event.metaKey || event.shiftKey,
-                                        )
-                                      }
-                                    >
-                                      {fadeInWidth > 0 && (
-                                        <div
-                                          className="pointer-events-none absolute inset-y-0 left-0"
-                                          style={{
-                                            width: `${fadeInWidth}px`,
-                                            backgroundImage: `linear-gradient(to right, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
-                                          }}
-                                        />
+                              {trackClips.map((clip) => {
+                                const clipColor = clip.color ?? "#6366f1";
+                                const { r, g, b } = hexToRgb(clipColor);
+                                const clipStart = clip.startTime * pixelsPerSecond;
+                                const clipWidth = clip.duration * pixelsPerSecond;
+                                const fadeInWidth = (clip.fadeInSec ?? 0) * pixelsPerSecond;
+                                const fadeOutWidth = (clip.fadeOutSec ?? 0) * pixelsPerSecond;
+                                const waveformPath = clipWaveformPaths[clip.id];
+                                const clipMetaParts = [formatDurationLabel(clip.duration)];
+                                if (clip.type === "audio") {
+                                  const volumePercent = Math.round((clip.volume ?? 1) * 100);
+                                  clipMetaParts.push(`${volumePercent}% vol`);
+                                }
+                                if (clip.speaker) {
+                                  clipMetaParts.push(clip.speaker);
+                                }
+                                const clipMeta = clipMetaParts.join(" • ");
+                                return (
+                                  <div
+                                    key={clip.id}
+                                    className={`absolute z-10 h-10 cursor-pointer rounded-lg border transition-colors
+                                      ${selectedClips.includes(clip.id) ? "border-purple-500 bg-opacity-80" : "border-transparent bg-opacity-60"}
+                                      ${trackMuted || clip.muted ? "opacity-60" : ""}`}
+                                    style={{
+                                      left: `${clipStart}px`,
+                                      width: `${clipWidth}px`,
+                                      backgroundColor: applyAlphaToHex(clipColor, 0.6),
+                                    }}
+                                    onClick={(event) =>
+                                      handleClipSelect(
+                                        clip.id,
+                                        event.metaKey || event.shiftKey,
+                                      )
+                                    }
+                                  >
+                                    {fadeInWidth > 0 && (
+                                      <div
+                                        className="pointer-events-none absolute inset-y-0 left-0"
+                                        style={{
+                                          width: `${fadeInWidth}px`,
+                                          backgroundImage: `linear-gradient(to right, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
+                                        }}
+                                      />
+                                    )}
+                                    {fadeOutWidth > 0 && (
+                                      <div
+                                        className="pointer-events-none absolute inset-y-0 right-0"
+                                        style={{
+                                          width: `${fadeOutWidth}px`,
+                                          backgroundImage: `linear-gradient(to left, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
+                                        }}
+                                      />
+                                    )}
+                                    <div className="pointer-events-none absolute inset-0">
+                                      {showWaveforms && waveformPath && (
+                                        <svg
+                                          className="absolute inset-x-1 top-1 bottom-1 text-white/70"
+                                          viewBox={`0 0 ${clipWidth} ${WAVEFORM_HEIGHT}`}
+                                          preserveAspectRatio="none"
+                                        >
+                                          <path
+                                            d={waveformPath}
+                                            fill="rgba(255,255,255,0.35)"
+                                            stroke="rgba(255,255,255,0.55)"
+                                            strokeWidth={1}
+                                          />
+                                        </svg>
                                       )}
-                                      {fadeOutWidth > 0 && (
-                                        <div
-                                          className="pointer-events-none absolute inset-y-0 right-0"
-                                          style={{
-                                            width: `${fadeOutWidth}px`,
-                                            backgroundImage: `linear-gradient(to left, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
-                                          }}
-                                        />
-                                      )}
+                                      <div className="absolute inset-x-2 bottom-1 flex flex-col gap-0.5 text-white drop-shadow-sm">
+                                        <span className="truncate text-[11px] font-semibold leading-4">
+                                          {clip.name}
+                                        </span>
+                                        <span className="truncate text-[10px] font-medium leading-3 text-white/80">
+                                          {clipMeta}
+                                        </span>
+                                      </div>
                                     </div>
-                                  );
-                                })}
+                                  </div>
+                                );
+                              })}
                             </div>
                           );
                         })}
