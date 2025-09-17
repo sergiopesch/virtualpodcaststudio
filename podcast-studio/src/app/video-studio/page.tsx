@@ -97,6 +97,27 @@ const applyAlphaToHex = (hex: string, alpha: number) => {
 };
 
 type ClipType = "video" | "audio" | "image" | "text" | "effect" | "transition";
+const TRACK_HEIGHT = 64;
+const MIN_CLIP_DURATION = 0.5;
+const SNAP_INTERVAL_SECONDS = 0.5;
+const DRAG_SCROLL_MARGIN = 80;
+const DRAG_SCROLL_SPEED = 18;
+type DragMode = "move" | "trim-start" | "trim-end";
+interface DragState {
+  clipId: string;
+  mode: DragMode;
+  startClientX: number;
+  startClientY: number;
+  initialStart: number;
+  initialDuration: number;
+  initialTrackIndex: number;
+  trackIds: number[];
+  pixelsPerSecond: number;
+  snapEnabled: boolean;
+  snapInterval: number;
+  hasMoved: boolean;
+}
+
 interface VideoClip {
   id: string;
   type: ClipType;
@@ -273,6 +294,11 @@ export default function VideoStudio() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragStateRef = useRef<DragState | null>(null);
+  const [activeDrag, setActiveDrag] = useState<{
+    clipId: string;
+    mode: DragMode;
+  } | null>(null);
   const { collapsed, toggleCollapsed } = useSidebar();
   const [videoClips, setVideoClips] = useState<VideoClip[]>(() => createInitialClips());
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>(() => createDefaultMediaAssets());
@@ -455,7 +481,7 @@ export default function VideoStudio() {
     );
   };
 
-  const handleClipSelect = (clipId: string, multiSelect = false) => {
+  const handleClipSelect = useCallback((clipId: string, multiSelect = false) => {
     if (multiSelect) {
       setSelectedClips((previous) =>
         previous.includes(clipId)
@@ -465,7 +491,182 @@ export default function VideoStudio() {
     } else {
       setSelectedClips([clipId]);
     }
-  };
+  }, []);
+
+  const handleGlobalPointerMove = useCallback(
+    (event: PointerEvent) => {
+      const dragData = dragStateRef.current;
+      if (!dragData) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const applySnap = (value: number) => {
+        if (!dragData.snapEnabled) {
+          return value;
+        }
+        return (
+          Math.round(value / dragData.snapInterval) * dragData.snapInterval
+        );
+      };
+
+      const deltaSeconds =
+        (event.clientX - dragData.startClientX) / dragData.pixelsPerSecond;
+      const deltaY = event.clientY - dragData.startClientY;
+      let nextStart = dragData.initialStart;
+      let nextDuration = dragData.initialDuration;
+      let nextTrackIndex = dragData.initialTrackIndex;
+
+      if (dragData.mode === "move") {
+        nextStart = Math.max(0, dragData.initialStart + deltaSeconds);
+        if (dragData.snapEnabled) {
+          nextStart = applySnap(nextStart);
+        }
+        const trackOffset = Math.round(deltaY / TRACK_HEIGHT);
+        nextTrackIndex = Math.min(
+          dragData.trackIds.length - 1,
+          Math.max(0, dragData.initialTrackIndex + trackOffset),
+        );
+      } else if (dragData.mode === "trim-start") {
+        const maxStart =
+          dragData.initialStart +
+          dragData.initialDuration -
+          MIN_CLIP_DURATION;
+        let candidate = Math.max(
+          0,
+          Math.min(dragData.initialStart + deltaSeconds, maxStart),
+        );
+        if (dragData.snapEnabled) {
+          candidate = Math.min(maxStart, applySnap(candidate));
+        }
+        nextStart = candidate;
+        nextDuration =
+          dragData.initialDuration + (dragData.initialStart - nextStart);
+        nextDuration = Math.max(MIN_CLIP_DURATION, nextDuration);
+      } else if (dragData.mode === "trim-end") {
+        let candidateDuration = Math.max(
+          MIN_CLIP_DURATION,
+          dragData.initialDuration + deltaSeconds,
+        );
+        if (dragData.snapEnabled) {
+          const snappedEnd = applySnap(
+            dragData.initialStart + candidateDuration,
+          );
+          candidateDuration = Math.max(
+            MIN_CLIP_DURATION,
+            snappedEnd - dragData.initialStart,
+          );
+        }
+        nextDuration = candidateDuration;
+      }
+
+      const sanitizedStart = Number(nextStart.toFixed(3));
+      const sanitizedDuration = Number(nextDuration.toFixed(3));
+      const nextTrack =
+        dragData.trackIds[nextTrackIndex] ??
+        dragData.trackIds[dragData.initialTrackIndex] ??
+        dragData.trackIds[0];
+
+      setVideoClips((previous) =>
+        previous.map((clip) =>
+          clip.id === dragData.clipId
+            ? {
+                ...clip,
+                startTime: sanitizedStart,
+                duration: sanitizedDuration,
+                track: nextTrack,
+              }
+            : clip,
+        ),
+      );
+
+      if (!dragData.hasMoved) {
+        const distanceX = Math.abs(event.clientX - dragData.startClientX);
+        if (distanceX > 2 || Math.abs(deltaY) > 4) {
+          dragData.hasMoved = true;
+        }
+      }
+
+      const scroller = scrollerRef.current;
+      if (scroller) {
+        const { left, right } = scroller.getBoundingClientRect();
+        if (event.clientX > right - DRAG_SCROLL_MARGIN) {
+          scroller.scrollLeft += DRAG_SCROLL_SPEED;
+        } else if (event.clientX < left + DRAG_SCROLL_MARGIN) {
+          scroller.scrollLeft -= DRAG_SCROLL_SPEED;
+        }
+      }
+    },
+    [setVideoClips],
+  );
+
+  const handleGlobalPointerUp = useCallback(() => {
+    window.removeEventListener("pointermove", handleGlobalPointerMove);
+    window.removeEventListener("pointerup", handleGlobalPointerUp);
+    dragStateRef.current = null;
+    setActiveDrag(null);
+    if (typeof document !== "undefined") {
+      document.body.style.userSelect = "";
+    }
+  }, [handleGlobalPointerMove]);
+
+  const handleClipInteractionStart = useCallback(
+    (event: React.PointerEvent<HTMLElement>, clip: VideoClip, mode: DragMode) => {
+      if (event.button !== 0 || dragStateRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const multiSelect =
+        event.metaKey || event.ctrlKey || event.shiftKey;
+      handleClipSelect(clip.id, multiSelect);
+      const trackIds = sortedTrackEntries.map(([trackNum]) => Number(trackNum));
+      const initialTrackIndex = Math.max(
+        0,
+        trackIds.findIndex((trackId) => trackId === clip.track),
+      );
+      dragStateRef.current = {
+        clipId: clip.id,
+        mode,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        initialStart: clip.startTime,
+        initialDuration: clip.duration,
+        initialTrackIndex:
+          initialTrackIndex === -1 ? 0 : initialTrackIndex,
+        trackIds: trackIds.length > 0 ? trackIds : [clip.track],
+        pixelsPerSecond,
+        snapEnabled,
+        snapInterval: SNAP_INTERVAL_SECONDS,
+        hasMoved: false,
+      };
+      setActiveDrag({ clipId: clip.id, mode });
+      window.addEventListener("pointermove", handleGlobalPointerMove);
+      window.addEventListener("pointerup", handleGlobalPointerUp);
+      if (typeof document !== "undefined") {
+        document.body.style.userSelect = "none";
+      }
+    },
+    [
+      handleClipSelect,
+      pixelsPerSecond,
+      snapEnabled,
+      sortedTrackEntries,
+      handleGlobalPointerMove,
+      handleGlobalPointerUp,
+    ],
+  );
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", handleGlobalPointerMove);
+      window.removeEventListener("pointerup", handleGlobalPointerUp);
+      if (typeof document !== "undefined") {
+        document.body.style.userSelect = "";
+      }
+    };
+  }, [handleGlobalPointerMove, handleGlobalPointerUp]);
 
   const handleTrackNameChange = (track: number, name: string) => {
     setTrackSettings((previous) => ({
@@ -591,13 +792,43 @@ export default function VideoStudio() {
 
   const handleUpdateClip = useCallback(
     (clipId: string, updates: Partial<VideoClip>) => {
+      const validTracks = new Set(
+        sortedTrackEntries.map(([trackNum]) => Number(trackNum)),
+      );
       setVideoClips((previous) =>
-        previous.map((clip) =>
-          clip.id === clipId ? { ...clip, ...updates } : clip,
-        ),
+        previous.map((clip) => {
+          if (clip.id !== clipId) {
+            return clip;
+          }
+          const next: VideoClip = { ...clip, ...updates };
+          if (updates.startTime !== undefined) {
+            const startValue =
+              typeof updates.startTime === "number" &&
+              Number.isFinite(updates.startTime)
+                ? Math.max(0, updates.startTime)
+                : clip.startTime;
+            next.startTime = Number(startValue.toFixed(3));
+          }
+          if (updates.duration !== undefined) {
+            const durationValue =
+              typeof updates.duration === "number" &&
+              Number.isFinite(updates.duration)
+                ? Math.max(MIN_CLIP_DURATION, updates.duration)
+                : clip.duration;
+            next.duration = Number(durationValue.toFixed(3));
+          }
+          if (updates.track !== undefined) {
+            const proposedTrack = Number(updates.track);
+            if (!validTracks.has(proposedTrack)) {
+              const fallback = sortedTrackEntries[0];
+              next.track = fallback ? Number(fallback[0]) : clip.track;
+            }
+          }
+          return next;
+        }),
       );
     },
-    [],
+    [sortedTrackEntries],
   );
 
 
@@ -871,12 +1102,30 @@ export default function VideoStudio() {
                             </div>
                           </div>
                         </div>
+                        <div
+                          className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-purple-500/50"
+                          style={{
+                            left: `${currentTime * pixelsPerSecond}px`,
+                            transform: "translateX(-0.5px)",
+                          }}
+                        />
                         {sortedTrackEntries.map(([trackNum, settings]) => {
                           const trackNumber = Number(trackNum);
                           const trackMuted = settings.mute;
                           const trackClips = clipsByTrack.get(trackNumber) ?? [];
                           return (
-                            <div key={trackNum} className="relative border-b border-gray-200">
+                            <div
+                              key={trackNum}
+                              className="relative border-b border-gray-200"
+                              style={{ height: TRACK_HEIGHT }}
+                            >
+                              <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-gray-50/70 via-white to-gray-50/70" />
+                              <div className="pointer-events-none absolute inset-x-0 top-1/2 z-0 -translate-y-1/2 border-t border-dashed border-gray-200/80" />
+                              {trackClips.length === 0 && (
+                                <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-medium uppercase tracking-wide text-gray-300">
+                                  Drop clips here
+                                </div>
+                              )}
                               {trackClips.map((clip) => {
                                 const clipColor = clip.color ?? "#6366f1";
                                 const { r, g, b } = hexToRgb(clipColor);
@@ -894,27 +1143,63 @@ export default function VideoStudio() {
                                   clipMetaParts.push(clip.speaker);
                                 }
                                 const clipMeta = clipMetaParts.join(" • ");
+                                const isSelected = selectedClips.includes(clip.id);
+                                const isDraggingClip =
+                                  activeDrag?.clipId === clip.id &&
+                                  activeDrag.mode === "move";
+                                const isResizingClip =
+                                  activeDrag?.clipId === clip.id &&
+                                  activeDrag.mode !== "move";
                                 return (
                                   <div
                                     key={clip.id}
-                                    className={`absolute z-10 h-10 cursor-pointer rounded-lg border transition-colors
-                                      ${selectedClips.includes(clip.id) ? "border-purple-500 bg-opacity-80" : "border-transparent bg-opacity-60"}
-                                      ${trackMuted || clip.muted ? "opacity-60" : ""}`}
+                                    className={`group absolute top-1/2 z-10 flex h-10 -translate-y-1/2 transform items-stretch rounded-lg border shadow-sm transition-all duration-150 ease-out hover:border-purple-300/60
+                                      ${trackMuted || clip.muted ? "opacity-60" : ""}
+                                      ${isSelected ? "border-purple-500 shadow-lg" : "border-transparent"}
+                                      ${
+                                        isSelected || isDraggingClip || isResizingClip
+                                          ? "ring-2 ring-purple-400/50"
+                                          : ""
+                                      }
+                                      ${isDraggingClip ? "cursor-grabbing" : "cursor-grab"}`}
                                     style={{
                                       left: `${clipStart}px`,
                                       width: `${clipWidth}px`,
-                                      backgroundColor: applyAlphaToHex(clipColor, 0.6),
+                                      backgroundColor: applyAlphaToHex(clipColor, 0.65),
                                     }}
-                                    onClick={(event) =>
-                                      handleClipSelect(
-                                        clip.id,
-                                        event.metaKey || event.shiftKey,
-                                      )
+                                    onPointerDown={(event) =>
+                                      handleClipInteractionStart(event, clip, "move")
                                     }
                                   >
+                                    <button
+                                      type="button"
+                                      tabIndex={-1}
+                                      aria-label="Trim clip start"
+                                      className={`absolute inset-y-0 left-0 z-20 flex w-3 cursor-ew-resize items-center justify-center rounded-l-lg bg-black/0 transition-opacity focus:outline-none ${
+                                        isSelected ? "opacity-90" : "opacity-0 group-hover:opacity-80"
+                                      }`}
+                                      onPointerDown={(event) =>
+                                        handleClipInteractionStart(event, clip, "trim-start")
+                                      }
+                                    >
+                                      <span className="h-6 w-0.5 rounded bg-white/80" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      tabIndex={-1}
+                                      aria-label="Trim clip end"
+                                      className={`absolute inset-y-0 right-0 z-20 flex w-3 cursor-ew-resize items-center justify-center rounded-r-lg bg-black/0 transition-opacity focus:outline-none ${
+                                        isSelected ? "opacity-90" : "opacity-0 group-hover:opacity-80"
+                                      }`}
+                                      onPointerDown={(event) =>
+                                        handleClipInteractionStart(event, clip, "trim-end")
+                                      }
+                                    >
+                                      <span className="h-6 w-0.5 rounded bg-white/80" />
+                                    </button>
                                     {fadeInWidth > 0 && (
                                       <div
-                                        className="pointer-events-none absolute inset-y-0 left-0"
+                                        className="pointer-events-none absolute inset-y-0 left-0 z-[1]"
                                         style={{
                                           width: `${fadeInWidth}px`,
                                           backgroundImage: `linear-gradient(to right, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
@@ -923,7 +1208,7 @@ export default function VideoStudio() {
                                     )}
                                     {fadeOutWidth > 0 && (
                                       <div
-                                        className="pointer-events-none absolute inset-y-0 right-0"
+                                        className="pointer-events-none absolute inset-y-0 right-0 z-[1]"
                                         style={{
                                           width: `${fadeOutWidth}px`,
                                           backgroundImage: `linear-gradient(to left, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
@@ -933,7 +1218,7 @@ export default function VideoStudio() {
                                     <div className="pointer-events-none absolute inset-0">
                                       {showWaveforms && waveformPath && (
                                         <svg
-                                          className="absolute inset-x-1 top-1 bottom-1 text-white/70"
+                                          className="absolute inset-x-3 top-1 bottom-1 text-white/70"
                                           viewBox={`0 0 ${clipWidth} ${WAVEFORM_HEIGHT}`}
                                           preserveAspectRatio="none"
                                         >
@@ -945,7 +1230,7 @@ export default function VideoStudio() {
                                           />
                                         </svg>
                                       )}
-                                      <div className="absolute inset-x-2 bottom-1 flex flex-col gap-0.5 text-white drop-shadow-sm">
+                                      <div className="absolute inset-x-3 bottom-1 flex flex-col gap-0.5 text-white drop-shadow-sm">
                                         <span className="truncate text-[11px] font-semibold leading-4">
                                           {clip.name}
                                         </span>
