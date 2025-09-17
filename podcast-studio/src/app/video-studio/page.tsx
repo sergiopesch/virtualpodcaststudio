@@ -1,5 +1,4 @@
 "use client";
-
 import React, {
   useMemo,
   useRef,
@@ -97,16 +96,7 @@ const applyAlphaToHex = (hex: string, alpha: number) => {
   return `#${sanitized}${alphaHex}`;
 };
 
-const TIMELINE_HEADER_HEIGHT = 48;
-const TIMELINE_TRACK_HEIGHT = 96;
-const TIMELINE_VERTICAL_PADDING = 24;
-const TIMELINE_MIN_CLIP_WIDTH = 120;
-
-const isValidNumber = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value);
-
 type ClipType = "video" | "audio" | "image" | "text" | "effect" | "transition";
-
 interface VideoClip {
   id: string;
   type: ClipType;
@@ -152,7 +142,6 @@ interface VideoClip {
 }
 
 type MediaFilter = "all" | "video" | "audio" | "image";
-
 interface MediaAsset {
   id: string;
   name: string;
@@ -275,18 +264,14 @@ export default function VideoStudio() {
   const [selectedClips, setSelectedClips] = useState<string[]>([]);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [masterVolume, setMasterVolume] = useState(0.75);
-
   const [activeTab, setActiveTab] = useState("media");
   const [showWaveforms, setShowWaveforms] = useState(true);
-
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { collapsed, toggleCollapsed } = useSidebar();
-
   const [videoClips, setVideoClips] = useState<VideoClip[]>(() => createInitialClips());
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>(() => createDefaultMediaAssets());
-
   const [mediaQuery, setMediaQuery] = useState("");
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
 
@@ -326,7 +311,6 @@ export default function VideoStudio() {
 
   const totalClips = videoClips.length;
   const activeTrackCount = sortedTrackEntries.length;
-
   const currentPaper = {
     title: "Attention Is All You Need",
     authors:
@@ -342,11 +326,6 @@ export default function VideoStudio() {
       ),
     [videoClips],
   );
-
-  const timelineIndicatorHeight =
-    TIMELINE_HEADER_HEIGHT +
-    sortedTrackEntries.length * TIMELINE_TRACK_HEIGHT +
-    TIMELINE_VERTICAL_PADDING;
 
   const pixelsPerSecond = zoomLevel * 10;
 
@@ -389,12 +368,16 @@ export default function VideoStudio() {
   }, []);
 
   const handlePlayPause = () => setIsPlaying((previous) => !previous);
+
   const handleStop = () => {
     setIsPlaying(false);
     setCurrentTime(0);
   };
+
   const handleZoomIn = () => setZoomLevel((previous) => Math.min(previous * 1.5, 3));
+
   const handleZoomOut = () => setZoomLevel((previous) => Math.max(previous / 1.5, 0.25));
+
   const handleSkip = (deltaSeconds: number) => {
     setCurrentTime((previous) =>
       Math.max(0, Math.min(previous + deltaSeconds, totalDuration)),
@@ -413,28 +396,28 @@ export default function VideoStudio() {
     }
   };
 
-  const toggleTrackMute = (track: number) => {
-    setTrackSettings((previous) => ({
-      ...previous,
-      [track]: { ...previous[track], mute: !previous[track].mute },
-    }));
-  };
-
-  const handleTrackVolumeChange = (track: number, value: number) => {
-    setTrackSettings((previous) => ({
-      ...previous,
-      [track]: {
-        ...previous[track],
-        volume: Math.max(0, Math.min(1, value)),
-      },
-    }));
-  };
-
   const handleTrackNameChange = (track: number, name: string) => {
     setTrackSettings((previous) => ({
       ...previous,
       [track]: { ...previous[track], name },
     }));
+  };
+
+  const handleTrackVolumeChange = (track: number, volume: number) => {
+    setTrackSettings((previous) => ({
+      ...previous,
+      [track]: { ...previous[track], volume },
+    }));
+  };
+
+  const toggleTrackMute = (track: number) => {
+    setTrackSettings((previous) => {
+      if (!previous[track]) return previous;
+      return {
+        ...previous,
+        [track]: { ...previous[track], mute: !previous[track].mute },
+      };
+    });
   };
 
   const handleAddTrack = () => {
@@ -502,7 +485,6 @@ export default function VideoStudio() {
         : asset.type === "image"
         ? "#f97316"
         : "#6366f1";
-
     const baseClip: VideoClip = {
       id: newId,
       type: asset.type,
@@ -530,7 +512,6 @@ export default function VideoStudio() {
               0.05,
             ),
     };
-
     setVideoClips((previous) => [...previous, baseClip]);
     setSelectedClips([newId]);
     setActiveTab("properties");
@@ -538,46 +519,9 @@ export default function VideoStudio() {
 
   const handleUpdateClip = (clipId: string, updates: Partial<VideoClip>) => {
     setVideoClips((previous) =>
-      previous.map((clip) => {
-        if (clip.id !== clipId) return clip;
-        const next: VideoClip = { ...clip };
-
-        (Object.entries(updates) as [keyof VideoClip, VideoClip[keyof VideoClip]][]).forEach(
-          ([key, value]) => {
-            if (value === undefined || value === null) {
-              return;
-            }
-            if (typeof value === "number" && !isValidNumber(value)) {
-              return;
-            }
-            next[key] = value as VideoClip[keyof VideoClip];
-          },
-        );
-
-        if (isValidNumber(updates.startTime)) {
-          next.startTime = Math.max(0, updates.startTime);
-        }
-        if (isValidNumber(updates.duration)) {
-          next.duration = Math.max(0.1, updates.duration);
-        }
-        if (isValidNumber(updates.track)) {
-          next.track = Math.max(1, Math.floor(updates.track));
-        }
-        if (isValidNumber(updates.volume)) {
-          next.volume = Math.max(0, Math.min(1, updates.volume));
-        }
-        if (isValidNumber(updates.fadeInSec)) {
-          next.fadeInSec = Math.max(0, updates.fadeInSec);
-        }
-        if (isValidNumber(updates.fadeOutSec)) {
-          next.fadeOutSec = Math.max(0, updates.fadeOutSec);
-        }
-        if (isValidNumber(updates.opacity)) {
-          next.opacity = Math.max(0, Math.min(1, updates.opacity));
-        }
-
-        return next;
-      }),
+      previous.map((clip) =>
+        clip.id === clipId ? { ...clip, ...updates } : clip
+      )
     );
   };
 
@@ -587,11 +531,11 @@ export default function VideoStudio() {
         clip.id === clipId
           ? { ...clip, startTime: Math.max(0, clip.startTime + delta) }
           : clip,
-      ),
+      )
     );
   };
 
-  const handleFilesSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFilesSelected = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files) return;
     const newAssets: MediaAsset[] = Array.from(files).map((file) => {
@@ -614,7 +558,7 @@ export default function VideoStudio() {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
-  };
+  }, []);
 
   const trackClipCount = useMemo(() => {
     const counts = new Map<number, number>();
@@ -670,7 +614,6 @@ export default function VideoStudio() {
               </div>
             }
           />
-
           <main className="space-y-6 p-6">
             <div className="flex flex-col gap-6 xl:flex-row">
               <div className="flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -685,27 +628,27 @@ export default function VideoStudio() {
                     </div>
                     <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between gap-2 rounded-lg bg-black/30 p-3 backdrop-blur-sm">
                       <div className="flex items-center gap-2">
-                        <Button type="button" size="sm" variant="secondary" onClick={() => handleSkip(-10)}>
+                        <Button type="button" size="sm" variant="secondary" onClick={() => handleSkip(-10)} aria-label="Rewind 10 seconds">
                           <Rewind className="h-4 w-4" />
                         </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handlePlayPause}>
+                        <Button type="button" size="sm" variant="secondary" onClick={handlePlayPause} aria-label={isPlaying ? "Pause" : "Play"}>
                           {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                         </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={() => handleSkip(10)}>
+                        <Button type="button" size="sm" variant="secondary" onClick={() => handleSkip(10)} aria-label="Fast forward 10 seconds">
                           <FastForward className="h-4 w-4" />
                         </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handleStop}>
+                        <Button type="button" size="sm" variant="secondary" onClick={handleStop} aria-label="Stop playback">
                           <Square className="h-4 w-4" />
                         </Button>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Button type="button" size="sm" variant="secondary" onClick={handleZoomOut}>
+                        <Button type="button" size="sm" variant="secondary" onClick={handleZoomOut} aria-label="Zoom out timeline">
                           <ZoomOut className="h-4 w-4" />
                         </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handleZoomIn}>
+                        <Button type="button" size="sm" variant="secondary" onClick={handleZoomIn} aria-label="Zoom in timeline">
                           <ZoomIn className="h-4 w-4" />
                         </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handleAddClipClick}>
+                        <Button type="button" size="sm" variant="secondary" onClick={handleAddClipClick} aria-label="Add clip">
                           <Plus className="h-4 w-4" />
                         </Button>
                       </div>
@@ -720,7 +663,6 @@ export default function VideoStudio() {
                     </div>
                   </div>
                 </div>
-
                 <div className="border-t border-gray-200">
                   <div className="flex h-[400px]">
                     <div className="flex w-44 flex-col border-r border-gray-200 bg-gray-50">
@@ -860,10 +802,6 @@ export default function VideoStudio() {
                           >
                             <div className="relative -translate-x-1/2">
                               <div className="h-0 w-0 border-b-[8px] border-l-[6px] border-r-[6px] border-b-purple-500 border-l-transparent border-r-transparent" />
-                              <div
-                                className="absolute top-2 left-1/2 w-[2px] -translate-x-1/2 bg-purple-500"
-                                style={{ height: `${timelineIndicatorHeight}px` }}
-                              />
                             </div>
                           </div>
                         </div>
@@ -871,53 +809,26 @@ export default function VideoStudio() {
                           const trackNumber = Number(trackNum);
                           const trackMuted = settings.mute;
                           return (
-                            <div
-                              key={trackNum}
-                              className="relative h-24 border-b border-gray-200 bg-gradient-to-b from-white to-gray-50/70"
-                            >
+                            <div key={trackNum} className="relative border-b border-gray-200">
                               {videoClips
                                 .filter((clip) => clip.track === trackNumber)
                                 .map((clip) => {
                                   const clipColor = clip.color ?? "#6366f1";
                                   const { r, g, b } = hexToRgb(clipColor);
-                                  const isSelected = selectedClips.includes(clip.id);
                                   const clipStart = clip.startTime * pixelsPerSecond;
-                                  const clipWidth = Math.max(
-                                    clip.duration * pixelsPerSecond,
-                                    TIMELINE_MIN_CLIP_WIDTH,
-                                  );
-                                  const fadeInWidth = Math.min(
-                                    (clip.fadeInSec ?? 0) * pixelsPerSecond,
-                                    clipWidth,
-                                  );
-                                  const fadeOutWidth = Math.min(
-                                    (clip.fadeOutSec ?? 0) * pixelsPerSecond,
-                                    clipWidth,
-                                  );
-                                  const clipBackground = `linear-gradient(135deg, rgba(${r}, ${g}, ${b}, ${
-                                    isSelected ? 0.32 : 0.24
-                                  }), rgba(${r}, ${g}, ${b}, ${isSelected ? 0.18 : 0.12}))`;
-                                  const clipBorderColor = isSelected
-                                    ? "#8b5cf6"
-                                    : applyAlphaToHex(clipColor, 0.55);
-                                  const clipStartLabel = formatTime(clip.startTime);
-                                  const clipEndLabel = formatTime(clip.startTime + clip.duration);
-                                  const clipDurationLabel = formatTime(clip.duration);
-                                  const clipMetaLabel = clip.speaker ?? clip.type.toUpperCase();
+                                  const clipWidth = clip.duration * pixelsPerSecond;
+                                  const fadeInWidth = (clip.fadeInSec ?? 0) * pixelsPerSecond;
+                                  const fadeOutWidth = (clip.fadeOutSec ?? 0) * pixelsPerSecond;
                                   return (
                                     <div
                                       key={clip.id}
-                                      className={`absolute top-3 bottom-3 flex min-h-[4.5rem] cursor-pointer flex-col overflow-hidden rounded-xl border-2 shadow-sm backdrop-blur-sm transition-all ${
-                                        isSelected
-                                          ? "shadow-glow"
-                                          : "hover:-translate-y-0.5 hover:shadow-md"
-                                      } ${trackMuted || clip.muted ? "opacity-60" : ""}`}
+                                      className={`absolute z-10 h-10 rounded-lg border transition-colors cursor-pointer
+                                        ${selectedClips.includes(clip.id) ? "border-purple-500 bg-opacity-80" : "border-transparent bg-opacity-60"}
+                                        ${trackMuted || clip.muted ? "opacity-60" : ""}`}
                                       style={{
                                         left: `${clipStart}px`,
                                         width: `${clipWidth}px`,
-                                        minWidth: `${TIMELINE_MIN_CLIP_WIDTH}px`,
-                                        background: clipBackground,
-                                        borderColor: clipBorderColor,
+                                        backgroundColor: applyAlphaToHex(clipColor, 0.6),
                                       }}
                                       onClick={(event) =>
                                         handleClipSelect(
@@ -925,68 +836,22 @@ export default function VideoStudio() {
                                           event.metaKey || event.shiftKey,
                                         )
                                       }
-                                      title={`${clip.name} • ${clipStartLabel} → ${clipEndLabel}`}
                                     >
-                                      <div className="flex flex-1 flex-col">
-                                        <div className="relative z-10 flex items-start justify-between gap-3 px-3 pt-2">
-                                          <div className="flex min-w-0 items-center gap-2">
-                                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80 text-gray-700 shadow-sm">
-                                              {getClipTypeIcon(clip.type)}
-                                            </div>
-                                            <div className="min-w-0 leading-tight">
-                                              <p className="truncate text-sm font-semibold text-gray-900">
-                                                {clip.name}
-                                              </p>
-                                              <p className="text-[11px] uppercase tracking-wide text-gray-600/80">
-                                                {clipMetaLabel}
-                                              </p>
-                                            </div>
-                                          </div>
-                                          <span className="relative z-10 shrink-0 rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-gray-700">
-                                            {clipDurationLabel}
-                                          </span>
-                                        </div>
-                                        {showWaveforms && clip.waveform && clip.waveform.length > 0 ? (
-                                          <div className="relative z-10 mx-3 mt-2 flex min-h-[1.75rem] flex-1 items-end gap-[1px] rounded-md bg-white/60 px-2 py-2">
-                                            {clip.waveform
-                                              .slice(0, Math.floor(clip.duration * 4))
-                                              .map((amplitude, index) => (
-                                                <div
-                                                  key={`${clip.id}-wave-${index}`}
-                                                  className="flex-1 rounded-sm"
-                                                  style={{
-                                                    backgroundColor: applyAlphaToHex(clipColor, 0.65),
-                                                    height: `${Math.min(
-                                                      100,
-                                                      Math.max(6, amplitude * 100),
-                                                    )}%`,
-                                                  }}
-                                                />
-                                              ))}
-                                          </div>
-                                        ) : (
-                                          <div className="relative z-10 mx-3 mt-2 flex-1 rounded-md border border-white/50 bg-white/40 min-h-[1.75rem]" />
-                                        )}
-                                        <div className="relative z-10 mt-2 flex items-center justify-between border-t border-white/60 px-3 py-2 text-[11px] font-medium text-gray-600">
-                                          <span>{clipStartLabel}</span>
-                                          <span>{clipEndLabel}</span>
-                                        </div>
-                                      </div>
                                       {fadeInWidth > 0 && (
                                         <div
-                                          className="pointer-events-none absolute left-0 top-0 bottom-0 z-0"
+                                          className="pointer-events-none absolute inset-y-0 left-0"
                                           style={{
                                             width: `${fadeInWidth}px`,
-                                            backgroundImage: `linear-gradient(to right, rgba(${r}, ${g}, ${b}, 0.45), transparent)`,
+                                            backgroundImage: `linear-gradient(to right, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
                                           }}
                                         />
                                       )}
                                       {fadeOutWidth > 0 && (
                                         <div
-                                          className="pointer-events-none absolute right-0 top-0 bottom-0 z-0"
+                                          className="pointer-events-none absolute inset-y-0 right-0"
                                           style={{
                                             width: `${fadeOutWidth}px`,
-                                            backgroundImage: `linear-gradient(to left, rgba(${r}, ${g}, ${b}, 0.45), transparent)`,
+                                            backgroundImage: `linear-gradient(to left, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
                                           }}
                                         />
                                       )}
@@ -1001,7 +866,6 @@ export default function VideoStudio() {
                   </div>
                 </div>
               </div>
-
               <div className="w-full xl:w-80">
                 <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                   <SimpleInspectorPanel
@@ -1025,7 +889,6 @@ export default function VideoStudio() {
                 </div>
               </div>
             </div>
-
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader>
@@ -1046,7 +909,6 @@ export default function VideoStudio() {
                   </p>
                 </CardContent>
               </Card>
-
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-base font-semibold text-gray-900">
@@ -1080,7 +942,6 @@ export default function VideoStudio() {
                   </div>
                 </CardContent>
               </Card>
-
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-base font-semibold text-gray-900">
@@ -1117,7 +978,6 @@ export default function VideoStudio() {
                 </CardContent>
               </Card>
             </div>
-
             <input
               type="file"
               ref={fileInputRef}
@@ -1173,12 +1033,10 @@ function SimpleInspectorPanel({
       ? videoClips.find((clip) => clip.id === selectedClips[0]) ?? null
       : null;
   const filterOptions: MediaFilter[] = ["all", "video", "audio", "image"];
-
   const clipEnd =
     selectedClip != null
       ? selectedClip.startTime + selectedClip.duration
       : null;
-
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
       <TabsList className="grid w-full grid-cols-2 shrink-0">
@@ -1191,7 +1049,6 @@ function SimpleInspectorPanel({
           <span className="hidden sm:inline">Properties</span>
         </TabsTrigger>
       </TabsList>
-
       <div className="flex-1 overflow-hidden">
         <TabsContent value="media" className="h-full">
           <div className="flex h-full flex-col">
@@ -1223,7 +1080,6 @@ function SimpleInspectorPanel({
                 ))}
               </div>
             </div>
-
             <ScrollArea className="flex-1">
               <div className="space-y-2 p-4">
                 {mediaAssets.length === 0 ? (
@@ -1270,7 +1126,6 @@ function SimpleInspectorPanel({
             </ScrollArea>
           </div>
         </TabsContent>
-
         <TabsContent value="properties" className="h-full">
           <ScrollArea className="h-full">
             <div className="space-y-5 p-4 text-sm">
@@ -1291,19 +1146,16 @@ function SimpleInspectorPanel({
                   {Math.round(masterVolume * 100)}%
                 </div>
               </div>
-
               {selectedClips.length === 0 && (
                 <div className="rounded-lg border border-dashed border-gray-300 p-4 text-xs text-gray-500">
                   Select a clip on the timeline to edit its properties.
                 </div>
               )}
-
               {selectedClips.length > 1 && (
                 <div className="rounded-lg border border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-700">
                   Multiple clips selected. Adjust start, trims, and fades individually for finer control.
                 </div>
               )}
-
               {selectedClip && (
                 <div className="space-y-4">
                   <div className="rounded-lg border border-gray-200 p-4">
@@ -1429,83 +1281,6 @@ function SimpleInspectorPanel({
                             {(selectedClip.fadeOutSec ?? 0).toFixed(1)}s
                           </span>
                         </div>
-                      </div>
-                      {(selectedClip.type === "video" || selectedClip.type === "image") && (
-                        <div className="space-y-1">
-                          <span className="block">Opacity</span>
-                          <input
-                            type="range"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={selectedClip.opacity ?? 1}
-                            onChange={(event) =>
-                              onUpdateClip(selectedClip.id, {
-                                opacity: Number(event.target.value),
-                              })
-                            }
-                            className="w-full"
-                          />
-                          <span className="block text-[11px] text-gray-500">
-                            {Math.round((selectedClip.opacity ?? 1) * 100)}%
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          onClick={() => onNudgeClip(selectedClip.id, -0.5)}
-                        >
-                          Nudge -0.5s
-                        </Button>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          onClick={() => onNudgeClip(selectedClip.id, 0.5)}
-                        >
-                          Nudge +0.5s
-                        </Button>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          onClick={() =>
-                            onUpdateClip(selectedClip.id, {
-                              muted: !selectedClip.muted,
-                            })
-                          }
-                        >
-                          {selectedClip.muted ? "Unmute clip" : "Mute clip"}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          onClick={() =>
-                            onUpdateClip(selectedClip.id, {
-                              fadeInSec: 1,
-                              fadeOutSec: 1,
-                            })
-                          }
-                        >
-                          Apply 1s fades
-                        </Button>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          onClick={() =>
-                            onUpdateClip(selectedClip.id, {
-                              fadeInSec: 0,
-                              fadeOutSec: 0,
-                            })
-                          }
-                        >
-                          Clear fades
-                        </Button>
                       </div>
                       <div className="rounded-md bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
                         <div>Starts at {formatTime(selectedClip.startTime)}</div>
