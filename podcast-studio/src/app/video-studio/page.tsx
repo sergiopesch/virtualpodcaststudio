@@ -35,8 +35,6 @@ import {
   Download,
   Upload,
   Type,
-  Rewind,
-  FastForward,
   Trash2,
 } from "lucide-react";
 
@@ -284,6 +282,12 @@ const createInitialClips = (): VideoClip[] => [
   },
 ];
 
+const SELECTED_PAPER = {
+  title: "Attention Is All You Need",
+  authors: "Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit",
+  audioFile: "conversation_20240101_143000.wav",
+} as const;
+
 export default function VideoStudio() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -345,12 +349,7 @@ export default function VideoStudio() {
 
   const totalClips = videoClips.length;
   const activeTrackCount = sortedTrackEntries.length;
-  const currentPaper = {
-    title: "Attention Is All You Need",
-    authors:
-      "Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit",
-    audioFile: "conversation_20240101_143000.wav",
-  };
+  const currentPaper = SELECTED_PAPER;
 
   const totalDuration = useMemo(
     () =>
@@ -504,12 +503,6 @@ export default function VideoStudio() {
   const handleZoomIn = () => setZoomLevel((previous) => Math.min(previous * 1.5, 3));
 
   const handleZoomOut = () => setZoomLevel((previous) => Math.max(previous / 1.5, 0.25));
-
-  const handleSkip = (deltaSeconds: number) => {
-    setCurrentTime((previous) =>
-      Math.max(0, Math.min(previous + deltaSeconds, totalDuration)),
-    );
-  };
 
   const handleClipSelect = useCallback((clipId: string, multiSelect = false) => {
     if (multiSelect) {
@@ -983,6 +976,7 @@ export default function VideoStudio() {
   }, [videoClips]);
 
   const { ticks: timelineTicks } = timelineTickConfig;
+  const playbackProgress = totalDuration > 0 ? Math.min(1, currentTime / totalDuration) : 0;
   const timelineWidthPx = totalDuration * pixelsPerSecond;
   const playheadLeftPx = Math.max(
     0,
@@ -1048,58 +1042,106 @@ export default function VideoStudio() {
               </div>
             }
           />
-          <main className="space-y-6 p-6">
+          <main className="space-y-6 p-4 sm:p-6">
             <div className="flex flex-col gap-6 xl:flex-row">
               <div className="flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                 <div className="border-b border-gray-200 bg-white p-6">
                   <div className="relative mx-auto flex aspect-video max-w-4xl items-center justify-center overflow-hidden rounded-xl bg-black">
-                    <div className="text-center text-white/80">
+                    <div className="pointer-events-none text-center text-white/80">
                       <Camera className="mx-auto mb-3 h-12 w-12 opacity-60" />
                       <p className="text-sm font-medium">Video Preview</p>
-                      <p className="text-xs text-white/60">
-                        {formatTime(currentTime)} / {formatTime(totalDuration)}
-                      </p>
                     </div>
-                    <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between gap-2 rounded-lg bg-black/30 p-3 backdrop-blur-sm">
-                      <div className="flex items-center gap-2">
-                        <Button type="button" size="sm" variant="secondary" onClick={() => handleSkip(-10)} aria-label="Rewind 10 seconds">
-                          <Rewind className="h-4 w-4" />
-                        </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handlePlayPause} aria-label={isPlaying ? "Pause" : "Play"}>
-                          {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                        </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={() => handleSkip(10)} aria-label="Fast forward 10 seconds">
-                          <FastForward className="h-4 w-4" />
-                        </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handleStop} aria-label="Stop playback">
-                          <Square className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button type="button" size="sm" variant="secondary" onClick={handleZoomOut} aria-label="Zoom out timeline">
-                          <ZoomOut className="h-4 w-4" />
-                        </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handleZoomIn} aria-label="Zoom in timeline">
-                          <ZoomIn className="h-4 w-4" />
-                        </Button>
-                        <Button type="button" size="sm" variant="secondary" onClick={handleAddClipClick} aria-label="Add clip">
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                      </div>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Button
+                        type="button"
+                        variant="glass"
+                        size="icon"
+                        onClick={handlePlayPause}
+                        aria-label={isPlaying ? "Pause playback" : "Play preview"}
+                        className="size-16 rounded-full border border-white/40 bg-white/10 text-white transition-all hover:scale-105 hover:bg-white/20"
+                      >
+                        {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                      </Button>
                     </div>
-                    <div className="absolute bottom-16 left-4 right-4">
-                      <div className="h-1 rounded-full bg-white/30">
+                    <div className="absolute bottom-4 left-4 right-4 flex items-center gap-3 text-xs text-white/80">
+                      <span className="font-semibold text-white">{formatTime(currentTime)}</span>
+                      <div
+                        role="progressbar"
+                        aria-valuenow={Math.round(playbackProgress * 100)}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/20"
+                      >
                         <div
-                          className="h-1 rounded-full bg-purple-500 transition-all"
-                          style={{ width: `${(currentTime / totalDuration) * 100}%` }}
+                          className="absolute inset-y-0 left-0 rounded-full bg-purple-500 transition-all"
+                          style={{ width: `${playbackProgress * 100}%` }}
                         />
                       </div>
+                      <span className="text-white/60">{formatTime(totalDuration)}</span>
                     </div>
                   </div>
                 </div>
                 <div className="border-t border-gray-200">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-gray-50/80 px-6 py-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="secondary"
+                        onClick={handlePlayPause}
+                        aria-label={isPlaying ? "Pause playback" : "Play preview"}
+                        className="rounded-full"
+                      >
+                        {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={handleStop}
+                        aria-label="Stop playback"
+                        className="rounded-full"
+                      >
+                        <Square className="h-4 w-4" />
+                      </Button>
+                      <span className="font-semibold text-gray-900">{formatTime(currentTime)}</span>
+                      <span className="text-gray-400">/ {formatTime(totalDuration)}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={handleZoomOut}
+                        aria-label="Zoom out timeline"
+                        className="rounded-full"
+                      >
+                        <ZoomOut className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        onClick={handleZoomIn}
+                        aria-label="Zoom in timeline"
+                        className="rounded-full"
+                      >
+                        <ZoomIn className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleAddClipClick}
+                        className="gap-1"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add clip
+                      </Button>
+                    </div>
+                  </div>
                   <div className="flex h-[400px]">
-                    <div className="flex w-44 flex-col border-r border-gray-200 bg-gray-50">
+                    <div className="flex w-48 min-w-[12rem] flex-col border-r border-gray-200 bg-gray-50">
                       <div className="flex h-12 items-center justify-between border-b border-gray-200 px-4">
                         <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">
                           Tracks
@@ -1201,7 +1243,7 @@ export default function VideoStudio() {
                         })}
                       </div>
                     </div>
-                    <div className="flex-1 overflow-x-auto" ref={scrollerRef}>
+                    <div className="min-w-0 flex-1 overflow-x-auto" ref={scrollerRef}>
                       <div
                         ref={timelineRef}
                         className="relative bg-white select-none"
@@ -1586,12 +1628,18 @@ function SimpleInspectorPanel({
       : null;
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
-      <TabsList className="grid w-full grid-cols-2 shrink-0">
-        <TabsTrigger value="media" className="flex items-center space-x-1">
+      <TabsList className="grid w-full grid-cols-2 shrink-0 rounded-xl bg-gray-100 p-1 text-xs">
+        <TabsTrigger
+          value="media"
+          className="flex items-center gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-purple-600"
+        >
           <Folder className="h-4 w-4" />
           <span className="hidden sm:inline">Media</span>
         </TabsTrigger>
-        <TabsTrigger value="properties" className="flex items-center space-x-1">
+        <TabsTrigger
+          value="properties"
+          className="flex items-center gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-purple-600"
+        >
           <Sliders className="h-4 w-4" />
           <span className="hidden sm:inline">Properties</span>
         </TabsTrigger>
@@ -1607,23 +1655,26 @@ function SimpleInspectorPanel({
                   placeholder="Search media..."
                   value={mediaQuery}
                   onChange={(event) => setMediaQuery(event.target.value)}
-                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
                 />
               </div>
               <div className="flex flex-wrap gap-2">
                 {filterOptions.map((filterOption) => (
-                  <button
+                  <Button
                     key={filterOption}
-                    onClick={() => setMediaFilter(filterOption)}
-                    className={`rounded px-3 py-1 text-xs transition ${
-                      mediaFilter === filterOption
-                        ? "bg-purple-100 text-purple-700"
-                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                    }`}
                     type="button"
+                    size="xs"
+                    variant={mediaFilter === filterOption ? "secondary" : "ghost"}
+                    onClick={() => setMediaFilter(filterOption)}
+                    aria-pressed={mediaFilter === filterOption}
+                    className={`rounded-full px-3 ${
+                      mediaFilter === filterOption
+                        ? "border border-purple-200 bg-purple-50 text-purple-700 shadow-sm"
+                        : "border border-transparent text-gray-600 hover:bg-gray-100"
+                    }`}
                   >
                     {filterOption.charAt(0).toUpperCase() + filterOption.slice(1)}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
