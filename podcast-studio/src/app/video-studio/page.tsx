@@ -102,6 +102,8 @@ const MIN_CLIP_DURATION = 0.5;
 const SNAP_INTERVAL_SECONDS = 0.5;
 const DRAG_SCROLL_MARGIN = 80;
 const DRAG_SCROLL_SPEED = 18;
+const MIN_TIMELINE_LABEL_SPACING = 80;
+const TIMELINE_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300] as const;
 type DragMode = "move" | "trim-start" | "trim-end";
 interface DragState {
   clipId: string;
@@ -295,10 +297,12 @@ export default function VideoStudio() {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
+  const playheadScrubRef = useRef<{ wasPlaying: boolean } | null>(null);
   const [activeDrag, setActiveDrag] = useState<{
     clipId: string;
     mode: DragMode;
   } | null>(null);
+  const [isScrubbing, setIsScrubbing] = useState(false);
   const { collapsed, toggleCollapsed } = useSidebar();
   const [videoClips, setVideoClips] = useState<VideoClip[]>(() => createInitialClips());
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>(() => createDefaultMediaAssets());
@@ -359,11 +363,37 @@ export default function VideoStudio() {
 
   const pixelsPerSecond = zoomLevel * 10;
 
-  const timelineTicks = useMemo(() => {
-    const stepSeconds = 10;
-    const tickCount = Math.ceil(totalDuration / stepSeconds) + 1;
-    return Array.from({ length: tickCount }, (_, index) => index * stepSeconds);
-  }, [totalDuration]);
+  const timelineTickConfig = useMemo(() => {
+    const safePixelsPerSecond =
+      Number.isFinite(pixelsPerSecond) && pixelsPerSecond > 0
+        ? pixelsPerSecond
+        : 10;
+    const step =
+      TIMELINE_STEPS.find(
+        (value) => value * safePixelsPerSecond >= MIN_TIMELINE_LABEL_SPACING,
+      ) ?? TIMELINE_STEPS[TIMELINE_STEPS.length - 1];
+    const ticks: number[] = [];
+    const maxTickCount = Math.ceil(totalDuration / step) + 1;
+    for (let index = 0; index < maxTickCount; index++) {
+      const timeValue = Number((index * step).toFixed(3));
+      if (timeValue > totalDuration) {
+        break;
+      }
+      if (ticks.length === 0 || Math.abs(ticks[ticks.length - 1] - timeValue) > 0.001) {
+        ticks.push(timeValue);
+      }
+    }
+    if (totalDuration > 0) {
+      const finalTick = Number(totalDuration.toFixed(3));
+      if (ticks.length === 0 || Math.abs(ticks[ticks.length - 1] - finalTick) > 0.001) {
+        ticks.push(finalTick);
+      }
+    }
+    if (ticks.length === 0 || Math.abs(ticks[0]) > 0.001) {
+      ticks.unshift(0);
+    }
+    return { ticks, step };
+  }, [pixelsPerSecond, totalDuration]);
 
   const clipsByTrack = useMemo(() => {
     const trackMap = new Map<number, VideoClip[]>();
@@ -658,6 +688,82 @@ export default function VideoStudio() {
     ],
   );
 
+  const updateCurrentTimeFromPointer = useCallback(
+    (clientX: number) => {
+      const timeline = timelineRef.current;
+      if (!timeline) {
+        return;
+      }
+      const rect = timeline.getBoundingClientRect();
+      const relativeX = clientX - rect.left;
+      const rawSeconds = relativeX / pixelsPerSecond;
+      const safeSeconds = Number.isFinite(rawSeconds) ? rawSeconds : 0;
+      const clampedSeconds = Math.max(0, Math.min(safeSeconds, totalDuration));
+      setCurrentTime(Number(clampedSeconds.toFixed(3)));
+    },
+    [pixelsPerSecond, totalDuration],
+  );
+
+  const handleTimelinePointerMove = useCallback(
+    (event: PointerEvent) => {
+      if (!playheadScrubRef.current) {
+        return;
+      }
+      event.preventDefault();
+      updateCurrentTimeFromPointer(event.clientX);
+    },
+    [updateCurrentTimeFromPointer],
+  );
+
+  const handleTimelinePointerUp = useCallback(() => {
+    if (!playheadScrubRef.current) {
+      return;
+    }
+    window.removeEventListener("pointermove", handleTimelinePointerMove);
+    window.removeEventListener("pointerup", handleTimelinePointerUp);
+    if (typeof document !== "undefined") {
+      document.body.style.userSelect = "";
+    }
+    const shouldResume = playheadScrubRef.current.wasPlaying;
+    playheadScrubRef.current = null;
+    setIsScrubbing(false);
+    if (shouldResume) {
+      setIsPlaying(true);
+    }
+  }, [handleTimelinePointerMove, setIsPlaying, setIsScrubbing]);
+
+  const handleTimelinePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-timeline-control]") || dragStateRef.current) {
+        return;
+      }
+      event.preventDefault();
+      playheadScrubRef.current = { wasPlaying: isPlaying };
+      if (isPlaying) {
+        setIsPlaying(false);
+      }
+      setIsScrubbing(true);
+      updateCurrentTimeFromPointer(event.clientX);
+      window.addEventListener("pointermove", handleTimelinePointerMove);
+      window.addEventListener("pointerup", handleTimelinePointerUp);
+      if (typeof document !== "undefined") {
+        document.body.style.userSelect = "none";
+      }
+    },
+    [
+      handleTimelinePointerMove,
+      handleTimelinePointerUp,
+      isPlaying,
+      updateCurrentTimeFromPointer,
+      setIsPlaying,
+      setIsScrubbing,
+    ],
+  );
+
   useEffect(() => {
     return () => {
       window.removeEventListener("pointermove", handleGlobalPointerMove);
@@ -667,6 +773,17 @@ export default function VideoStudio() {
       }
     };
   }, [handleGlobalPointerMove, handleGlobalPointerUp]);
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", handleTimelinePointerMove);
+      window.removeEventListener("pointerup", handleTimelinePointerUp);
+      if (typeof document !== "undefined") {
+        document.body.style.userSelect = "";
+      }
+      playheadScrubRef.current = null;
+    };
+  }, [handleTimelinePointerMove, handleTimelinePointerUp]);
 
   const handleTrackNameChange = (track: number, name: string) => {
     setTrackSettings((previous) => ({
@@ -864,6 +981,26 @@ export default function VideoStudio() {
     });
     return counts;
   }, [videoClips]);
+
+  const { ticks: timelineTicks } = timelineTickConfig;
+  const timelineWidthPx = totalDuration * pixelsPerSecond;
+  const playheadLeftPx = Math.max(
+    0,
+    Math.min(timelineWidthPx, currentTime * pixelsPerSecond),
+  );
+  const isPlayheadActive = isPlaying || isScrubbing;
+  const playheadIsNearStart = playheadLeftPx < 48;
+  const playheadIsNearEnd = timelineWidthPx - playheadLeftPx < 48;
+  const playheadTransform = playheadIsNearStart
+    ? "translateX(0)"
+    : playheadIsNearEnd
+    ? "translateX(-100%)"
+    : "translateX(-50%)";
+  const playheadAlignmentClasses = playheadIsNearStart
+    ? "items-start text-left"
+    : playheadIsNearEnd
+    ? "items-end text-right"
+    : "items-center text-center";
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
@@ -1067,45 +1204,74 @@ export default function VideoStudio() {
                     <div className="flex-1 overflow-x-auto" ref={scrollerRef}>
                       <div
                         ref={timelineRef}
-                        className="relative bg-white"
+                        className="relative bg-white select-none"
                         style={{
-                          width: `${totalDuration * pixelsPerSecond}px`,
+                          width: `${timelineWidthPx}px`,
                           minWidth: "100%",
                           height: "100%",
                         }}
+                        onPointerDown={handleTimelinePointerDown}
                       >
-                        <div className="relative h-12 border-b border-gray-200 bg-gray-50">
-                          {timelineTicks.map((time) => (
-                            <div key={time}>
-                              <div
-                                className="absolute inset-y-0 border-l border-gray-300"
-                                style={{ left: `${time * pixelsPerSecond}px` }}
-                              />
-                              <div
-                                className="absolute ml-1 text-xs text-gray-600"
-                                style={{ left: `${time * pixelsPerSecond}px`, top: 4 }}
-                              >
-                                {formatTime(time)}
-                              </div>
-                            </div>
-                          ))}
-                          <div className="absolute right-4 top-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide">
+                        <div className="relative h-12 border-b border-gray-200 bg-gray-50/90">
+                          {timelineTicks.map((time) => {
+                            const position = time * pixelsPerSecond;
+                            const labelNearStart = position < 48;
+                            const labelNearEnd = timelineWidthPx - position < 48;
+                            const labelTransform = labelNearStart
+                              ? "translateX(0)"
+                              : labelNearEnd
+                              ? "translateX(-100%)"
+                              : "translateX(-50%)";
+                            const labelAlignment = labelNearStart
+                              ? "items-start text-left"
+                              : labelNearEnd
+                              ? "items-end text-right"
+                              : "items-center text-center";
+                            return (
+                              <React.Fragment key={time}>
+                                <div
+                                  className="absolute inset-y-0 border-l border-gray-200"
+                                  style={{ left: `${position}px` }}
+                                />
+                                <div
+                                  className={`absolute top-2 z-10 flex ${labelAlignment} text-[10px] font-medium text-gray-600`}
+                                  style={{ left: `${position}px`, transform: labelTransform }}
+                                >
+                                  <span className="rounded bg-white/95 px-1.5 py-0.5 shadow-sm ring-1 ring-gray-200/70">
+                                    {formatTime(time)}
+                                  </span>
+                                </div>
+                              </React.Fragment>
+                            );
+                          })}
+                          <div
+                            data-timeline-control
+                            className="absolute right-3 top-2 z-20 flex items-center gap-2 rounded-full bg-white/95 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-600 shadow-sm"
+                          >
                             <Magnet className={`h-3 w-3 ${snapEnabled ? "text-purple-600" : "text-gray-400"}`} />
                             {snapEnabled ? "Snapping on" : "Snapping off"}
                           </div>
                           <div
-                            className="pointer-events-none absolute top-0 z-20"
-                            style={{ left: `${currentTime * pixelsPerSecond}px` }}
+                            className="pointer-events-none absolute top-0 z-30"
+                            style={{ left: `${playheadLeftPx}px` }}
                           >
-                            <div className="relative -translate-x-1/2">
+                            <div
+                              className={`relative flex flex-col gap-1 ${playheadAlignmentClasses}`}
+                              style={{ transform: playheadTransform }}
+                            >
+                              <span className="rounded bg-purple-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                                {formatTime(currentTime)}
+                              </span>
                               <div className="h-0 w-0 border-b-[8px] border-l-[6px] border-r-[6px] border-b-purple-500 border-l-transparent border-r-transparent" />
                             </div>
                           </div>
                         </div>
                         <div
-                          className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-purple-500/50"
+                          className={`pointer-events-none absolute top-0 bottom-0 z-20 w-px ${
+                            isPlayheadActive ? "bg-purple-500" : "bg-purple-500/40"
+                          }`}
                           style={{
-                            left: `${currentTime * pixelsPerSecond}px`,
+                            left: `${playheadLeftPx}px`,
                             transform: "translateX(-0.5px)",
                           }}
                         />
