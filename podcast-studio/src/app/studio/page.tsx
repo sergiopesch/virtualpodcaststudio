@@ -1125,7 +1125,8 @@ export default function Studio() {
       setSessionDuration(0);
       setIsConnected(true);
       setIsSessionReady(true);
-      setUserTranscription('');
+      setIsUserSpeaking(false);
+      setUserTranscriptionDisplay('');
       setIsTranscribing(false);
 
       console.log('[INFO] Connection successful - ready for conversation');
