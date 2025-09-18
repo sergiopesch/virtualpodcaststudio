@@ -56,12 +56,12 @@ interface SelectedPaper {
 }
 
 const AI_BASE_INSTRUCTION_LINES = [
-  'You are an AI podcast guest named Dr. Sarah.',
-  'Hold natural, engaging conversations about research papers.',
-  'Always let the host finish speaking before you reply, and keep responses concise while offering helpful explanations.',
+  'You are Dr. Sarah, an AI scientist joining a podcast conversation.',
+  'Respond conversationally, stay grounded in the selected research, and avoid speculation.',
+  'Keep every reply under three concise sentences (about 75 tokens) to control cost.',
 ];
 
-const MAX_ABSTRACT_SNIPPET = 1200;
+const MAX_ABSTRACT_SNIPPET = 400;
 
 const sanitizeInstructionText = (value?: string | null) => {
   if (!value) {
@@ -95,23 +95,28 @@ const buildConversationInstructionsFromPaper = (paper: SelectedPaper | null): st
       : paper.authors,
   );
 
+  const contextParts: string[] = [];
   if (title) {
-    details.push(`Title: ${title}.`);
+    contextParts.push(`Title: ${title}`);
   }
   if (authorLine) {
-    details.push(`Authors: ${authorLine}.`);
+    contextParts.push(`Authors: ${authorLine}`);
   }
   if (formattedDate) {
-    details.push(`Published: ${formattedDate}.`);
+    contextParts.push(`Published: ${formattedDate}`);
   }
   if (abstractSnippet) {
-    details.push(`Abstract summary: ${abstractSnippet}`);
+    contextParts.push(`Summary: ${abstractSnippet}`);
   }
   if (arxivUrl) {
-    details.push(`Reference URL: ${arxivUrl}.`);
+    contextParts.push(`URL: ${arxivUrl}`);
   }
 
-  details.push('Keep replies grounded in this paper and invite the host to dive deeper into notable findings.');
+  if (contextParts.length > 0) {
+    details.push(`Context: ${contextParts.join('; ')}`);
+  }
+
+  details.push('Answer briefly, relate insights back to the paper, and avoid repeating this context verbatim.');
 
   return `${base} ${details.join(' ')}`.trim();
 };
@@ -637,75 +642,6 @@ export default function Studio() {
     }
 
     if (!isConnected) {
-      if (userTranscriptEventSourceRef.current) {
-        userTranscriptEventSourceRef.current.close();
-        userTranscriptEventSourceRef.current = null;
-      }
-      hasUserTranscriptSseRef.current = false;
-      return;
-    }
-
-    if (userTranscriptEventSourceRef.current) {
-      return;
-    }
-
-    try {
-      const source = new EventSource(`/api/rt/user-transcripts?sessionId=${sessionId}`);
-      userTranscriptEventSourceRef.current = source;
-      hasUserTranscriptSseRef.current = true;
-
-      const handleComplete = (event: MessageEvent) => {
-        const data = (event.data || '').trim();
-        if (!data || data === 'Connected to user transcript stream') {
-          if (!data) {
-            resetUserTranscriptionState();
-          }
-          return;
-        }
-
-        handleUserTranscriptionComplete(data);
-      };
-
-      const handleDelta = (event: MessageEvent) => {
-        const data = (event.data || '').trim();
-        if (!data || data === 'Connected to user transcript stream') {
-          return;
-        }
-        handleUserTranscriptionDelta(data);
-      };
-
-      source.addEventListener('complete', handleComplete);
-      source.addEventListener('delta', handleDelta);
-      source.addEventListener('error', (event) => {
-        console.error('[ERROR] User transcript SSE stream error', event);
-        hasUserTranscriptSseRef.current = false;
-        if (userTranscriptEventSourceRef.current === source) {
-          source.close();
-          userTranscriptEventSourceRef.current = null;
-        }
-      });
-
-      return () => {
-        source.removeEventListener('complete', handleComplete);
-        source.removeEventListener('delta', handleDelta);
-        source.close();
-        if (userTranscriptEventSourceRef.current === source) {
-          userTranscriptEventSourceRef.current = null;
-        }
-        hasUserTranscriptSseRef.current = false;
-      };
-    } catch (error) {
-      console.error('[ERROR] Unable to open user transcript SSE stream', error);
-      hasUserTranscriptSseRef.current = false;
-    }
-  }, [handleUserTranscriptionComplete, handleUserTranscriptionDelta, isConnected, resetUserTranscriptionState, sessionId]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    if (!isConnected) {
       if (aiTranscriptEventSourceRef.current) {
         aiTranscriptEventSourceRef.current.close();
         aiTranscriptEventSourceRef.current = null;
@@ -912,6 +848,75 @@ export default function Studio() {
     userPendingTextRef.current += delta;
     startUserTyping();
   }, [handleUserTranscriptionStarted, startUserTyping, updateIsUserSpeaking]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!isConnected) {
+      if (userTranscriptEventSourceRef.current) {
+        userTranscriptEventSourceRef.current.close();
+        userTranscriptEventSourceRef.current = null;
+      }
+      hasUserTranscriptSseRef.current = false;
+      return;
+    }
+
+    if (userTranscriptEventSourceRef.current) {
+      return;
+    }
+
+    try {
+      const source = new EventSource(`/api/rt/user-transcripts?sessionId=${sessionId}`);
+      userTranscriptEventSourceRef.current = source;
+      hasUserTranscriptSseRef.current = true;
+
+      const handleComplete = (event: MessageEvent) => {
+        const data = (event.data || '').trim();
+        if (!data || data === 'Connected to user transcript stream') {
+          if (!data) {
+            resetUserTranscriptionState();
+          }
+          return;
+        }
+
+        handleUserTranscriptionComplete(data);
+      };
+
+      const handleDelta = (event: MessageEvent) => {
+        const data = (event.data || '').trim();
+        if (!data || data === 'Connected to user transcript stream') {
+          return;
+        }
+        handleUserTranscriptionDelta(data);
+      };
+
+      source.addEventListener('complete', handleComplete);
+      source.addEventListener('delta', handleDelta);
+      source.addEventListener('error', (event) => {
+        console.error('[ERROR] User transcript SSE stream error', event);
+        hasUserTranscriptSseRef.current = false;
+        if (userTranscriptEventSourceRef.current === source) {
+          source.close();
+          userTranscriptEventSourceRef.current = null;
+        }
+      });
+
+      return () => {
+        source.removeEventListener('complete', handleComplete);
+        source.removeEventListener('delta', handleDelta);
+        source.close();
+        if (userTranscriptEventSourceRef.current === source) {
+          userTranscriptEventSourceRef.current = null;
+        }
+        hasUserTranscriptSseRef.current = false;
+      };
+    } catch (error) {
+      console.error('[ERROR] Unable to open user transcript SSE stream', error);
+      hasUserTranscriptSseRef.current = false;
+    }
+  }, [handleUserTranscriptionComplete, handleUserTranscriptionDelta, isConnected, resetUserTranscriptionState, sessionId]);
 
   const commitAudioTurn = useCallback(async () => {
     if (!isConnected || !isSessionReady) {
