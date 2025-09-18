@@ -849,6 +849,64 @@ export default function Studio() {
     startUserTyping();
   }, [handleUserTranscriptionStarted, startUserTyping, updateIsUserSpeaking]);
 
+  const commitAudioTurn = useCallback(async () => {
+    if (!isConnected || !isSessionReady) {
+      return;
+    }
+
+    if (isCommittingRef.current) {
+      return;
+    }
+
+    isCommittingRef.current = true;
+    try {
+      const response = await fetch('/api/rt/audio-commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+        cache: 'no-store'
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = typeof payload?.error === 'string' ? payload.error : 'Failed to commit audio turn';
+        console.warn('[WARN] Audio commit request failed', { message, status: response.status });
+      }
+    } catch (error) {
+      console.error('[ERROR] Audio commit request failed', error);
+    } finally {
+      isCommittingRef.current = false;
+    }
+  }, [isConnected, isSessionReady, sessionId]);
+
+  const handleUserTranscriptionComplete = useCallback((transcript: string) => {
+    const finalTranscript = transcript.trim();
+    if (finalTranscript) {
+      const activeMessage = currentUserMessageRef.current;
+      if (activeMessage) {
+        updateMessageContent(activeMessage.id, (message) => ({
+          ...message,
+          content: finalTranscript,
+          timestamp: new Date(),
+        }));
+      } else {
+        const order = ++messageSequenceRef.current;
+        appendMessage({
+          id: `user_${Date.now()}`,
+          role: 'user',
+          content: finalTranscript,
+          timestamp: new Date(),
+          type: 'text',
+          speaker: 'Host (You)',
+          order,
+        });
+      }
+    }
+
+    resetUserTranscriptionState();
+    void commitAudioTurn();
+  }, [appendMessage, commitAudioTurn, resetUserTranscriptionState, updateMessageContent]);
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
@@ -917,64 +975,6 @@ export default function Studio() {
       hasUserTranscriptSseRef.current = false;
     }
   }, [handleUserTranscriptionComplete, handleUserTranscriptionDelta, isConnected, resetUserTranscriptionState, sessionId]);
-
-  const commitAudioTurn = useCallback(async () => {
-    if (!isConnected || !isSessionReady) {
-      return;
-    }
-
-    if (isCommittingRef.current) {
-      return;
-    }
-
-    isCommittingRef.current = true;
-    try {
-      const response = await fetch('/api/rt/audio-commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId }),
-        cache: 'no-store'
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        const message = typeof payload?.error === 'string' ? payload.error : 'Failed to commit audio turn';
-        console.warn('[WARN] Audio commit request failed', { message, status: response.status });
-      }
-    } catch (error) {
-      console.error('[ERROR] Audio commit request failed', error);
-    } finally {
-      isCommittingRef.current = false;
-    }
-  }, [isConnected, isSessionReady, sessionId]);
-
-  const handleUserTranscriptionComplete = useCallback((transcript: string) => {
-    const finalTranscript = transcript.trim();
-    if (finalTranscript) {
-      const activeMessage = currentUserMessageRef.current;
-      if (activeMessage) {
-        updateMessageContent(activeMessage.id, (message) => ({
-          ...message,
-          content: finalTranscript,
-          timestamp: new Date(),
-        }));
-      } else {
-        const order = ++messageSequenceRef.current;
-        appendMessage({
-          id: `user_${Date.now()}`,
-          role: 'user',
-          content: finalTranscript,
-          timestamp: new Date(),
-          type: 'text',
-          speaker: 'Host (You)',
-          order,
-        });
-      }
-    }
-
-    resetUserTranscriptionState();
-    void commitAudioTurn();
-  }, [appendMessage, commitAudioTurn, resetUserTranscriptionState, updateMessageContent]);
 
   const handleSendText = async () => {
     const trimmed = textInput.trim();
