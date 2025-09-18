@@ -27,6 +27,20 @@ export async function POST(req: Request) {
       ? incomingKey || process.env.OPENAI_API_KEY || ''
       : incomingKey;
     const model = typeof body.model === 'string' ? body.model.trim() : undefined;
+    const rawPaper = body.paper;
+    const paperContext = rawPaper && typeof rawPaper === 'object'
+      ? {
+          id: typeof rawPaper.id === 'string' ? rawPaper.id : undefined,
+          title: typeof rawPaper.title === 'string' ? rawPaper.title : undefined,
+          authors: typeof rawPaper.authors === 'string' ? rawPaper.authors : undefined,
+          primaryAuthor: typeof rawPaper.primaryAuthor === 'string' ? rawPaper.primaryAuthor : undefined,
+          hasAdditionalAuthors: rawPaper.hasAdditionalAuthors === true,
+          formattedPublishedDate: typeof rawPaper.formattedPublishedDate === 'string' ? rawPaper.formattedPublishedDate : undefined,
+          abstract: typeof rawPaper.abstract === 'string' ? rawPaper.abstract : undefined,
+          arxivUrl: typeof rawPaper.arxiv_url === 'string' ? rawPaper.arxiv_url :
+            (typeof rawPaper.arxivUrl === 'string' ? rawPaper.arxivUrl : undefined),
+        }
+      : undefined;
 
     if (!resolvedKey) {
       const label = provider === 'openai' ? 'OpenAI' : 'Google';
@@ -36,7 +50,7 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    const configChanged = manager.configure({ provider, apiKey: resolvedKey, model });
+    const configChanged = manager.configure({ provider, apiKey: resolvedKey, model, paperContext });
 
     console.log(`[INFO] Current session status`, {
       sessionId,
@@ -79,19 +93,21 @@ export async function POST(req: Request) {
       message: 'Realtime session started successfully'
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     const duration = Date.now() - startTime;
-    console.error(`[ERROR] Failed to start session`, { 
-      sessionId, 
+    const message = error instanceof Error ? error.message : 'Failed to start realtime session';
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error(`[ERROR] Failed to start session`, {
+      sessionId,
       duration,
-      error: error.message,
-      stack: error.stack 
+      error: message,
+      stack
     });
-    
+
     // Determine appropriate HTTP status
     let status = 500;
-    let errorMessage = error.message || 'Failed to start realtime session';
-    
+    let errorMessage = message;
+
     if (errorMessage.includes('API_KEY')) {
       status = 503;
       errorMessage = 'OpenAI API configuration error';

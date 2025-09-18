@@ -20,17 +20,19 @@ src/contexts/
   `collapsed` and `toggleCollapsed` directly.
 
 ## API Config Context
-- `ApiConfigProvider` persists the user's chosen LLM provider (`openai` or `google`), API keys,
-  and optional model overrides to `localStorage` under `vps:llmConfig`.
+- `ApiConfigProvider` persists the user's chosen LLM provider (`openai` or `google`) and optional
+  model overrides to `localStorage` under `vps:llmConfig`. API keys are kept in-memory only so they
+  are never written to persistent browser storage.
 - Hydration flow:
   1. On mount, attempt to read and parse the stored JSON.
   2. `hasHydrated` guards against writing back until the initial read completes.
-  3. Any state mutation (provider, key, model) re-serializes to `localStorage`.
+  3. Any provider/model mutation re-serializes to `localStorage`; key updates stay in volatile state
+     for security.
 - Consumers (`useApiConfig`) receive `{ activeProvider, apiKeys, models, setActiveProvider,
   setApiKey, clearApiKey, setModel }`.
 - The Audio Studio relies on this context to gate `/api/rt/start` calls. Maintain the guard that
   falls back to the environment `OPENAI_API_KEY` only on the server—client components should
-  always respect the user-specified keys.
+  always respect the user-specified keys provided during the current session.
 
 ## Implementation Tips
 - Keep both providers client components (they access browser storage). Mark new providers with

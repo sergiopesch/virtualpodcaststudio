@@ -19,6 +19,7 @@ export interface StoredConversationMessage {
   timestamp: string;
   speaker?: string;
   type: "text" | "audio";
+  order?: number;
 }
 
 export interface StoredConversationAudioTrack {
