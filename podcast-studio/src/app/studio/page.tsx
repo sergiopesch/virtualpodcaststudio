@@ -55,6 +55,81 @@ interface SelectedPaper {
   formattedPublishedDate?: string;
 }
 
+const AI_BASE_INSTRUCTION_LINES = [
+  'You are an AI podcast guest named Dr. Sarah.',
+  'Hold natural, engaging conversations about research papers.',
+  'Always let the host finish speaking before you reply, and keep responses concise while offering helpful explanations.',
+];
+
+const MAX_ABSTRACT_SNIPPET = 1200;
+
+const sanitizeInstructionText = (value?: string | null) => {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.replace(/\s+/g, ' ').trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.length <= MAX_ABSTRACT_SNIPPET) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, MAX_ABSTRACT_SNIPPET)}…`;
+};
+
+const buildConversationInstructionsFromPaper = (paper: SelectedPaper | null): string => {
+  const base = AI_BASE_INSTRUCTION_LINES.join(' ');
+
+  if (!paper) {
+    return base;
+  }
+
+  const details: string[] = [];
+  const title = sanitizeInstructionText(paper.title);
+  const formattedDate = sanitizeInstructionText(paper.formattedPublishedDate);
+  const abstractSnippet = sanitizeInstructionText(paper.abstract);
+  const arxivUrl = sanitizeInstructionText(paper.arxiv_url);
+  const authorLine = sanitizeInstructionText(
+    paper.primaryAuthor
+      ? `${paper.primaryAuthor}${paper.hasAdditionalAuthors ? ' et al.' : ''}`
+      : paper.authors,
+  );
+
+  if (title) {
+    details.push(`Title: ${title}.`);
+  }
+  if (authorLine) {
+    details.push(`Authors: ${authorLine}.`);
+  }
+  if (formattedDate) {
+    details.push(`Published: ${formattedDate}.`);
+  }
+  if (abstractSnippet) {
+    details.push(`Abstract summary: ${abstractSnippet}`);
+  }
+  if (arxivUrl) {
+    details.push(`Reference URL: ${arxivUrl}.`);
+  }
+
+  details.push('Keep replies grounded in this paper and invite the host to dive deeper into notable findings.');
+
+  return `${base} ${details.join(' ')}`.trim();
+};
+
+const nextWordChunk = (text: string): [string, string] => {
+  if (!text) {
+    return ['', ''];
+  }
+
+  const match = text.match(/^[^\s]+\s*/);
+  if (match && match[0].length > 0) {
+    const chunk = match[0];
+    return [chunk, text.slice(chunk.length)];
+  }
+
+  return [text.charAt(0), text.slice(1)];
+};
+
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
   for (let index = 0; index < 256; index++) {
@@ -205,7 +280,8 @@ export default function Studio() {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [userTranscription, setUserTranscription] = useState(''); // Live user speech
+  const [isUserSpeaking, setIsUserSpeaking] = useState(false);
+  const [userTranscriptionDisplay, setUserTranscriptionDisplay] = useState('');
   const [textInput, setTextInput] = useState("");
   const [sessionDuration, setSessionDuration] = useState(0);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
@@ -214,6 +290,7 @@ export default function Studio() {
   const [currentPaper, setCurrentPaper] = useState<SelectedPaper | null>(null);
   const [paperLoadError, setPaperLoadError] = useState<string | null>(null);
   const [hasCapturedAudio, setHasCapturedAudio] = useState(false);
+  const [activeAiMessageId, setActiveAiMessageId] = useState<string | null>(null);
 
   // Refs for real-time functionality
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -236,7 +313,9 @@ export default function Studio() {
   const hasCapturedAudioRef = useRef(false);
   const latestConversationRef = useRef<StoredConversation | null>(null);
 
-  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const userPendingTextRef = useRef('');
+  const userTypingIntervalRef = useRef<number | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
   const sortMessages = useCallback((list: ConversationMessage[]) => {
     return [...list].sort((a, b) => {
@@ -277,6 +356,38 @@ export default function Studio() {
     }
 
     throw new Error('Base64 decoding is not supported in this environment.');
+  }, []);
+
+  const stopUserTyping = useCallback(() => {
+    if (userTypingIntervalRef.current != null) {
+      window.clearInterval(userTypingIntervalRef.current);
+      userTypingIntervalRef.current = null;
+    }
+  }, []);
+
+  const startUserTyping = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (userTypingIntervalRef.current != null) {
+      return;
+    }
+
+    userTypingIntervalRef.current = window.setInterval(() => {
+      if (!userPendingTextRef.current) {
+        return;
+      }
+
+      const [chunk, rest] = nextWordChunk(userPendingTextRef.current);
+      if (!chunk) {
+        userPendingTextRef.current = rest;
+        return;
+      }
+
+      userPendingTextRef.current = rest;
+      setUserTranscriptionDisplay((previous) => previous + chunk);
+    }, 32);
   }, []);
 
   useEffect(() => {
@@ -326,6 +437,13 @@ export default function Studio() {
     };
   }, []);
 
+  useEffect(() => {
+    return () => {
+      stopUserTyping();
+      userPendingTextRef.current = '';
+    };
+  }, [stopUserTyping]);
+
   const paperPayload = useMemo(() => {
     if (!currentPaper) {
       return null;
@@ -354,9 +472,32 @@ export default function Studio() {
     return () => clearInterval(interval);
   }, [isRecording]);
 
+  const scrollToLatest = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const root = transcriptScrollRef.current;
+    if (!root) {
+      return;
+    }
+
+    const viewport = root.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
+    if (!viewport) {
+      return;
+    }
+
+    const targetTop = viewport.scrollHeight;
+    viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+  }, []);
+
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, userTranscription, isTranscribing]);
+    scrollToLatest();
+  }, [messages, userTranscriptionDisplay, isTranscribing, scrollToLatest]);
+
+  useEffect(() => {
+    sendDataChannelSessionUpdate();
+  }, [sendDataChannelSessionUpdate]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -462,6 +603,29 @@ export default function Studio() {
     }
   }, [activeApiKey, activeProvider, paperPayload, sessionId]);
 
+  const sendDataChannelSessionUpdate = useCallback(() => {
+    const channel = dcRef.current;
+    if (!channel || channel.readyState !== 'open') {
+      return;
+    }
+
+    try {
+      const instructions = buildConversationInstructionsFromPaper(currentPaper);
+      channel.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          modalities: ['text', 'audio'],
+          voice: 'alloy',
+          input_audio_transcription: { model: 'whisper-1' },
+          turn_detection: { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 800 },
+          instructions,
+        },
+      }));
+    } catch (err) {
+      console.error('[ERROR] Failed to send session update over data channel:', err);
+    }
+  }, [currentPaper]);
+
   // Fast typing animation helpers for AI transcript
   const startAiTyping = () => {
     if (aiTypingIntervalRef.current != null) return;
@@ -469,6 +633,7 @@ export default function Studio() {
       if (!aiAudioStartedRef.current && aiTextBufferRef.current.length === 0) {
         clearInterval(aiTypingIntervalRef.current!);
         aiTypingIntervalRef.current = null;
+        setActiveAiMessageId(null);
         return;
       }
       if (aiTextBufferRef.current.length === 0) return;
@@ -485,6 +650,7 @@ export default function Studio() {
           speaker: 'Dr. Sarah (AI Expert)',
           order,
         });
+        setActiveAiMessageId(id);
       }
       const maxPerTick = Math.min(64, Math.max(2, Math.floor(aiTextBufferRef.current.length / 8)));
       const chunk = aiTextBufferRef.current.slice(0, maxPerTick);
@@ -506,6 +672,9 @@ export default function Studio() {
     if (stop && aiTypingIntervalRef.current != null) {
       clearInterval(aiTypingIntervalRef.current);
       aiTypingIntervalRef.current = null;
+    }
+    if (stop) {
+      setActiveAiMessageId(null);
     }
   };
 
@@ -739,6 +908,11 @@ export default function Studio() {
     hasCapturedAudioRef.current = false;
     setHasCapturedAudio(false);
     messageSequenceRef.current = 0;
+    setActiveAiMessageId(null);
+    setIsUserSpeaking(false);
+    setUserTranscriptionDisplay('');
+    userPendingTextRef.current = '';
+    stopUserTyping();
 
     let pc: RTCPeerConnection | null = null;
     let localStream: MediaStream | null = null;
@@ -842,15 +1016,20 @@ export default function Studio() {
           }
 
           if (type === 'conversation.item.input_audio_transcription.started' || type === 'input_audio_buffer.transcription.started') {
-            setUserTranscription('');
             setIsTranscribing(true);
+            setIsUserSpeaking(true);
+            setUserTranscriptionDisplay('');
+            userPendingTextRef.current = '';
+            stopUserTyping();
           }
 
           if (type === 'conversation.item.input_audio_transcription.delta' || type === 'input_audio_buffer.transcription.delta') {
             const delta = typeof msg.delta === 'string' ? msg.delta : '';
             if (delta) {
-              setUserTranscription(prev => (prev ? prev + delta : delta));
               setIsTranscribing(true);
+              setIsUserSpeaking(true);
+              userPendingTextRef.current += delta;
+              startUserTyping();
             }
           }
 
@@ -869,8 +1048,11 @@ export default function Studio() {
               };
               appendMessage(userMessage);
             }
-            setUserTranscription('');
+            userPendingTextRef.current = '';
+            stopUserTyping();
+            setUserTranscriptionDisplay('');
             setIsTranscribing(false);
+            setIsUserSpeaking(false);
           }
 
           if (type === 'response.error') {
@@ -887,6 +1069,7 @@ export default function Studio() {
         const dc = ev.channel;
         dcRef.current = dc;
         dc.onmessage = (e) => handleDcMessage(e.data);
+        dc.onopen = () => sendDataChannelSessionUpdate();
       };
 
       localStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
@@ -895,21 +1078,7 @@ export default function Studio() {
       const dc = pc.createDataChannel('oai-events');
       dcRef.current = dc;
       dc.onmessage = (e) => handleDcMessage(e.data);
-      dc.onopen = () => {
-        try {
-          dc.send(JSON.stringify({
-            type: 'session.update',
-            session: {
-              modalities: ['text', 'audio'],
-              voice: 'alloy',
-              input_audio_transcription: { model: 'whisper-1' },
-              turn_detection: { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 800 }
-            }
-          }));
-        } catch (err) {
-          console.error('[ERROR] Failed to send session update over data channel:', err);
-        }
-      };
+      dc.onopen = () => sendDataChannelSessionUpdate();
 
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await pc.setLocalDescription(offer);
@@ -1073,7 +1242,12 @@ export default function Studio() {
     hasCapturedAudioRef.current = hasStoredConversation;
     setHasCapturedAudio(hasStoredConversation);
     messageSequenceRef.current = 0;
-  }, [sessionId]);
+    setActiveAiMessageId(null);
+    stopUserTyping();
+    setIsUserSpeaking(false);
+    setUserTranscriptionDisplay('');
+    userPendingTextRef.current = '';
+  }, [sessionId, stopUserTyping]);
 
   const buildConversationPayload = useCallback((): StoredConversation | null => {
     if (!currentPaper || messages.length === 0) {
@@ -1165,7 +1339,11 @@ export default function Studio() {
     setMessages([]);
     setError(null);
     setIsTranscribing(false);
-    setUserTranscription('');
+    setIsUserSpeaking(false);
+    setUserTranscriptionDisplay('');
+    userPendingTextRef.current = '';
+    stopUserTyping();
+    setActiveAiMessageId(null);
     setIsAudioPlaying(false);
   };
 
@@ -1507,7 +1685,7 @@ export default function Studio() {
                   </CardHeader>
                 
                   <CardContent className="flex-1 flex flex-col p-0 bg-white">
-                    <ScrollArea className="flex-1 px-6 py-4">
+                    <ScrollArea ref={transcriptScrollRef} className="flex-1 px-6 py-4">
                       <div className="space-y-4">
                         {messages.length === 0 && !isRecording && (
                           <div className="text-center text-gray-500 py-8">
@@ -1568,13 +1746,18 @@ export default function Studio() {
                                   </span>
                                 </div>
                                 <div className={`p-4 rounded-xl border-2 shadow-sm transition-all hover:shadow-md ${messageStyles}`}>
-                                  <p className="text-sm leading-relaxed">{entry.content}</p>
+                                  <p className="text-sm leading-relaxed">
+                                    {entry.content}
+                                    {entry.id === activeAiMessageId && (
+                                      <span className="inline-block w-2 h-4 bg-blue-500/70 ml-1 animate-pulse rounded-sm align-middle" />
+                                    )}
+                                  </p>
                                 </div>
                               </div>
                             </div>
                           );
                         })}
-                        
+
                         {/* Live indicator when recording */}
                         {isRecording && (
                           <div className="flex items-center space-x-3 opacity-80 animate-pulse border border-green-200 bg-green-50/50 p-3 rounded-lg">
@@ -1598,7 +1781,7 @@ export default function Studio() {
                         )}
                         
                         {/* Live transcription when user is speaking */}
-                        {isTranscribing && userTranscription && (
+                        {isUserSpeaking && (
                           <div className="flex items-start space-x-3 animate-fade-in">
                             <div className="w-10 h-10 rounded-xl bg-yellow-100 border border-yellow-200 flex items-center justify-center flex-shrink-0 shadow-sm">
                               <Mic className="w-5 h-5 text-yellow-600" />
@@ -1614,14 +1797,13 @@ export default function Studio() {
                               </div>
                               <div className="p-4 rounded-xl border-2 border-yellow-200 bg-gradient-to-r from-yellow-50 to-yellow-50/70 shadow-sm">
                                 <p className="text-sm leading-relaxed text-gray-800">
-                                  {userTranscription}
+                                  {userTranscriptionDisplay || <span className="text-xs text-yellow-500 uppercase tracking-wide">Listening...</span>}
                                   <span className="inline-block w-2 h-4 bg-yellow-500 ml-1 animate-pulse"></span>
                                 </p>
                               </div>
                             </div>
                           </div>
                         )}
-                        <div ref={transcriptEndRef} />
                       </div>
                     </ScrollArea>
                   
