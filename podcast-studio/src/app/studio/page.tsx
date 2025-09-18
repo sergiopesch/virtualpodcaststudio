@@ -491,6 +491,29 @@ export default function Studio() {
     viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
   }, []);
 
+  const sendDataChannelSessionUpdate = useCallback(() => {
+    const channel = dcRef.current;
+    if (!channel || channel.readyState !== 'open') {
+      return;
+    }
+
+    try {
+      const instructions = buildConversationInstructionsFromPaper(currentPaper);
+      channel.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          modalities: ['text', 'audio'],
+          voice: 'alloy',
+          input_audio_transcription: { model: 'whisper-1' },
+          turn_detection: { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 800 },
+          instructions,
+        },
+      }));
+    } catch (err) {
+      console.error('[ERROR] Failed to send session update over data channel:', err);
+    }
+  }, [currentPaper]);
+
   useEffect(() => {
     scrollToLatest();
   }, [messages, userTranscriptionDisplay, isTranscribing, scrollToLatest]);
@@ -602,29 +625,6 @@ export default function Studio() {
       throw new Error(message);
     }
   }, [activeApiKey, activeProvider, paperPayload, sessionId]);
-
-  const sendDataChannelSessionUpdate = useCallback(() => {
-    const channel = dcRef.current;
-    if (!channel || channel.readyState !== 'open') {
-      return;
-    }
-
-    try {
-      const instructions = buildConversationInstructionsFromPaper(currentPaper);
-      channel.send(JSON.stringify({
-        type: 'session.update',
-        session: {
-          modalities: ['text', 'audio'],
-          voice: 'alloy',
-          input_audio_transcription: { model: 'whisper-1' },
-          turn_detection: { type: 'server_vad', threshold: 0.5, prefix_padding_ms: 300, silence_duration_ms: 800 },
-          instructions,
-        },
-      }));
-    } catch (err) {
-      console.error('[ERROR] Failed to send session update over data channel:', err);
-    }
-  }, [currentPaper]);
 
   // Fast typing animation helpers for AI transcript
   const startAiTyping = () => {
