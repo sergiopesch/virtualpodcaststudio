@@ -39,6 +39,18 @@ const DEFAULT_OPENAI_REALTIME_MODEL =
 
 type SupportedProvider = 'openai' | 'google';
 
+const CONTEXT_LIMITS = {
+  id: 200,
+  title: 320,
+  authors: 280,
+  primaryAuthor: 120,
+  formattedPublishedDate: 80,
+  abstract: 400,
+  arxivUrl: 200,
+} as const;
+
+const CONTEXT_DETAILS_MAX_LENGTH = 600;
+
 interface PaperContext {
   id?: string;
   title?: string;
@@ -68,6 +80,7 @@ class RTManager extends EventEmitter {
   private apiKey: string | null = process.env.OPENAI_API_KEY || null;
   private model: string = DEFAULT_OPENAI_REALTIME_MODEL;
   private conversationContext: PaperContext | null = null;
+  private lastPrimedSummary: string | null = null;
 
   constructor(sessionId?: string) {
     super();
@@ -110,6 +123,7 @@ class RTManager extends EventEmitter {
     const normalizedContext = this._normalizeContext(config.paperContext);
     if (!this._contextsEqual(this.conversationContext, normalizedContext)) {
       this.conversationContext = normalizedContext;
+      this.lastPrimedSummary = null;
       changed = true;
 
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -324,15 +338,16 @@ class RTManager extends EventEmitter {
 
     ws.on('close', (code, reason) => {
       const reasonString = reason.toString();
-      log.error(`WebSocket connection closed`, { 
-        sessionId: this.sessionId, 
-        code, 
+      log.error(`WebSocket connection closed`, {
+        sessionId: this.sessionId,
+        code,
         reason: reasonString,
         codeDescription: this._getCloseCodeDescription(code)
       });
       this.ws = null;
+      this.lastPrimedSummary = null;
       this.emit('close');
-      
+
       if (!hasResolved) {
         hasResolved = true;
         reject(new Error(`WebSocket closed before session could be established: ${code} ${reasonString}`));
@@ -543,7 +558,8 @@ class RTManager extends EventEmitter {
     
     this.ws = null;
     this.startPromise = undefined;
-    
+    this.lastPrimedSummary = null;
+
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
       this.connectionTimeout = undefined;
@@ -563,18 +579,26 @@ class RTManager extends EventEmitter {
       return null;
     }
 
-    const sanitize = (value?: string, maxLength = 1200) =>
-      typeof value === 'string' ? value.trim().slice(0, maxLength) : undefined;
+    const sanitize = (value?: string, maxLength = 200) => {
+      if (typeof value !== 'string') {
+        return undefined;
+      }
+      const normalized = value.replace(/\s+/g, ' ').trim();
+      if (!normalized) {
+        return undefined;
+      }
+      return normalized.slice(0, maxLength);
+    };
 
     return {
-      id: sanitize(context.id, 200),
-      title: sanitize(context.title, 500),
-      authors: sanitize(context.authors, 500),
-      primaryAuthor: sanitize(context.primaryAuthor, 250),
+      id: sanitize(context.id, CONTEXT_LIMITS.id),
+      title: sanitize(context.title, CONTEXT_LIMITS.title),
+      authors: sanitize(context.authors, CONTEXT_LIMITS.authors),
+      primaryAuthor: sanitize(context.primaryAuthor, CONTEXT_LIMITS.primaryAuthor),
       hasAdditionalAuthors: context.hasAdditionalAuthors === true,
-      formattedPublishedDate: sanitize(context.formattedPublishedDate, 120),
-      abstract: sanitize(context.abstract, 1800),
-      arxivUrl: sanitize(context.arxivUrl, 500),
+      formattedPublishedDate: sanitize(context.formattedPublishedDate, CONTEXT_LIMITS.formattedPublishedDate),
+      abstract: sanitize(context.abstract, CONTEXT_LIMITS.abstract),
+      arxivUrl: sanitize(context.arxivUrl, CONTEXT_LIMITS.arxivUrl),
     };
   }
 
@@ -623,77 +647,70 @@ class RTManager extends EventEmitter {
 
   private _buildInstructions(): string {
     const base = [
-      'You are an AI podcast guest named Dr. Sarah.',
-      'Hold natural, engaging conversations about research papers.',
-      'Always let the host finish speaking before you reply, and keep responses concise while offering helpful explanations.',
+      'You are Dr. Sarah, an AI scientist appearing as a podcast guest.',
+      'Answer conversationally, stay grounded in the provided research, and avoid speculation.',
+      'Keep every reply under three concise sentences (≈75 tokens) to limit cost.',
     ];
 
-    if (!this.conversationContext) {
+    const contextDetails = this._formatContextDetails();
+
+    if (!contextDetails) {
       return base.join(' ');
     }
 
-    const lines: string[] = [];
+    return `${base.join(' ')} Context: ${contextDetails}`;
+  }
+
+  private _formatContextDetails(): string | null {
+    if (!this.conversationContext) {
+      return null;
+    }
+
+    const segments: string[] = [];
     const authorLine = this.conversationContext.primaryAuthor
       ? `${this.conversationContext.primaryAuthor}${this.conversationContext.hasAdditionalAuthors ? ' et al.' : ''}`
       : this.conversationContext.authors;
 
-    lines.push('Use the following paper details to guide the discussion:');
     if (this.conversationContext.title) {
-      lines.push(`Title: ${this.conversationContext.title}`);
+      segments.push(`Title: ${this.conversationContext.title}`);
     }
     if (authorLine) {
-      lines.push(`Authors: ${authorLine}`);
+      segments.push(`Authors: ${authorLine}`);
     }
     if (this.conversationContext.formattedPublishedDate) {
-      lines.push(`Published: ${this.conversationContext.formattedPublishedDate}`);
+      segments.push(`Published: ${this.conversationContext.formattedPublishedDate}`);
     }
     if (this.conversationContext.abstract) {
-      lines.push(`Abstract: ${this.conversationContext.abstract}`);
+      segments.push(`Summary: ${this.conversationContext.abstract}`);
     }
     if (this.conversationContext.arxivUrl) {
-      lines.push(`Reference URL: ${this.conversationContext.arxivUrl}`);
+      segments.push(`URL: ${this.conversationContext.arxivUrl}`);
     }
-    lines.push('Explain concepts clearly, ask thoughtful follow-up questions, and relate answers back to the paper when possible.');
 
-    return `${base.join(' ')} ${lines.join(' ')}`;
+    if (!segments.length) {
+      return null;
+    }
+
+    const joined = segments.join('; ');
+    if (joined.length <= CONTEXT_DETAILS_MAX_LENGTH) {
+      return joined;
+    }
+
+    return `${joined.slice(0, CONTEXT_DETAILS_MAX_LENGTH - 1)}…`;
   }
 
   private _buildContextSummary(): string | null {
-    if (!this.conversationContext) {
+    const details = this._formatContextDetails();
+    if (!details) {
       return null;
     }
 
-    const parts: string[] = [];
-    if (this.conversationContext.title) {
-      parts.push(`Paper title: ${this.conversationContext.title}.`);
-    }
-    if (this.conversationContext.primaryAuthor) {
-      parts.push(`Primary author: ${this.conversationContext.primaryAuthor}${
-        this.conversationContext.hasAdditionalAuthors ? ' et al.' : ''
-      }.`);
-    } else if (this.conversationContext.authors) {
-      parts.push(`Authors: ${this.conversationContext.authors}.`);
-    }
-    if (this.conversationContext.formattedPublishedDate) {
-      parts.push(`Published: ${this.conversationContext.formattedPublishedDate}.`);
-    }
-    if (this.conversationContext.abstract) {
-      parts.push(`Abstract summary: ${this.conversationContext.abstract}`);
-    }
-    if (this.conversationContext.arxivUrl) {
-      parts.push(`Source link: ${this.conversationContext.arxivUrl}`);
-    }
-
-    if (!parts.length) {
-      return null;
-    }
-
-    return `${parts.join(' ')} Use this information to support the host as they work through the paper.`;
+    return `Paper context — ${details}. Keep answers brief and reference the paper when useful.`;
   }
 
   private _sendContextPrimingMessage() {
     const summary = this._buildContextSummary();
-    if (!summary) {
+    if (!summary || summary === this.lastPrimedSummary) {
       return;
     }
 
@@ -712,6 +729,7 @@ class RTManager extends EventEmitter {
         }
       });
       log.debug('Sent context priming message', { sessionId: this.sessionId });
+      this.lastPrimedSummary = summary;
     } catch (error) {
       log.warn('Failed to send context priming message', {
         sessionId: this.sessionId,
