@@ -14,6 +14,12 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useSidebar } from "@/contexts/sidebar-context";
 import {
+  loadConversationFromSession,
+  decodeWavBase64,
+  type StoredConversation,
+  type StoredConversationAudioTrack,
+} from "@/lib/conversationStorage";
+import {
   Video,
   Play,
   Pause,
@@ -36,6 +42,7 @@ import {
   Upload,
   Type,
   Trash2,
+  RefreshCcw,
 } from "lucide-react";
 
 const createId = () =>
@@ -203,96 +210,389 @@ const createDefaultMediaAssets = (): MediaAsset[] => [
   { id: createId(), name: "Logo Intro", type: "video", duration: "0:10", source: "library" },
 ];
 
-const createInitialClips = (): VideoClip[] => [
-  {
-    id: "clip-1",
-    type: "video",
-    name: "Host Introduction",
-    startTime: 0,
-    duration: 15,
-    track: 1,
-    speaker: "Host",
-    content: "Welcome to today's AI Research Podcast",
-    visualStyle: "talking-head",
-    volume: 0.8,
-    opacity: 1,
-    scale: 1,
-    rotation: 0,
-    x: 0,
-    y: 0,
-    color: "#3b82f6",
-    filters: {
-      brightness: 100,
-      contrast: 100,
-      saturation: 100,
-      hue: 0,
-      blur: 0,
-      sharpen: 0,
-    },
-    waveform: generateWaveform("clip-1", 90, 0.4, 0.05),
-  },
-  {
-    id: "clip-2",
-    type: "audio",
-    name: "Background Music",
-    startTime: 0,
-    duration: 45,
-    track: 3,
-    volume: 0.3,
-    fadeInSec: 2,
-    fadeOutSec: 3,
-    color: "#10b981",
-    waveform: generateWaveform("clip-2", 450, 0.6, 0.05),
-  },
-  {
-    id: "clip-3",
-    type: "video",
-    name: "Expert Response",
-    startTime: 15,
-    duration: 18,
-    track: 1,
-    speaker: "Expert",
-    content: "The authors were addressing fundamental limitations",
-    visualStyle: "paper-visual",
-    volume: 0.9,
-    opacity: 1,
-    scale: 1.05,
-    color: "#8b5cf6",
-    filters: {
-      brightness: 105,
-      contrast: 110,
-      saturation: 95,
-      hue: 0,
-      blur: 0,
-      sharpen: 0,
-    },
-    waveform: generateWaveform("clip-3", 108, 0.4, 0.05),
-  },
-  {
-    id: "clip-4",
-    type: "image",
-    name: "Paper Diagram",
-    startTime: 20,
-    duration: 10,
-    track: 2,
-    visualStyle: "diagram",
-    opacity: 0.9,
-    scale: 1,
-    color: "#f59e0b",
-  },
-];
+type TrackSetting = {
+  mute: boolean;
+  volume: number;
+  name: string;
+};
 
-const SELECTED_PAPER = {
-  title: "Attention Is All You Need",
-  authors: "Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit",
-  audioFile: "conversation_20240101_143000.wav",
-} as const;
+type TrackSettings = Record<number, TrackSetting>;
+
+interface ConversationSummary {
+  durationSeconds: number;
+  durationLabel: string;
+  hostTurns: number;
+  expertTurns: number;
+  lastUpdated: string;
+  highlight?: string;
+  audio: {
+    host: boolean;
+    expert: boolean;
+  };
+}
+
+interface VideoProjectData {
+  clips: VideoClip[];
+  trackSettings: TrackSettings;
+  mediaAssets: MediaAsset[];
+  summary: ConversationSummary | null;
+  primaryClipId: string | null;
+}
+
+const cloneClip = (clip: VideoClip): VideoClip => ({
+  ...clip,
+  filters: clip.filters ? { ...clip.filters } : undefined,
+  keyframes: clip.keyframes
+    ? clip.keyframes.map((keyframe) => ({
+        time: keyframe.time,
+        properties: { ...keyframe.properties },
+      }))
+    : undefined,
+  waveform: clip.waveform ? [...clip.waveform] : undefined,
+});
+
+const cloneTrackSettings = (settings: TrackSettings): TrackSettings =>
+  Object.entries(settings).reduce<TrackSettings>((accumulator, [track, value]) => {
+    accumulator[Number(track)] = { ...value };
+    return accumulator;
+  }, {});
+
+const cloneProject = (project: VideoProjectData): VideoProjectData => ({
+  clips: project.clips.map(cloneClip),
+  trackSettings: cloneTrackSettings(project.trackSettings),
+  mediaAssets: project.mediaAssets.map((asset) => ({ ...asset })),
+  summary: project.summary ? { ...project.summary, audio: { ...project.summary.audio } } : null,
+  primaryClipId: project.primaryClipId,
+});
+
+const formatDurationClock = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0:00";
+  }
+
+  const totalSeconds = Math.round(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+
+  const base = `${minutes.toString().padStart(hours > 0 ? 2 : 1, "0")}:${remainingSeconds
+    .toString()
+    .padStart(2, "0")}`;
+
+  if (hours > 0) {
+    return `${hours}:${base}`;
+  }
+
+  return base;
+};
+
+const createWaveformFromAudioTrack = (
+  clipId: string,
+  audioTrack: StoredConversationAudioTrack | null,
+): number[] | undefined => {
+  if (!audioTrack) {
+    return undefined;
+  }
+
+  try {
+    const { pcm } = decodeWavBase64(audioTrack.base64);
+    if (!pcm.length) {
+      return undefined;
+    }
+
+    const desiredSamples = Math.min(
+      Math.max(Math.round(audioTrack.durationSeconds * 80), MIN_WAVEFORM_SAMPLES),
+      1200,
+    );
+
+    const chunkSize = Math.max(1, Math.floor(pcm.length / desiredSamples));
+    const samples: number[] = [];
+    for (let index = 0; index < pcm.length; index += chunkSize) {
+      let peak = 0;
+      for (let offset = 0; offset < chunkSize && index + offset < pcm.length; offset++) {
+        const amplitude = Math.abs(pcm[index + offset] ?? 0) / 32768;
+        peak = Math.max(peak, Math.min(1, amplitude));
+      }
+      samples.push(peak);
+    }
+
+    if (samples.length < MIN_WAVEFORM_SAMPLES) {
+      const padValue = samples[samples.length - 1] ?? 0;
+      while (samples.length < MIN_WAVEFORM_SAMPLES) {
+        samples.push(padValue);
+      }
+    }
+
+    return samples;
+  } catch (error) {
+    console.error(`[VideoStudio] Failed to decode audio track for clip ${clipId}`, error);
+    return undefined;
+  }
+};
+
+const createDefaultProject = (): VideoProjectData => {
+  const clips: VideoClip[] = [
+    {
+      id: createId(),
+      type: "video",
+      name: "Host Introduction",
+      startTime: 0,
+      duration: 15,
+      track: 1,
+      speaker: "Host",
+      content: "Welcome to today's AI Research Podcast",
+      visualStyle: "talking-head",
+      volume: 0.8,
+      opacity: 1,
+      scale: 1,
+      rotation: 0,
+      x: 0,
+      y: 0,
+      color: "#3b82f6",
+      filters: {
+        brightness: 100,
+        contrast: 100,
+        saturation: 100,
+        hue: 0,
+        blur: 0,
+        sharpen: 0,
+      },
+      waveform: generateWaveform("default-intro", 90, 0.4, 0.05),
+    },
+    {
+      id: createId(),
+      type: "audio",
+      name: "Background Music",
+      startTime: 0,
+      duration: 45,
+      track: 3,
+      volume: 0.3,
+      fadeInSec: 2,
+      fadeOutSec: 3,
+      color: "#10b981",
+      waveform: generateWaveform("default-music", 450, 0.6, 0.05),
+    },
+    {
+      id: createId(),
+      type: "video",
+      name: "Expert Response",
+      startTime: 15,
+      duration: 18,
+      track: 1,
+      speaker: "Expert",
+      content: "The authors were addressing fundamental limitations",
+      visualStyle: "paper-visual",
+      volume: 0.9,
+      opacity: 1,
+      scale: 1.05,
+      color: "#8b5cf6",
+      filters: {
+        brightness: 105,
+        contrast: 110,
+        saturation: 95,
+        hue: 0,
+        blur: 0,
+        sharpen: 0,
+      },
+      waveform: generateWaveform("default-expert", 108, 0.4, 0.05),
+    },
+    {
+      id: createId(),
+      type: "image",
+      name: "Paper Diagram",
+      startTime: 20,
+      duration: 10,
+      track: 2,
+      visualStyle: "diagram",
+      opacity: 0.9,
+      scale: 1,
+      color: "#f59e0b",
+    },
+  ];
+
+  return {
+    clips,
+    trackSettings: {
+      1: { mute: false, volume: 1, name: "Video" },
+      2: { mute: false, volume: 1, name: "B-roll" },
+      3: { mute: false, volume: 0.7, name: "Music" },
+    },
+    mediaAssets: createDefaultMediaAssets(),
+    summary: null,
+    primaryClipId: clips[0]?.id ?? null,
+  };
+};
+
+const createConversationSummary = (
+  conversation: StoredConversation,
+  timelineDuration: number,
+): ConversationSummary => {
+  const hostTurns = conversation.transcript.filter((message) => message.role === "user").length;
+  const expertTurns = conversation.transcript.filter((message) => message.role === "expert").length;
+  const latestExpertReply = [...conversation.transcript]
+    .reverse()
+    .find((message) => message.role === "expert" && message.content.trim().length > 0);
+
+  return {
+    durationSeconds: timelineDuration,
+    durationLabel: formatDurationClock(timelineDuration),
+    hostTurns,
+    expertTurns,
+    lastUpdated: new Date(conversation.createdAt).toLocaleString(),
+    highlight: latestExpertReply?.content,
+    audio: {
+      host: Boolean(conversation.audio.host),
+      expert: Boolean(conversation.audio.ai),
+    },
+  };
+};
+
+const createConversationProject = (conversation: StoredConversation): VideoProjectData => {
+  const clips: VideoClip[] = [];
+  const mediaAssets: MediaAsset[] = [...createDefaultMediaAssets()];
+  const trackSettings: TrackSettings = {
+    1: { mute: false, volume: 1, name: "Host narration" },
+    2: { mute: false, volume: 0.95, name: "AI expert" },
+    3: { mute: false, volume: 1, name: "Visual overlays" },
+  };
+
+  let cursor = 0;
+  let timelineEnd = 0;
+  let primaryClipId: string | null = null;
+
+  const pushClip = (clip: VideoClip) => {
+    clips.push(clip);
+    timelineEnd = Math.max(timelineEnd, clip.startTime + clip.duration);
+  };
+
+  const hostAudio = conversation.audio.host;
+  if (hostAudio) {
+    const hostClipId = createId();
+    const hostDuration = Math.max(hostAudio.durationSeconds || 0, MIN_CLIP_DURATION);
+    pushClip({
+      id: hostClipId,
+      type: "audio",
+      name: "Host narration",
+      startTime: 0,
+      duration: hostDuration,
+      track: 1,
+      speaker: "Host",
+      content: conversation.transcript
+        .filter((message) => message.role === "user")
+        .map((message) => message.content)
+        .join(" \n"),
+      volume: 1,
+      fadeInSec: 0.25,
+      fadeOutSec: 0.5,
+      color: "#2563eb",
+      waveform: createWaveformFromAudioTrack(hostClipId, hostAudio),
+    });
+
+    mediaAssets.push({
+      id: createId(),
+      name: "Host conversation export",
+      type: "audio",
+      duration: formatDurationClock(hostDuration),
+      source: "imported",
+    });
+
+    cursor = hostDuration + 0.4;
+    primaryClipId = hostClipId;
+  }
+
+  const expertAudio = conversation.audio.ai;
+  if (expertAudio) {
+    const expertClipId = createId();
+    const expertDuration = Math.max(expertAudio.durationSeconds || 0, MIN_CLIP_DURATION);
+    const startTime = hostAudio ? cursor : 0;
+    pushClip({
+      id: expertClipId,
+      type: "audio",
+      name: "AI expert response",
+      startTime,
+      duration: expertDuration,
+      track: hostAudio ? 2 : 1,
+      speaker: "Expert",
+      content: conversation.transcript
+        .filter((message) => message.role === "expert")
+        .map((message) => message.content)
+        .join(" \n"),
+      volume: 0.95,
+      fadeInSec: 0.2,
+      fadeOutSec: 0.5,
+      color: "#8b5cf6",
+      waveform: createWaveformFromAudioTrack(expertClipId, expertAudio),
+    });
+
+    mediaAssets.push({
+      id: createId(),
+      name: "AI narration export",
+      type: "audio",
+      duration: formatDurationClock(expertDuration),
+      source: "imported",
+    });
+
+    cursor = startTime + expertDuration + 0.4;
+    if (!primaryClipId) {
+      primaryClipId = expertClipId;
+    }
+  }
+
+  const overlayDuration = Math.max(
+    timelineEnd,
+    conversation.durationSeconds,
+    hostAudio?.durationSeconds ?? 0,
+    expertAudio?.durationSeconds ?? 0,
+  );
+
+  if (overlayDuration > 0) {
+    pushClip({
+      id: createId(),
+      type: "text",
+      name: "Key takeaways overlay",
+      startTime: 0,
+      duration: Math.max(overlayDuration, MIN_CLIP_DURATION),
+      track: 3,
+      content: conversation.transcript
+        .filter((message) => message.role === "expert")
+        .slice(0, 2)
+        .map((message) => message.content)
+        .join(" • "),
+      opacity: 0.95,
+      color: "#f97316",
+      visualStyle: "overlay",
+    });
+
+    if (conversation.paper?.title) {
+      pushClip({
+        id: createId(),
+        type: "image",
+        name: "Paper visual",
+        startTime: 0,
+        duration: Math.max(overlayDuration, 8),
+        track: 3,
+        visualStyle: "paper-visual",
+        opacity: 0.85,
+        color: "#fbbf24",
+      });
+    }
+  }
+
+  const summary = createConversationSummary(conversation, Math.max(overlayDuration, timelineEnd));
+
+  return {
+    clips,
+    trackSettings,
+    mediaAssets,
+    summary,
+    primaryClipId,
+  };
+};
 
 export default function VideoStudio() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [selectedClips, setSelectedClips] = useState<string[]>([]);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [masterVolume, setMasterVolume] = useState(0.75);
   const [activeTab, setActiveTab] = useState("media");
@@ -308,8 +608,23 @@ export default function VideoStudio() {
   } | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const { collapsed, toggleCollapsed } = useSidebar();
-  const [videoClips, setVideoClips] = useState<VideoClip[]>(() => createInitialClips());
-  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>(() => createDefaultMediaAssets());
+  const defaultProjectRef = useRef<VideoProjectData>(createDefaultProject());
+  const [conversation, setConversation] = useState<StoredConversation | null>(null);
+  const [conversationSummary, setConversationSummary] = useState<ConversationSummary | null>(null);
+  const [isLoadingConversation, setIsLoadingConversation] = useState(true);
+  const [conversationError, setConversationError] = useState<string | null>(null);
+  const [videoClips, setVideoClips] = useState<VideoClip[]>(() =>
+    defaultProjectRef.current.clips.map(cloneClip),
+  );
+  const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>(() =>
+    defaultProjectRef.current.mediaAssets.map((asset) => ({ ...asset })),
+  );
+  const [trackSettings, setTrackSettings] = useState<TrackSettings>(() =>
+    cloneTrackSettings(defaultProjectRef.current.trackSettings),
+  );
+  const [selectedClips, setSelectedClips] = useState<string[]>(() =>
+    defaultProjectRef.current.primaryClipId ? [defaultProjectRef.current.primaryClipId] : [],
+  );
   const [mediaQuery, setMediaQuery] = useState("");
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
 
@@ -322,16 +637,6 @@ export default function VideoStudio() {
       return matchesType && matchesQuery;
     });
   }, [mediaAssets, mediaFilter, mediaQuery]);
-
-  const [trackSettings, setTrackSettings] = useState<Record<number, {
-    mute: boolean;
-    volume: number;
-    name: string;
-  }>>({
-    1: { mute: false, volume: 1, name: "Video" },
-    2: { mute: false, volume: 1, name: "B-roll" },
-    3: { mute: false, volume: 0.7, name: "Music" },
-  });
 
   const sortedTrackEntries = useMemo(
     () => Object.entries(trackSettings).sort((a, b) => Number(a[0]) - Number(b[0])),
@@ -349,7 +654,10 @@ export default function VideoStudio() {
 
   const totalClips = videoClips.length;
   const activeTrackCount = sortedTrackEntries.length;
-  const currentPaper = SELECTED_PAPER;
+  const latestPaper = conversation?.paper ?? null;
+  const hostAudioAvailable = conversationSummary?.audio.host ?? false;
+  const expertAudioAvailable = conversationSummary?.audio.expert ?? false;
+  const hasConversation = Boolean(conversation);
 
   const totalDuration = useMemo(
     () =>
@@ -445,6 +753,43 @@ export default function VideoStudio() {
     });
     return paths;
   }, [videoClips, pixelsPerSecond]);
+
+  const applyProject = useCallback((project: VideoProjectData) => {
+    const next = cloneProject(project);
+    setVideoClips(next.clips);
+    setTrackSettings(next.trackSettings);
+    setMediaAssets(next.mediaAssets);
+    setConversationSummary(next.summary);
+    setSelectedClips(next.primaryClipId ? [next.primaryClipId] : []);
+  }, []);
+
+  const loadLatestConversation = useCallback(() => {
+    setIsLoadingConversation(true);
+    setConversationError(null);
+    try {
+      const stored = loadConversationFromSession();
+      if (stored) {
+        setConversation(stored);
+        applyProject(createConversationProject(stored));
+      } else {
+        setConversation(null);
+        applyProject(defaultProjectRef.current);
+      }
+    } catch (error) {
+      console.error("[VideoStudio] Failed to load conversation from session", error);
+      setConversation(null);
+      setConversationError(
+        "Failed to load the latest conversation. Record a new session in the Audio Studio and try again.",
+      );
+      applyProject(defaultProjectRef.current);
+    } finally {
+      setIsLoadingConversation(false);
+    }
+  }, [applyProject, defaultProjectRef]);
+
+  useEffect(() => {
+    loadLatestConversation();
+  }, [loadLatestConversation]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -1010,7 +1355,20 @@ export default function VideoStudio() {
               active: isPlaying,
             }}
             actions={
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={loadLatestConversation}
+                  disabled={isLoadingConversation}
+                  className="gap-1"
+                >
+                  <RefreshCcw
+                    className={`h-4 w-4 ${isLoadingConversation ? "animate-spin" : ""}`}
+                  />
+                  {isLoadingConversation ? "Refreshing" : "Reload conversation"}
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -1488,20 +1846,97 @@ export default function VideoStudio() {
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader>
                   <CardTitle className="text-base font-semibold text-gray-900">
-                    Source research
+                    Latest conversation
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 text-sm text-gray-600">
-                  <p className="font-medium text-gray-900">{currentPaper.title}</p>
-                  <p className="text-xs uppercase tracking-wide text-gray-500">
-                    {currentPaper.authors}
-                  </p>
-                  <div className="rounded-lg bg-purple-50/80 px-3 py-2 text-xs text-purple-700">
-                    Audio reference: {currentPaper.audioFile}
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    Keep the research summary visible so narration stays aligned with the paper.
-                  </p>
+                <CardContent className="space-y-4 text-sm text-gray-600">
+                  {isLoadingConversation ? (
+                    <div className="space-y-3">
+                      <div className="h-4 w-3/4 animate-pulse rounded bg-gray-200" />
+                      <div className="h-3 w-1/2 animate-pulse rounded bg-gray-200" />
+                      <div className="h-20 animate-pulse rounded-lg bg-gray-100" />
+                    </div>
+                  ) : conversationError ? (
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      {conversationError}
+                    </div>
+                  ) : hasConversation ? (
+                    <div className="space-y-4">
+                      <div>
+                        <p className="font-medium text-gray-900">
+                          {latestPaper?.title ?? "Untitled session"}
+                        </p>
+                        {latestPaper?.authors ? (
+                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                            {latestPaper.authors}
+                          </p>
+                        ) : null}
+                      </div>
+                      {conversationSummary ? (
+                        <div className="space-y-2 rounded-lg bg-purple-50/80 p-3 text-xs text-purple-700">
+                          <div className="flex items-center justify-between">
+                            <span>Duration</span>
+                            <span className="font-semibold text-purple-800">
+                              {conversationSummary.durationLabel}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Host turns</span>
+                            <span className="font-semibold text-purple-800">
+                              {conversationSummary.hostTurns}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Expert turns</span>
+                            <span className="font-semibold text-purple-800">
+                              {conversationSummary.expertTurns}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Audio tracks</span>
+                            <span className="flex items-center gap-3 font-semibold text-purple-800">
+                              <span className="flex items-center gap-1">
+                                {hostAudioAvailable ? (
+                                  <Volume2 className="h-3.5 w-3.5" />
+                                ) : (
+                                  <VolumeX className="h-3.5 w-3.5" />
+                                )}
+                                Host
+                              </span>
+                              <span className="flex items-center gap-1">
+                                {expertAudioAvailable ? (
+                                  <Volume2 className="h-3.5 w-3.5" />
+                                ) : (
+                                  <VolumeX className="h-3.5 w-3.5" />
+                                )}
+                                Expert
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+                      {conversationSummary?.highlight ? (
+                        <div className="rounded-lg border border-purple-100 bg-white p-3 text-xs text-gray-600 shadow-sm">
+                          <p className="font-semibold text-gray-900">Expert highlight</p>
+                          <p className="mt-1 text-gray-600 italic">
+                            &ldquo;{conversationSummary.highlight}&rdquo;
+                          </p>
+                        </div>
+                      ) : null}
+                      <p className="text-xs text-gray-500">
+                        Last updated {conversationSummary?.lastUpdated ?? "just now"}. Reload after
+                        recording in the Audio Studio to pull in fresh clips.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 text-sm text-gray-600">
+                      <p className="font-medium text-gray-900">Waiting for a saved conversation</p>
+                      <p>
+                        Record a session in the Audio Studio and choose “Send to Video Studio” to
+                        import the transcript, audio tracks, and project timeline automatically.
+                      </p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
               <Card className="border-gray-200 shadow-sm">

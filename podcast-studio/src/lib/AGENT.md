@@ -6,9 +6,10 @@ care.
 
 ```
 src/lib/
-├── realtimeSession.ts # Node-side singleton talking to OpenAI Realtime
-├── utils.ts           # Tailwind-friendly `cn()` helper
-└── AGENT.md           # This guide
+├── realtimeSession.ts    # Node-side singleton talking to OpenAI Realtime
+├── conversationStorage.ts # Shared helpers for persisting conversations between pages
+├── utils.ts              # Tailwind-friendly `cn()` helper
+└── AGENT.md              # This guide
 ```
 
 ## `realtimeSession.ts`
@@ -37,9 +38,20 @@ src/lib/
 - Simple `cn()` helper that merges class names using `clsx` + `tailwind-merge`. Use it everywhere
   you compose Tailwind classes to avoid conflicting utilities.
 
+## `conversationStorage.ts`
+- Centralises the sessionStorage contract used to hand conversation data from the Audio Studio
+  to the Video Studio.
+- Provides cross-runtime helpers to encode PCM16 chunks into WAV/base64 pairs and decode them
+  back into typed arrays for waveform rendering.
+- Exposes `saveConversationToSession`, `loadConversationFromSession`, and a shared
+  `StoredConversation` interface so both pages stay in sync. Guard browser-only APIs with
+  `typeof window !== 'undefined'` before calling them.
+
 ## Implementation Guidelines
 - Keep `realtimeSession.ts` Node-compatible. App Router API routes import it with
   `export const runtime = "nodejs";`. Avoid referencing browser APIs inside the module.
+- When using `conversationStorage.ts` in a server context, guard any storage helpers with the
+  `isBrowser` flag they expose so builds do not access `window` during SSR.
 - When adding new events to the emitter, document them in the `src/app/api/rt/AGENT.md` (see
   below) and update any SSE consumers in the Audio Studio.
 - Logging uses `log.info/error/warn/debug`; keep logs concise and avoid printing raw audio buffers
