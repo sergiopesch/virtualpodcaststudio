@@ -8,10 +8,16 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useSidebar } from "@/contexts/sidebar-context";
 import { useApiConfig } from "@/contexts/api-config-context";
-import { 
-  Mic, 
-  BookOpen, 
-  Brain, 
+import { useRouter } from "next/navigation";
+import {
+  encodePcm16ChunksToWav,
+  saveConversationToSession,
+  type StoredConversation,
+} from "@/lib/conversationStorage";
+import {
+  Mic,
+  BookOpen,
+  Brain,
   Play,
   FileText,
   Headphones,
@@ -20,7 +26,8 @@ import {
   Volume2,
   Send,
   MicOff,
-  Pause
+  Pause,
+  Video,
 } from "lucide-react";
 
 interface ConversationMessage {
@@ -52,6 +59,7 @@ export default function Studio() {
   const { activeProvider, apiKeys } = useApiConfig();
   const activeApiKey = (apiKeys[activeProvider] ?? "").trim();
   const providerLabel = activeProvider === "openai" ? "OpenAI" : "Google";
+  const router = useRouter();
 
   // State for the realtime studio
   const [isConnected, setIsConnected] = useState(false);
@@ -59,6 +67,7 @@ export default function Studio() {
   const [isRecording, setIsRecording] = useState(false);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [userTranscription, setUserTranscription] = useState(''); // Live user speech
   const [textInput, setTextInput] = useState("");
@@ -76,6 +85,9 @@ export default function Studio() {
   const micChunkQueueRef = useRef<Uint8Array[]>([]);
   const micFlushIntervalRef = useRef<number | null>(null);
   const isUploadingRef = useRef<boolean>(false);
+  const hostAudioChunksRef = useRef<Uint8Array[]>([]);
+  const aiAudioChunksRef = useRef<Uint8Array[]>([]);
+  const audioEventSourceRef = useRef<EventSource | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
   const lastAiMessageIdRef = useRef<string | null>(null);
@@ -147,6 +159,64 @@ export default function Studio() {
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, userTranscription, isTranscribing]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!isConnected) {
+      if (audioEventSourceRef.current) {
+        audioEventSourceRef.current.close();
+        audioEventSourceRef.current = null;
+      }
+      return;
+    }
+
+    if (audioEventSourceRef.current) {
+      return;
+    }
+
+    try {
+      const source = new EventSource(`/api/rt/audio?sessionId=${sessionId}`);
+      audioEventSourceRef.current = source;
+
+      source.addEventListener("connected", () => {
+        console.log("[INFO] Connected to AI audio stream");
+      });
+
+      source.onmessage = (event) => {
+        const payload = (event.data || "").trim();
+        if (!payload || payload === "Audio stream ready") {
+          return;
+        }
+
+        try {
+          const binary = atob(payload);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          aiAudioChunksRef.current.push(bytes);
+        } catch (error) {
+          console.error("[ERROR] Failed to capture AI audio chunk", error);
+        }
+      };
+
+      source.addEventListener("error", (event) => {
+        console.error("[ERROR] AI audio SSE stream error", event);
+      });
+
+      return () => {
+        source.close();
+        if (audioEventSourceRef.current === source) {
+          audioEventSourceRef.current = null;
+        }
+      };
+    } catch (error) {
+      console.error("[ERROR] Unable to open AI audio SSE stream", error);
+    }
+  }, [isConnected, sessionId]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -233,6 +303,7 @@ export default function Studio() {
     }
 
     if (!isConnected || !isSessionReady) {
+      setStatusMessage(null);
       setError('Connect to the AI session before sending a message.');
       return;
     }
@@ -265,6 +336,7 @@ export default function Studio() {
       }
     } catch (error) {
       console.error('Error sending text:', error);
+      setStatusMessage(null);
       setError(error instanceof Error ? error.message : 'Failed to send message');
     }
   };
@@ -274,6 +346,7 @@ export default function Studio() {
       await ensureRealtimeSession();
     } catch (error) {
       console.error('[ERROR] Realtime session not ready for microphone recording:', error);
+      setStatusMessage(null);
       setError(error instanceof Error ? error.message : 'Failed to start realtime session.');
       return false;
     }
@@ -317,7 +390,7 @@ export default function Studio() {
       scriptProcessor.onaudioprocess = async (event) => {
         const inputBuffer = event.inputBuffer;
         const inputData = inputBuffer.getChannelData(0);
-        
+
         // Convert Float32 to PCM16 with better precision
         const pcm16Buffer = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
@@ -325,10 +398,11 @@ export default function Studio() {
           const sample = Math.max(-1, Math.min(1, inputData[i]));
           pcm16Buffer[i] = Math.round(sample * 32767);
         }
-        
+
         // Queue chunk for batched upload
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
         micChunkQueueRef.current.push(uint8Array);
+        hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
       };
       
       source.connect(scriptProcessor);
@@ -396,6 +470,7 @@ export default function Studio() {
       return true;
     } catch (error) {
       console.error('[ERROR] Failed to access microphone:', error);
+      setStatusMessage(null);
       setError('Failed to access microphone. Please check permissions.');
       return false;
     }
@@ -403,11 +478,13 @@ export default function Studio() {
 
   const handleStartRecording = async () => {
     if (!isConnected) {
+      setStatusMessage(null);
       setError('Please connect to AI first');
       return;
     }
 
     setError(null);
+    setStatusMessage(null);
     const success = await startMicrophoneRecording();
     if (success) {
       setIsRecording(true);
@@ -430,21 +507,28 @@ export default function Studio() {
 
     setIsConnecting(true);
     setError(null);
+    setStatusMessage(null);
     setIsConnected(false);
     setIsSessionReady(false);
     setIsAudioPlaying(false);
+    hostAudioChunksRef.current = [];
+    aiAudioChunksRef.current = [];
+    audioEventSourceRef.current?.close();
+    audioEventSourceRef.current = null;
 
     let pc: RTCPeerConnection | null = null;
     let localStream: MediaStream | null = null;
 
     try {
       if (!activeApiKey) {
+        setStatusMessage(null);
         setError(`Add your ${providerLabel} API key in Settings before connecting.`);
         setIsConnecting(false);
         return;
       }
 
       if (activeProvider === "google") {
+        setStatusMessage(null);
         setError("Google's Gemini APIs do not support realtime audio in this studio yet. Switch to OpenAI to continue.");
         setIsConnecting(false);
         return;
@@ -564,6 +648,7 @@ export default function Studio() {
 
           if (type === 'response.error') {
             const message = typeof msg.error === 'string' ? msg.error : 'Realtime session error';
+            setStatusMessage(null);
             setError(message);
           }
         } catch (err) {
@@ -650,6 +735,7 @@ export default function Studio() {
       console.log('[INFO] Connection successful - ready for conversation');
     } catch (error) {
       console.error('[ERROR] Connection failed:', error);
+      setStatusMessage(null);
       setError(error instanceof Error ? error.message : 'Failed to connect to AI');
       setIsConnected(false);
       setIsSessionReady(false);
@@ -693,6 +779,11 @@ export default function Studio() {
       if (mediaRecorderRef.current) {
         mediaRecorderRef.current.stop();
         mediaRecorderRef.current = null;
+      }
+
+      if (audioEventSourceRef.current) {
+        audioEventSourceRef.current.close();
+        audioEventSourceRef.current = null;
       }
 
       if (audioRef.current) {
@@ -741,6 +832,8 @@ export default function Studio() {
 
     micChunkQueueRef.current = [];
     isUploadingRef.current = false;
+    hostAudioChunksRef.current = [];
+    aiAudioChunksRef.current = [];
 
     aiTextBufferRef.current = '';
     lastAiMessageIdRef.current = null;
@@ -751,7 +844,81 @@ export default function Studio() {
     }
   }, [sessionId]);
 
+  const buildConversationPayload = useCallback((): StoredConversation | null => {
+    if (!currentPaper || messages.length === 0) {
+      return null;
+    }
+
+    const sampleRate = Math.round(audioContextRef.current?.sampleRate ?? 24000);
+    const hostAudio = encodePcm16ChunksToWav(hostAudioChunksRef.current, sampleRate);
+    const aiAudio = encodePcm16ChunksToWav(aiAudioChunksRef.current, 24000);
+
+    if (!hostAudio && !aiAudio) {
+      return null;
+    }
+
+    const transcript = messages.map((msg) => ({
+      id: msg.id,
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.timestamp.toISOString(),
+      speaker: msg.speaker,
+      type: msg.type,
+    }));
+
+    const durationSeconds = Math.max(
+      hostAudio?.durationSeconds ?? 0,
+      aiAudio?.durationSeconds ?? 0,
+      sessionDuration,
+    );
+
+    return {
+      version: 1,
+      createdAt: Date.now(),
+      paper: { ...currentPaper },
+      transcript,
+      audio: {
+        host: hostAudio
+          ? {
+              format: "wav",
+              sampleRate,
+              channels: 1,
+              base64: hostAudio.base64,
+              durationSeconds: hostAudio.durationSeconds,
+            }
+          : null,
+        ai: aiAudio
+          ? {
+              format: "wav",
+              sampleRate: 24000,
+              channels: 1,
+              base64: aiAudio.base64,
+              durationSeconds: aiAudio.durationSeconds,
+            }
+          : null,
+      },
+      durationSeconds,
+    };
+  }, [currentPaper, messages, sessionDuration]);
+
   const handleDisconnect = async () => {
+    if (isRecording) {
+      await handleStopRecording();
+    }
+
+    try {
+      const payload = buildConversationPayload();
+      if (payload) {
+        saveConversationToSession(payload);
+        setStatusMessage('Conversation saved for the Video Studio.');
+      } else {
+        setStatusMessage(null);
+      }
+    } catch (storageError) {
+      console.error('Failed to persist conversation for Video Studio', storageError);
+      setStatusMessage(null);
+    }
+
     await teardownRealtime();
 
     setIsConnecting(false);
@@ -764,6 +931,30 @@ export default function Studio() {
     setIsTranscribing(false);
     setUserTranscription('');
     setIsAudioPlaying(false);
+  };
+
+  const handleSendToVideoStudio = async () => {
+    try {
+      if (isRecording) {
+        await handleStopRecording();
+      }
+
+      const payload = buildConversationPayload();
+      if (!payload) {
+        setError('Capture a conversation with audio before sending it to the Video Studio.');
+        setStatusMessage(null);
+        return;
+      }
+
+      saveConversationToSession(payload);
+      setError(null);
+      setStatusMessage('Conversation handed off to the Video Studio.');
+      router.push('/video-studio');
+    } catch (error) {
+      console.error('[ERROR] Failed to prepare conversation for Video Studio', error);
+      setStatusMessage(null);
+      setError(error instanceof Error ? error.message : 'Failed to prepare conversation for Video Studio');
+    }
   };
 
   useEffect(() => {
@@ -899,7 +1090,13 @@ export default function Studio() {
                         Error: {error}
                       </div>
                     )}
-                    
+
+                    {!error && statusMessage && (
+                      <div className="text-green-600 text-sm mb-2 p-2 bg-green-50 border border-green-200 rounded">
+                        {statusMessage}
+                      </div>
+                    )}
+
                     <div className="flex space-x-2">
                       {!isConnected ? (
                         <Button
@@ -963,6 +1160,10 @@ export default function Studio() {
                       <Button variant="ghost" className="w-full justify-start" onClick={handleExportTranscript}>
                         <FileText className="w-4 h-4 mr-2" />
                         Export Transcript
+                      </Button>
+                      <Button variant="ghost" className="w-full justify-start" onClick={handleSendToVideoStudio}>
+                        <Video className="w-4 h-4 mr-2" />
+                        Send to Video Studio
                       </Button>
                       <Button variant="ghost" className="w-full justify-start" onClick={handleDisconnect}>
                         <RotateCcw className="w-4 h-4 mr-2" />
