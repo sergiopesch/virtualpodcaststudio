@@ -312,6 +312,7 @@ export default function Studio() {
   const messageSequenceRef = useRef(0);
   const hasCapturedAudioRef = useRef(false);
   const latestConversationRef = useRef<StoredConversation | null>(null);
+  const currentUserMessageRef = useRef<{ id: string; order: number } | null>(null);
 
   const userPendingTextRef = useRef('');
   const userTypingIntervalRef = useRef<number | null>(null);
@@ -322,7 +323,6 @@ export default function Studio() {
   const hasUserTranscriptSseRef = useRef(false);
   const hasAiTranscriptSseRef = useRef(false);
   const isCommittingRef = useRef(false);
-  const lastUserTranscriptRef = useRef<string | null>(null);
   const isUserSpeakingRef = useRef(false);
 
   const sortMessages = useCallback((list: ConversationMessage[]) => {
@@ -400,8 +400,16 @@ export default function Studio() {
 
       userPendingTextRef.current = rest;
       setUserTranscriptionDisplay((previous) => previous + chunk);
+
+      const activeMessage = currentUserMessageRef.current;
+      if (activeMessage) {
+        updateMessageContent(activeMessage.id, (message) => ({
+          ...message,
+          content: message.content + chunk,
+        }));
+      }
     }, 32);
-  }, []);
+  }, [updateMessageContent]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -453,7 +461,6 @@ export default function Studio() {
   useEffect(() => {
     return () => {
       resetUserTranscriptionState();
-      lastUserTranscriptRef.current = null;
     };
   }, [resetUserTranscriptionState]);
 
@@ -491,22 +498,24 @@ export default function Studio() {
     }
 
     window.requestAnimationFrame(() => {
-      if (transcriptEndRef.current) {
-        transcriptEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
-        return;
-      }
-
       const root = transcriptScrollRef.current;
       if (!root) {
         return;
       }
 
       const viewport = root.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
-      if (!viewport) {
+      if (viewport) {
+        if (typeof viewport.scrollTo === 'function') {
+          viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+        } else {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
         return;
       }
 
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+      if (transcriptEndRef.current) {
+        transcriptEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }
     });
   }, []);
 
@@ -859,19 +868,34 @@ export default function Studio() {
     stopUserTyping();
     updateIsUserSpeaking(false);
     setIsTranscribing(false);
-    lastUserTranscriptRef.current = null;
+    currentUserMessageRef.current = null;
   }, [stopUserTyping, updateIsUserSpeaking]);
 
   const handleUserTranscriptionStarted = useCallback(() => {
     if (!isUserSpeakingRef.current) {
       userPendingTextRef.current = '';
       setUserTranscriptionDisplay('');
-      lastUserTranscriptRef.current = null;
     }
+
+    if (!currentUserMessageRef.current) {
+      const id = `user_${Date.now()}`;
+      const order = ++messageSequenceRef.current;
+      currentUserMessageRef.current = { id, order };
+      appendMessage({
+        id,
+        role: 'user',
+        content: '',
+        timestamp: new Date(),
+        type: 'text',
+        speaker: 'Host (You)',
+        order,
+      });
+    }
+
     stopUserTyping();
     updateIsUserSpeaking(true);
     setIsTranscribing(true);
-  }, [stopUserTyping, updateIsUserSpeaking]);
+  }, [appendMessage, stopUserTyping, updateIsUserSpeaking]);
 
   const handleUserTranscriptionDelta = useCallback((delta: string) => {
     if (!delta) {
@@ -921,24 +945,31 @@ export default function Studio() {
 
   const handleUserTranscriptionComplete = useCallback((transcript: string) => {
     const finalTranscript = transcript.trim();
-    if (finalTranscript && lastUserTranscriptRef.current !== finalTranscript) {
-      const order = ++messageSequenceRef.current;
-      const userMessage: ConversationMessage = {
-        id: `user_${Date.now()}`,
-        role: 'user',
-        content: finalTranscript,
-        timestamp: new Date(),
-        type: 'text',
-        speaker: 'Host (You)',
-        order,
-      };
-      appendMessage(userMessage);
-      lastUserTranscriptRef.current = finalTranscript;
+    if (finalTranscript) {
+      const activeMessage = currentUserMessageRef.current;
+      if (activeMessage) {
+        updateMessageContent(activeMessage.id, (message) => ({
+          ...message,
+          content: finalTranscript,
+          timestamp: new Date(),
+        }));
+      } else {
+        const order = ++messageSequenceRef.current;
+        appendMessage({
+          id: `user_${Date.now()}`,
+          role: 'user',
+          content: finalTranscript,
+          timestamp: new Date(),
+          type: 'text',
+          speaker: 'Host (You)',
+          order,
+        });
+      }
     }
 
     resetUserTranscriptionState();
     void commitAudioTurn();
-  }, [appendMessage, commitAudioTurn, resetUserTranscriptionState]);
+  }, [appendMessage, commitAudioTurn, resetUserTranscriptionState, updateMessageContent]);
 
   const handleSendText = async () => {
     const trimmed = textInput.trim();
@@ -1512,7 +1543,18 @@ export default function Studio() {
       return null;
     }
 
-    const orderedMessages = sortMessages(messages);
+    const liveMessageId = currentUserMessageRef.current?.id;
+    const liveTranscript = userTranscriptionDisplay.trim();
+
+    const orderedMessages = sortMessages(messages).map((msg) => {
+      if (liveMessageId && msg.id === liveMessageId && liveTranscript) {
+        return {
+          ...msg,
+          content: liveTranscript,
+        };
+      }
+      return msg;
+    });
 
     const transcript = orderedMessages.map((msg) => ({
       id: msg.id,
@@ -1557,7 +1599,7 @@ export default function Studio() {
       },
       durationSeconds,
     };
-  }, [currentPaper, messages, sessionDuration, sortMessages]);
+  }, [currentPaper, messages, sessionDuration, sortMessages, userTranscriptionDisplay]);
 
   const handleDisconnect = async () => {
     if (isRecording) {
