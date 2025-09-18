@@ -14,27 +14,47 @@ export type RTSignals = {
 
 // Simple logging utility
 const log = {
-  info: (msg: string, meta?: any) => console.log(`[INFO] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  error: (msg: string, meta?: any) => console.error(`[ERROR] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  warn: (msg: string, meta?: any) => console.warn(`[WARN] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  debug: (msg: string, meta?: any) => console.debug(`[DEBUG] ${msg}`, meta ? JSON.stringify(meta) : '')
+  info: (msg: string, meta?: Record<string, unknown>) => console.log(`[INFO] ${msg}`, meta ? JSON.stringify(meta) : ''),
+  error: (msg: string, meta?: Record<string, unknown>) => console.error(`[ERROR] ${msg}`, meta ? JSON.stringify(meta) : ''),
+  warn: (msg: string, meta?: Record<string, unknown>) => console.warn(`[WARN] ${msg}`, meta ? JSON.stringify(meta) : ''),
+  debug: (msg: string, meta?: Record<string, unknown>) => console.debug(`[DEBUG] ${msg}`, meta ? JSON.stringify(meta) : '')
 };
 
 interface RealtimeEvent {
   type: string;
   event_id?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
+
+const asString = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined;
+
+const buildErrorMeta = (error: unknown): Record<string, unknown> => ({
+  message: error instanceof Error ? error.message : String(error),
+  stack: error instanceof Error ? error.stack : undefined,
+});
 
 const DEFAULT_OPENAI_REALTIME_MODEL =
   process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-10-01';
 
 type SupportedProvider = 'openai' | 'google';
 
+interface PaperContext {
+  id?: string;
+  title?: string;
+  authors?: string;
+  primaryAuthor?: string;
+  hasAdditionalAuthors?: boolean;
+  formattedPublishedDate?: string;
+  abstract?: string;
+  arxivUrl?: string;
+}
+
 interface ProviderConfiguration {
   provider: SupportedProvider;
   apiKey: string;
   model?: string;
+  paperContext?: PaperContext | null;
 }
 
 class RTManager extends EventEmitter {
@@ -47,6 +67,7 @@ class RTManager extends EventEmitter {
   private provider: SupportedProvider = 'openai';
   private apiKey: string | null = process.env.OPENAI_API_KEY || null;
   private model: string = DEFAULT_OPENAI_REALTIME_MODEL;
+  private conversationContext: PaperContext | null = null;
 
   constructor(sessionId?: string) {
     super();
@@ -84,6 +105,16 @@ class RTManager extends EventEmitter {
     if (resolvedModel !== this.model) {
       this.model = resolvedModel;
       changed = true;
+    }
+
+    const normalizedContext = this._normalizeContext(config.paperContext);
+    if (!this._contextsEqual(this.conversationContext, normalizedContext)) {
+      this.conversationContext = normalizedContext;
+      changed = true;
+
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this._pushSessionUpdate('context-change');
+      }
     }
 
     return changed;
@@ -224,35 +255,17 @@ class RTManager extends EventEmitter {
 
     ws.on('open', () => {
       log.info(`WebSocket connected to OpenAI Realtime API`, { sessionId: this.sessionId });
-      
+
       // Send session configuration
-      const sessionConfig = {
-          type: 'session.update',
-          session: {
-            modalities: ['text', 'audio'],
-            instructions: "You are an AI podcast host named Dr. Sarah. Have natural, engaging conversations about research topics. Wait for the human to finish speaking before responding. Keep responses concise and conversational. Ask follow-up questions to encourage discussion.",
-            voice: process.env.OPENAI_REALTIME_VOICE || 'alloy',
-            input_audio_format: 'pcm16',
-            output_audio_format: 'pcm16',
-            input_audio_transcription: {
-              model: 'whisper-1'
-            },
-            turn_detection: {
-              type: 'server_vad',
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 800
-            },
-            tool_choice: 'none',
-            temperature: 0.7
-          }
-      };
-      
+      const sessionConfig = this._createSessionUpdatePayload();
+
       log.info(`Sending session config`, { sessionId: this.sessionId });
       try {
         ws.send(JSON.stringify(sessionConfig));
         log.info(`Session config sent successfully`, { sessionId: this.sessionId });
-        
+
+        this._sendContextPrimingMessage();
+
         // Don't resolve immediately, wait for session.updated event
         setTimeout(() => {
           if (!hasResolved) {
@@ -262,10 +275,13 @@ class RTManager extends EventEmitter {
           }
         }, 2000);
       } catch (error) {
-        log.error(`Failed to send session config`, { sessionId: this.sessionId, error });
+        log.error(`Failed to send session config`, {
+          sessionId: this.sessionId,
+          ...buildErrorMeta(error),
+        });
         if (!hasResolved) {
           hasResolved = true;
-          reject(error as Error);
+          reject(error instanceof Error ? error : new Error('Failed to send session config'));
         }
       }
     });
@@ -284,20 +300,20 @@ class RTManager extends EventEmitter {
         
         this._handleEvent(event);
       } catch (error) {
-        log.error(`Failed to parse WebSocket message`, { 
-          sessionId: this.sessionId, 
-          error: error instanceof Error ? error.message : 'Unknown error',
+        log.error(`Failed to parse WebSocket message`, {
+          sessionId: this.sessionId,
+          ...buildErrorMeta(error),
           rawData: data.toString()
         });
       }
     });
 
-    ws.on('error', (error) => {
-      log.error(`WebSocket connection error`, { 
-        sessionId: this.sessionId, 
-        error: error.message,
+    ws.on('error', (error: Error & { code?: number }) => {
+      log.error(`WebSocket connection error`, {
+        sessionId: this.sessionId,
+        message: error.message,
         stack: error.stack,
-        code: (error as any).code
+        code: error.code
       });
       this.emit('error', error);
       if (!hasResolved) {
@@ -351,7 +367,10 @@ class RTManager extends EventEmitter {
       case 'response.audio.delta':
       case 'response.output_audio.delta':
         {
-          const b64 = (event as any).delta || (event as any).audio;
+          const payload = event as Record<string, unknown>;
+          const deltaValue = asString(payload.delta);
+          const audioValue = asString(payload.audio);
+          const b64 = deltaValue ?? audioValue;
           if (b64) {
             const audioData = Buffer.from(b64, 'base64');
             log.info(`Audio delta received`, { sessionId: this.sessionId, size: audioData.length });
@@ -363,7 +382,8 @@ class RTManager extends EventEmitter {
       case 'response.text.delta':
       case 'response.output_text.delta':
         {
-          const text = (event as any).delta || (event as any).text;
+          const payload = event as Record<string, unknown>;
+          const text = asString(payload.delta) ?? asString(payload.text);
           if (text) {
             log.debug(`Text delta received`, { sessionId: this.sessionId, text });
             this.emit('transcript', text);
@@ -372,10 +392,13 @@ class RTManager extends EventEmitter {
         break;
 
       case 'response.audio_transcript.delta':
-        if ((event as any).delta) {
-          const text = (event as any).delta as string;
+        {
+          const payload = event as Record<string, unknown>;
+          const text = asString(payload.delta);
           log.debug(`Audio transcript delta received`, { sessionId: this.sessionId, text });
-          this.emit('transcript', text);
+          if (text) {
+            this.emit('transcript', text);
+          }
         }
         break;
 
@@ -385,9 +408,13 @@ class RTManager extends EventEmitter {
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
-        if (event.transcript) {
-          log.info(`User speech transcribed`, { sessionId: this.sessionId, transcript: event.transcript });
-          this.emit('user_transcript', event.transcript);
+        {
+          const payload = event as Record<string, unknown>;
+          const transcript = asString(payload.transcript);
+          if (transcript) {
+            log.info(`User speech transcribed`, { sessionId: this.sessionId, transcript });
+            this.emit('user_transcript', transcript);
+          }
         }
         // Ensure a response is generated even if server VAD didn't auto-create
         if (!this.responseInFlight) {
@@ -398,30 +425,45 @@ class RTManager extends EventEmitter {
             });
             this.responseInFlight = true;
             log.debug(`Auto-triggered response after transcription completion`, { sessionId: this.sessionId });
-          } catch (e) {
-            log.error(`Failed to auto-trigger response`, { sessionId: this.sessionId, error: (e as any)?.message });
+          } catch (error) {
+            log.error(`Failed to auto-trigger response`, {
+              sessionId: this.sessionId,
+              ...buildErrorMeta(error),
+            });
           }
         }
         break;
 
       case 'conversation.item.input_audio_transcription.delta':
-        if (event.delta) {
-          log.debug(`User transcription delta`, { sessionId: this.sessionId, delta: event.delta });
-          this.emit('user_transcript_delta', event.delta);
+        {
+          const payload = event as Record<string, unknown>;
+          const delta = asString(payload.delta);
+          if (delta) {
+            log.debug(`User transcription delta`, { sessionId: this.sessionId, delta });
+            this.emit('user_transcript_delta', delta);
+          }
         }
         break;
 
       // Alternate event names (recent API variants)
       case 'input_audio_buffer.transcription.delta':
-        if (event.delta) {
-          log.debug(`User transcription delta (alt)`, { sessionId: this.sessionId, delta: event.delta });
-          this.emit('user_transcript_delta', event.delta);
+        {
+          const payload = event as Record<string, unknown>;
+          const delta = asString(payload.delta);
+          if (delta) {
+            log.debug(`User transcription delta (alt)`, { sessionId: this.sessionId, delta });
+            this.emit('user_transcript_delta', delta);
+          }
         }
         break;
       case 'input_audio_buffer.transcription.completed':
-        if (event.transcript) {
-          log.info(`User speech transcribed (alt)`, { sessionId: this.sessionId, transcript: event.transcript });
-          this.emit('user_transcript', event.transcript);
+        {
+          const payload = event as Record<string, unknown>;
+          const transcript = asString(payload.transcript);
+          if (transcript) {
+            log.info(`User speech transcribed (alt)`, { sessionId: this.sessionId, transcript });
+            this.emit('user_transcript', transcript);
+          }
         }
         if (!this.responseInFlight) {
           try {
@@ -431,8 +473,11 @@ class RTManager extends EventEmitter {
             });
             this.responseInFlight = true;
             log.debug(`Auto-triggered response after alt transcription completed`, { sessionId: this.sessionId });
-          } catch (e) {
-            log.error(`Failed to auto-trigger response (alt)`, { sessionId: this.sessionId, error: (e as any)?.message });
+          } catch (error) {
+            log.error(`Failed to auto-trigger response (alt)`, {
+              sessionId: this.sessionId,
+              ...buildErrorMeta(error),
+            });
           }
         }
         break;
@@ -447,8 +492,11 @@ class RTManager extends EventEmitter {
             });
             this.responseInFlight = true;
             log.debug(`Auto-triggered response on speech stop`, { sessionId: this.sessionId });
-          } catch (e) {
-            log.error(`Failed to trigger response on speech stop`, { sessionId: this.sessionId, error: (e as any)?.message });
+          } catch (error) {
+            log.error(`Failed to trigger response on speech stop`, {
+              sessionId: this.sessionId,
+              ...buildErrorMeta(error),
+            });
           }
         }
         break;
@@ -502,12 +550,193 @@ class RTManager extends EventEmitter {
     }
   }
 
-  private _sendEvent(event: any) {
+  private _sendEvent(event: unknown) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Session not ready - WebSocket not connected");
     }
-    
+
     this.ws.send(JSON.stringify(event));
+  }
+
+  private _normalizeContext(context?: PaperContext | null): PaperContext | null {
+    if (!context) {
+      return null;
+    }
+
+    const sanitize = (value?: string, maxLength = 1200) =>
+      typeof value === 'string' ? value.trim().slice(0, maxLength) : undefined;
+
+    return {
+      id: sanitize(context.id, 200),
+      title: sanitize(context.title, 500),
+      authors: sanitize(context.authors, 500),
+      primaryAuthor: sanitize(context.primaryAuthor, 250),
+      hasAdditionalAuthors: context.hasAdditionalAuthors === true,
+      formattedPublishedDate: sanitize(context.formattedPublishedDate, 120),
+      abstract: sanitize(context.abstract, 1800),
+      arxivUrl: sanitize(context.arxivUrl, 500),
+    };
+  }
+
+  private _contextsEqual(a: PaperContext | null, b: PaperContext | null): boolean {
+    if (!a && !b) {
+      return true;
+    }
+    if (!a || !b) {
+      return false;
+    }
+    return (
+      a.id === b.id &&
+      a.title === b.title &&
+      a.authors === b.authors &&
+      a.primaryAuthor === b.primaryAuthor &&
+      a.hasAdditionalAuthors === b.hasAdditionalAuthors &&
+      a.formattedPublishedDate === b.formattedPublishedDate &&
+      a.abstract === b.abstract &&
+      a.arxivUrl === b.arxivUrl
+    );
+  }
+
+  private _createSessionUpdatePayload() {
+    return {
+      type: 'session.update',
+      session: {
+        modalities: ['text', 'audio'],
+        instructions: this._buildInstructions(),
+        voice: process.env.OPENAI_REALTIME_VOICE || 'alloy',
+        input_audio_format: 'pcm16',
+        output_audio_format: 'pcm16',
+        input_audio_transcription: {
+          model: 'whisper-1'
+        },
+        turn_detection: {
+          type: 'server_vad',
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 800
+        },
+        tool_choice: 'none',
+        temperature: 0.7
+      }
+    };
+  }
+
+  private _buildInstructions(): string {
+    const base = [
+      'You are an AI podcast guest named Dr. Sarah.',
+      'Hold natural, engaging conversations about research papers.',
+      'Always let the host finish speaking before you reply, and keep responses concise while offering helpful explanations.',
+    ];
+
+    if (!this.conversationContext) {
+      return base.join(' ');
+    }
+
+    const lines: string[] = [];
+    const authorLine = this.conversationContext.primaryAuthor
+      ? `${this.conversationContext.primaryAuthor}${this.conversationContext.hasAdditionalAuthors ? ' et al.' : ''}`
+      : this.conversationContext.authors;
+
+    lines.push('Use the following paper details to guide the discussion:');
+    if (this.conversationContext.title) {
+      lines.push(`Title: ${this.conversationContext.title}`);
+    }
+    if (authorLine) {
+      lines.push(`Authors: ${authorLine}`);
+    }
+    if (this.conversationContext.formattedPublishedDate) {
+      lines.push(`Published: ${this.conversationContext.formattedPublishedDate}`);
+    }
+    if (this.conversationContext.abstract) {
+      lines.push(`Abstract: ${this.conversationContext.abstract}`);
+    }
+    if (this.conversationContext.arxivUrl) {
+      lines.push(`Reference URL: ${this.conversationContext.arxivUrl}`);
+    }
+    lines.push('Explain concepts clearly, ask thoughtful follow-up questions, and relate answers back to the paper when possible.');
+
+    return `${base.join(' ')} ${lines.join(' ')}`;
+  }
+
+  private _buildContextSummary(): string | null {
+    if (!this.conversationContext) {
+      return null;
+    }
+
+    const parts: string[] = [];
+    if (this.conversationContext.title) {
+      parts.push(`Paper title: ${this.conversationContext.title}.`);
+    }
+    if (this.conversationContext.primaryAuthor) {
+      parts.push(`Primary author: ${this.conversationContext.primaryAuthor}${
+        this.conversationContext.hasAdditionalAuthors ? ' et al.' : ''
+      }.`);
+    } else if (this.conversationContext.authors) {
+      parts.push(`Authors: ${this.conversationContext.authors}.`);
+    }
+    if (this.conversationContext.formattedPublishedDate) {
+      parts.push(`Published: ${this.conversationContext.formattedPublishedDate}.`);
+    }
+    if (this.conversationContext.abstract) {
+      parts.push(`Abstract summary: ${this.conversationContext.abstract}`);
+    }
+    if (this.conversationContext.arxivUrl) {
+      parts.push(`Source link: ${this.conversationContext.arxivUrl}`);
+    }
+
+    if (!parts.length) {
+      return null;
+    }
+
+    return `${parts.join(' ')} Use this information to support the host as they work through the paper.`;
+  }
+
+  private _sendContextPrimingMessage() {
+    const summary = this._buildContextSummary();
+    if (!summary) {
+      return;
+    }
+
+    try {
+      this._sendEvent({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text: summary,
+            }
+          ]
+        }
+      });
+      log.debug('Sent context priming message', { sessionId: this.sessionId });
+    } catch (error) {
+      log.warn('Failed to send context priming message', {
+        sessionId: this.sessionId,
+        error: error instanceof Error ? error.message : 'unknown'
+      });
+    }
+  }
+
+  private _pushSessionUpdate(reason: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      const payload = this._createSessionUpdatePayload();
+      this.ws.send(JSON.stringify(payload));
+      log.info('Pushed session update', { sessionId: this.sessionId, reason });
+      this._sendContextPrimingMessage();
+    } catch (error) {
+      log.warn('Failed to push session update', {
+        sessionId: this.sessionId,
+        reason,
+        error: error instanceof Error ? error.message : 'unknown'
+      });
+    }
   }
 
   async sendText(text: string) {
@@ -701,11 +930,18 @@ class RTSessionManager {
 }
 
 // Hot-reload safe, versioned singleton with self-heal if shape mismatch
-const g = globalThis as any;
+const g = globalThis as typeof globalThis & { [SINGLETON_KEY]?: RTSessionManager };
 const SINGLETON_KEY = '__rtSessionManager_v2';
 
-function isValidManager(obj: any): obj is RTSessionManager {
-  return obj && typeof obj.getSession === 'function' && typeof obj.getActiveSessionCount === 'function';
+function isValidManager(obj: unknown): obj is RTSessionManager {
+  return (
+    typeof obj === 'object' &&
+    obj !== null &&
+    'getSession' in obj &&
+    typeof (obj as RTSessionManager).getSession === 'function' &&
+    'getActiveSessionCount' in obj &&
+    typeof (obj as RTSessionManager).getActiveSessionCount === 'function'
+  );
 }
 
 if (!isValidManager(g[SINGLETON_KEY])) {

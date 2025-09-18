@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -37,6 +37,7 @@ interface ConversationMessage {
   timestamp: Date;
   type: 'text' | 'audio';
   speaker?: string;
+  order: number;
 }
 
 type MicrophoneProcessor = {
@@ -52,6 +53,141 @@ interface SelectedPaper {
   primaryAuthor?: string;
   hasAdditionalAuthors?: boolean;
   formattedPublishedDate?: string;
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index++) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit++) {
+      if ((value & 1) !== 0) {
+        value = 0xedb88320 ^ (value >>> 1);
+      } else {
+        value >>>= 1;
+      }
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function crc32(data: Uint8Array): number {
+  let crc = 0 ^ -1;
+  for (let index = 0; index < data.length; index++) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ data[index]) & 0xff];
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+function getDosDateTime(date: Date) {
+  let year = date.getFullYear();
+  if (year < 1980) {
+    year = 1980;
+  }
+  const dosTime = ((date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2)) & 0xffff;
+  const dosDate = (((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xffff;
+  return { time: dosTime, date: dosDate };
+}
+
+function createZipArchive(files: Array<{ name: string; data: Uint8Array }>): Uint8Array {
+  const encoder = new TextEncoder();
+
+  let totalLocalSize = 0;
+  let totalCentralSize = 0;
+
+  const entries = files.map((file) => {
+    const nameBytes = encoder.encode(file.name);
+    const data = file.data;
+    const crc = crc32(data);
+    const size = data.length;
+    const { time, date } = getDosDateTime(new Date());
+
+    totalLocalSize += 30 + nameBytes.length + size;
+    totalCentralSize += 46 + nameBytes.length;
+
+    return { nameBytes, data, crc, size, time, date };
+  });
+
+  const archive = new Uint8Array(totalLocalSize + totalCentralSize + 22);
+  const view = new DataView(archive.buffer);
+  let offset = 0;
+
+  const centralEntries: Array<{
+    nameBytes: Uint8Array;
+    crc: number;
+    size: number;
+    time: number;
+    date: number;
+    offset: number;
+  }> = [];
+
+  for (const entry of entries) {
+    const localHeaderOffset = offset;
+
+    view.setUint32(offset, 0x04034b50, true); offset += 4;
+    view.setUint16(offset, 20, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, entry.time, true); offset += 2;
+    view.setUint16(offset, entry.date, true); offset += 2;
+    view.setUint32(offset, entry.crc >>> 0, true); offset += 4;
+    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
+    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
+    view.setUint16(offset, entry.nameBytes.length, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+
+    archive.set(entry.nameBytes, offset);
+    offset += entry.nameBytes.length;
+    archive.set(entry.data, offset);
+    offset += entry.size;
+
+    centralEntries.push({
+      nameBytes: entry.nameBytes,
+      crc: entry.crc,
+      size: entry.size,
+      time: entry.time,
+      date: entry.date,
+      offset: localHeaderOffset,
+    });
+  }
+
+  const centralDirectoryOffset = offset;
+
+  for (const entry of centralEntries) {
+    view.setUint32(offset, 0x02014b50, true); offset += 4;
+    view.setUint16(offset, 20, true); offset += 2;
+    view.setUint16(offset, 20, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, entry.time, true); offset += 2;
+    view.setUint16(offset, entry.date, true); offset += 2;
+    view.setUint32(offset, entry.crc >>> 0, true); offset += 4;
+    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
+    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
+    view.setUint16(offset, entry.nameBytes.length, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint16(offset, 0, true); offset += 2;
+    view.setUint32(offset, 0, true); offset += 4;
+    view.setUint32(offset, entry.offset >>> 0, true); offset += 4;
+
+    archive.set(entry.nameBytes, offset);
+    offset += entry.nameBytes.length;
+  }
+
+  const centralDirectorySize = offset - centralDirectoryOffset;
+
+  view.setUint32(offset, 0x06054b50, true); offset += 4;
+  view.setUint16(offset, 0, true); offset += 2;
+  view.setUint16(offset, 0, true); offset += 2;
+  view.setUint16(offset, centralEntries.length, true); offset += 2;
+  view.setUint16(offset, centralEntries.length, true); offset += 2;
+  view.setUint32(offset, centralDirectorySize >>> 0, true); offset += 4;
+  view.setUint32(offset, centralDirectoryOffset >>> 0, true); offset += 4;
+  view.setUint16(offset, 0, true); offset += 2;
+
+  return archive;
 }
 
 export default function Studio() {
@@ -77,6 +213,7 @@ export default function Studio() {
   const [sessionId] = useState(() => `session_${Date.now()}`);
   const [currentPaper, setCurrentPaper] = useState<SelectedPaper | null>(null);
   const [paperLoadError, setPaperLoadError] = useState<string | null>(null);
+  const [hasCapturedAudio, setHasCapturedAudio] = useState(false);
 
   // Refs for real-time functionality
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -95,8 +232,52 @@ export default function Studio() {
   const aiAudioStartedRef = useRef<boolean>(false);
   const aiTextBufferRef = useRef<string>("");
   const aiTypingIntervalRef = useRef<number | null>(null);
+  const messageSequenceRef = useRef(0);
+  const hasCapturedAudioRef = useRef(false);
+  const latestConversationRef = useRef<StoredConversation | null>(null);
 
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+
+  const sortMessages = useCallback((list: ConversationMessage[]) => {
+    return [...list].sort((a, b) => {
+      if (a.order !== b.order) {
+        return a.order - b.order;
+      }
+      return a.timestamp.getTime() - b.timestamp.getTime();
+    });
+  }, []);
+
+  const appendMessage = useCallback((message: ConversationMessage) => {
+    setMessages((previous) => sortMessages([...previous, message]));
+  }, [sortMessages]);
+
+  const updateMessageContent = useCallback((id: string, updater: (message: ConversationMessage) => ConversationMessage) => {
+    setMessages((previous) => sortMessages(previous.map((message) => {
+      if (message.id !== id) {
+        return message;
+      }
+      return updater(message);
+    })));
+  }, [sortMessages]);
+
+  const base64ToUint8Array = useCallback((base64: string): Uint8Array => {
+    const sanitized = (base64 || '').replace(/\s+/g, '');
+
+    if (typeof window !== 'undefined' && typeof window.atob === 'function') {
+      const binary = window.atob(sanitized);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index++) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    }
+
+    if (typeof Buffer !== 'undefined') {
+      return Uint8Array.from(Buffer.from(sanitized, 'base64'));
+    }
+
+    throw new Error('Base64 decoding is not supported in this environment.');
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -144,6 +325,23 @@ export default function Studio() {
       window.removeEventListener("storage", handleStorage);
     };
   }, []);
+
+  const paperPayload = useMemo(() => {
+    if (!currentPaper) {
+      return null;
+    }
+
+    return {
+      id: currentPaper.id,
+      title: currentPaper.title,
+      authors: currentPaper.authors,
+      primaryAuthor: currentPaper.primaryAuthor,
+      hasAdditionalAuthors: currentPaper.hasAdditionalAuthors,
+      formattedPublishedDate: currentPaper.formattedPublishedDate,
+      abstract: currentPaper.abstract,
+      arxiv_url: currentPaper.arxiv_url ?? undefined,
+    };
+  }, [currentPaper]);
 
   // Timer for session duration
   useEffect(() => {
@@ -198,6 +396,10 @@ export default function Studio() {
             bytes[i] = binary.charCodeAt(i);
           }
           aiAudioChunksRef.current.push(bytes);
+          if (!hasCapturedAudioRef.current) {
+            hasCapturedAudioRef.current = true;
+            setHasCapturedAudio(true);
+          }
         } catch (error) {
           console.error("[ERROR] Failed to capture AI audio chunk", error);
         }
@@ -238,7 +440,12 @@ export default function Studio() {
     const response = await fetch('/api/rt/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, provider: activeProvider, apiKey: activeApiKey }),
+      body: JSON.stringify({
+        sessionId,
+        provider: activeProvider,
+        apiKey: activeApiKey,
+        paper: paperPayload ?? undefined,
+      }),
       cache: 'no-store'
     });
 
@@ -253,7 +460,7 @@ export default function Studio() {
       const message = payload?.error || `Failed to start realtime session (${response.status})`;
       throw new Error(message);
     }
-  }, [activeApiKey, activeProvider, sessionId]);
+  }, [activeApiKey, activeProvider, paperPayload, sessionId]);
 
   // Fast typing animation helpers for AI transcript
   const startAiTyping = () => {
@@ -268,19 +475,24 @@ export default function Studio() {
       if (!lastAiMessageIdRef.current) {
         const id = `ai_${Date.now()}`;
         lastAiMessageIdRef.current = id;
-        setMessages(prev => [...prev, {
+        const order = ++messageSequenceRef.current;
+        appendMessage({
           id,
           role: 'expert',
           content: '',
           timestamp: new Date(),
           type: 'text',
-          speaker: 'Dr. Sarah (AI Expert)'
-        }]);
+          speaker: 'Dr. Sarah (AI Expert)',
+          order,
+        });
       }
       const maxPerTick = Math.min(64, Math.max(2, Math.floor(aiTextBufferRef.current.length / 8)));
       const chunk = aiTextBufferRef.current.slice(0, maxPerTick);
       aiTextBufferRef.current = aiTextBufferRef.current.slice(maxPerTick);
-      setMessages(prev => prev.map(m => m.id === lastAiMessageIdRef.current ? { ...m, content: m.content + chunk } : m));
+      if (lastAiMessageIdRef.current) {
+        const targetId = lastAiMessageIdRef.current;
+        updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
+      }
     }, 16);
   };
 
@@ -288,7 +500,8 @@ export default function Studio() {
     if (aiTextBufferRef.current.length > 0 && lastAiMessageIdRef.current) {
       const chunk = aiTextBufferRef.current;
       aiTextBufferRef.current = '';
-      setMessages(prev => prev.map(m => m.id === lastAiMessageIdRef.current ? { ...m, content: m.content + chunk } : m));
+      const targetId = lastAiMessageIdRef.current;
+      updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
     }
     if (stop && aiTypingIntervalRef.current != null) {
       clearInterval(aiTypingIntervalRef.current);
@@ -312,15 +525,18 @@ export default function Studio() {
       setError(null);
       await ensureRealtimeSession();
 
+      const order = ++messageSequenceRef.current;
       const userMessage: ConversationMessage = {
         id: `msg_${Date.now()}`,
         role: 'user',
         content: trimmed,
         timestamp: new Date(),
-        type: 'text'
+        type: 'text',
+        speaker: 'Host (You)',
+        order,
       };
 
-      setMessages(prev => [...prev, userMessage]);
+      appendMessage(userMessage);
       setTextInput("");
 
       const response = await fetch('/api/rt/text', {
@@ -403,6 +619,10 @@ export default function Studio() {
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
         micChunkQueueRef.current.push(uint8Array);
         hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
+        if (!hasCapturedAudioRef.current) {
+          hasCapturedAudioRef.current = true;
+          setHasCapturedAudio(true);
+        }
       };
       
       source.connect(scriptProcessor);
@@ -515,6 +735,10 @@ export default function Studio() {
     aiAudioChunksRef.current = [];
     audioEventSourceRef.current?.close();
     audioEventSourceRef.current = null;
+    latestConversationRef.current = null;
+    hasCapturedAudioRef.current = false;
+    setHasCapturedAudio(false);
+    messageSequenceRef.current = 0;
 
     let pc: RTCPeerConnection | null = null;
     let localStream: MediaStream | null = null;
@@ -633,14 +857,17 @@ export default function Studio() {
           if (type === 'conversation.item.input_audio_transcription.completed' || type === 'input_audio_buffer.transcription.completed') {
             const transcript = typeof msg.transcript === 'string' ? msg.transcript : '';
             if (transcript.trim()) {
+              const order = ++messageSequenceRef.current;
               const userMessage: ConversationMessage = {
                 id: `user_${Date.now()}`,
                 role: 'user',
                 content: transcript,
                 timestamp: new Date(),
-                type: 'text'
+                type: 'text',
+                speaker: 'Host (You)',
+                order,
               };
-              setMessages(prev => [...prev, userMessage]);
+              appendMessage(userMessage);
             }
             setUserTranscription('');
             setIsTranscribing(false);
@@ -842,6 +1069,10 @@ export default function Studio() {
       clearInterval(aiTypingIntervalRef.current);
       aiTypingIntervalRef.current = null;
     }
+    const hasStoredConversation = latestConversationRef.current != null;
+    hasCapturedAudioRef.current = hasStoredConversation;
+    setHasCapturedAudio(hasStoredConversation);
+    messageSequenceRef.current = 0;
   }, [sessionId]);
 
   const buildConversationPayload = useCallback((): StoredConversation | null => {
@@ -857,13 +1088,16 @@ export default function Studio() {
       return null;
     }
 
-    const transcript = messages.map((msg) => ({
+    const orderedMessages = sortMessages(messages);
+
+    const transcript = orderedMessages.map((msg) => ({
       id: msg.id,
       role: msg.role,
       content: msg.content,
       timestamp: msg.timestamp.toISOString(),
       speaker: msg.speaker,
       type: msg.type,
+      order: msg.order,
     }));
 
     const durationSeconds = Math.max(
@@ -899,7 +1133,7 @@ export default function Studio() {
       },
       durationSeconds,
     };
-  }, [currentPaper, messages, sessionDuration]);
+  }, [currentPaper, messages, sessionDuration, sortMessages]);
 
   const handleDisconnect = async () => {
     if (isRecording) {
@@ -909,9 +1143,11 @@ export default function Studio() {
     try {
       const payload = buildConversationPayload();
       if (payload) {
+        latestConversationRef.current = payload;
         saveConversationToSession(payload);
         setStatusMessage('Conversation saved for the Video Studio.');
       } else {
+        latestConversationRef.current = null;
         setStatusMessage(null);
       }
     } catch (storageError) {
@@ -946,6 +1182,7 @@ export default function Studio() {
         return;
       }
 
+      latestConversationRef.current = payload;
       saveConversationToSession(payload);
       setError(null);
       setStatusMessage('Conversation handed off to the Video Studio.');
@@ -964,10 +1201,10 @@ export default function Studio() {
   }, [teardownRealtime]);
 
   const handleExportTranscript = () => {
-    const transcriptText = messages.map((msg: ConversationMessage) => 
+    const transcriptText = messages.map((msg: ConversationMessage) =>
       `[${msg.timestamp.toLocaleTimeString()}] ${msg.speaker || (msg.role === 'user' ? 'You' : msg.role)}: ${msg.content}`
     ).join('\n\n');
-    
+
     const blob = new Blob([transcriptText], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -978,6 +1215,77 @@ export default function Studio() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  const handleDownloadAudio = useCallback(async () => {
+    try {
+      let payload = buildConversationPayload();
+      if (!payload) {
+        payload = latestConversationRef.current;
+      }
+
+      if (!payload || (!payload.audio.host && !payload.audio.ai)) {
+        setError('Capture a conversation with audio before downloading.');
+        setStatusMessage(null);
+        return;
+      }
+
+      latestConversationRef.current = payload;
+
+      const files: Array<{ name: string; data: Uint8Array }> = [];
+
+      if (payload.audio.host) {
+        const hostBytes = base64ToUint8Array(payload.audio.host.base64);
+        files.push({ name: 'host-track.wav', data: hostBytes });
+      }
+
+      if (payload.audio.ai) {
+        const aiBytes = base64ToUint8Array(payload.audio.ai.base64);
+        files.push({ name: 'ai-track.wav', data: aiBytes });
+      }
+
+      const transcriptText = payload.transcript
+        .map((entry) => {
+          const timestamp = new Date(entry.timestamp).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          });
+          const speakerLabel = entry.speaker || (entry.role === 'user' ? 'Host' : 'Dr. Sarah');
+          return `[${timestamp}] ${speakerLabel}: ${entry.content}`;
+        })
+        .join('\n\n');
+
+      const encoder = new TextEncoder();
+      files.push({ name: 'transcript.txt', data: encoder.encode(transcriptText) });
+      files.push({
+        name: 'metadata.json',
+        data: encoder.encode(JSON.stringify({
+          paper: payload.paper,
+          durationSeconds: payload.durationSeconds,
+          createdAt: payload.createdAt,
+        }, null, 2)),
+      });
+
+      const archiveBytes = createZipArchive(files);
+      const blob = new Blob([archiveBytes], { type: 'application/zip' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = `podcast-session-${sessionId}.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(downloadUrl);
+
+      setError(null);
+      setStatusMessage('Audio bundle downloaded successfully.');
+    } catch (error) {
+      console.error('[ERROR] Failed to export audio bundle', error);
+      setStatusMessage(null);
+      setError(error instanceof Error ? error.message : 'Failed to download audio bundle');
+    }
+  }, [base64ToUint8Array, buildConversationPayload, sessionId]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
@@ -1110,16 +1418,16 @@ export default function Studio() {
                           {isConnecting ? 'Connecting...' : 'Connect to AI'}
                         </Button>
                       ) : !isRecording ? (
-                        <Button 
-                          onClick={handleStartRecording}
-                          disabled={!isConnected || !isSessionReady}
-                          variant="destructive"
-                          size="lg"
-                          className="flex-1"
-                        >
-                          <Mic className="w-4 h-4 mr-2" />
-                          Start Voice Recording
-                        </Button>
+                      <Button
+                        onClick={handleStartRecording}
+                        disabled={!isConnected || !isSessionReady}
+                        variant="destructive"
+                        size="lg"
+                        className="flex-1"
+                      >
+                        <Mic className="w-4 h-4 mr-2" />
+                        {hasCapturedAudio ? 'Resume Voice Recording' : 'Start Voice Recording'}
+                      </Button>
                       ) : (
                         <Button 
                           onClick={handleStopRecording}
@@ -1348,20 +1656,15 @@ export default function Studio() {
                             )}
                             {isAudioPlaying ? 'Pause' : 'Audio'} Ready
                           </Button>
-                          <Button 
-                            size="sm" 
-                            variant="outline" 
+                          <Button
+                            size="sm"
+                            variant="outline"
                             className="border-gray-300 hover:border-green-400 hover:bg-green-50"
-                            onClick={() => {
-                              const link = document.createElement('a');
-                              link.href = `/api/rt/audio?sessionId=${sessionId}`;
-                              link.download = 'podcast-audio.wav';
-                              link.click();
-                            }}
-                            disabled={!isConnected}
+                            onClick={handleDownloadAudio}
+                            disabled={!hasCapturedAudio}
                           >
                             <Download className="w-4 h-4 mr-2" />
-                            Save Audio
+                            Download Audio Bundle
                           </Button>
                         </div>
                         <div className="flex-1 bg-gray-200 rounded-full h-2 shadow-inner">

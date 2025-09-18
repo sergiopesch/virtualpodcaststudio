@@ -11,12 +11,6 @@ import React, {
 
 export type LlmProvider = "openai" | "google";
 
-interface StoredApiConfig {
-  activeProvider: LlmProvider;
-  apiKeys: Record<LlmProvider, string>;
-  models?: Partial<Record<LlmProvider, string>>;
-}
-
 interface ApiConfigContextValue {
   activeProvider: LlmProvider;
   apiKeys: Record<LlmProvider, string>;
@@ -29,12 +23,13 @@ interface ApiConfigContextValue {
 
 const STORAGE_KEY = "vps:llmConfig";
 
-const defaultState: StoredApiConfig = {
+interface StoredPreferences {
+  activeProvider: LlmProvider;
+  models?: Partial<Record<LlmProvider, string>>;
+}
+
+const defaultPreferences: StoredPreferences = {
   activeProvider: "openai",
-  apiKeys: {
-    openai: "",
-    google: "",
-  },
   models: {},
 };
 
@@ -51,20 +46,20 @@ function normalizeProvider(value: unknown): LlmProvider {
 }
 
 export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
-  const [state, setState] = useState<StoredApiConfig>(defaultState);
+  const [preferences, setPreferences] = useState<StoredPreferences>(defaultPreferences);
+  const [apiKeys, setApiKeys] = useState<Record<LlmProvider, string>>({
+    openai: "",
+    google: "",
+  });
   const [hasHydrated, setHasHydrated] = useState(false);
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        const parsed = JSON.parse(stored) as Partial<StoredApiConfig>;
-        setState({
+        const parsed = JSON.parse(stored) as Partial<StoredPreferences>;
+        setPreferences({
           activeProvider: normalizeProvider(parsed.activeProvider),
-          apiKeys: {
-            openai: parsed.apiKeys?.openai ?? "",
-            google: parsed.apiKeys?.google ?? "",
-          },
           models: parsed.models ?? {},
         });
       }
@@ -81,26 +76,23 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     }
 
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
     } catch (error) {
       console.error("Failed to persist API configuration", error);
     }
-  }, [state, hasHydrated]);
+  }, [preferences, hasHydrated]);
 
   const setActiveProvider = useCallback((provider: LlmProvider) => {
-    setState((previous) => ({
+    setPreferences((previous) => ({
       ...previous,
       activeProvider: provider,
     }));
   }, []);
 
   const setApiKey = useCallback((provider: LlmProvider, key: string) => {
-    setState((previous) => ({
+    setApiKeys((previous) => ({
       ...previous,
-      apiKeys: {
-        ...previous.apiKeys,
-        [provider]: key,
-      },
+      [provider]: key,
     }));
   }, []);
 
@@ -109,7 +101,7 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
   }, [setApiKey]);
 
   const setModel = useCallback((provider: LlmProvider, model: string) => {
-    setState((previous) => ({
+    setPreferences((previous) => ({
       ...previous,
       models: {
         ...previous.models,
@@ -119,14 +111,14 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
   }, []);
 
   const value = useMemo<ApiConfigContextValue>(() => ({
-    activeProvider: state.activeProvider,
-    apiKeys: state.apiKeys,
-    models: state.models ?? {},
+    activeProvider: preferences.activeProvider,
+    apiKeys,
+    models: preferences.models ?? {},
     setActiveProvider,
     setApiKey,
     clearApiKey,
     setModel,
-  }), [state, setActiveProvider, setApiKey, clearApiKey, setModel]);
+  }), [preferences, apiKeys, setActiveProvider, setApiKey, clearApiKey, setModel]);
 
   return (
     <ApiConfigContext.Provider value={value}>
