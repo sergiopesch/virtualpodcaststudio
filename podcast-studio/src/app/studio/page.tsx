@@ -564,6 +564,78 @@ export default function Studio() {
     sendDataChannelSessionUpdate();
   }, [sendDataChannelSessionUpdate]);
 
+  // Fast typing animation helpers for AI transcript
+  const startAiTyping = useCallback(() => {
+    if (aiTypingIntervalRef.current != null) {
+      return;
+    }
+
+    aiTypingIntervalRef.current = window.setInterval(() => {
+      if (!aiAudioStartedRef.current && aiTextBufferRef.current.length === 0) {
+        clearInterval(aiTypingIntervalRef.current!);
+        aiTypingIntervalRef.current = null;
+        setActiveAiMessageId(null);
+        return;
+      }
+
+      if (aiTextBufferRef.current.length === 0) {
+        return;
+      }
+
+      if (!lastAiMessageIdRef.current) {
+        const id = `ai_${Date.now()}`;
+        lastAiMessageIdRef.current = id;
+        const order = ++messageSequenceRef.current;
+        appendMessage({
+          id,
+          role: 'expert',
+          content: '',
+          timestamp: new Date(),
+          type: 'text',
+          speaker: 'Dr. Sarah (AI Expert)',
+          order,
+        });
+        setActiveAiMessageId(id);
+      }
+
+      const maxPerTick = Math.min(64, Math.max(2, Math.floor(aiTextBufferRef.current.length / 8)));
+      const chunk = aiTextBufferRef.current.slice(0, maxPerTick);
+      aiTextBufferRef.current = aiTextBufferRef.current.slice(maxPerTick);
+
+      if (lastAiMessageIdRef.current) {
+        const targetId = lastAiMessageIdRef.current;
+        updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
+      }
+    }, 16);
+  }, [appendMessage, updateMessageContent]);
+
+  const flushAiTyping = useCallback((stop: boolean) => {
+    if (aiTextBufferRef.current.length > 0 && lastAiMessageIdRef.current) {
+      const chunk = aiTextBufferRef.current;
+      aiTextBufferRef.current = '';
+      const targetId = lastAiMessageIdRef.current;
+      updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
+    }
+
+    if (stop && aiTypingIntervalRef.current != null) {
+      clearInterval(aiTypingIntervalRef.current);
+      aiTypingIntervalRef.current = null;
+    }
+
+    if (stop) {
+      setActiveAiMessageId(null);
+    }
+  }, [updateMessageContent]);
+
+  const handleAiTranscriptDelta = useCallback((text: string) => {
+    if (!text) {
+      return;
+    }
+
+    aiTextBufferRef.current += text;
+    startAiTyping();
+  }, [startAiTyping]);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -735,77 +807,7 @@ export default function Studio() {
     }
   }, [activeApiKey, activeProvider, paperPayload, sessionId]);
 
-  // Fast typing animation helpers for AI transcript
-  const startAiTyping = useCallback(() => {
-    if (aiTypingIntervalRef.current != null) {
-      return;
-    }
-
-    aiTypingIntervalRef.current = window.setInterval(() => {
-      if (!aiAudioStartedRef.current && aiTextBufferRef.current.length === 0) {
-        clearInterval(aiTypingIntervalRef.current!);
-        aiTypingIntervalRef.current = null;
-        setActiveAiMessageId(null);
-        return;
-      }
-
-      if (aiTextBufferRef.current.length === 0) {
-        return;
-      }
-
-      if (!lastAiMessageIdRef.current) {
-        const id = `ai_${Date.now()}`;
-        lastAiMessageIdRef.current = id;
-        const order = ++messageSequenceRef.current;
-        appendMessage({
-          id,
-          role: 'expert',
-          content: '',
-          timestamp: new Date(),
-          type: 'text',
-          speaker: 'Dr. Sarah (AI Expert)',
-          order,
-        });
-        setActiveAiMessageId(id);
-      }
-
-      const maxPerTick = Math.min(64, Math.max(2, Math.floor(aiTextBufferRef.current.length / 8)));
-      const chunk = aiTextBufferRef.current.slice(0, maxPerTick);
-      aiTextBufferRef.current = aiTextBufferRef.current.slice(maxPerTick);
-
-      if (lastAiMessageIdRef.current) {
-        const targetId = lastAiMessageIdRef.current;
-        updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
-      }
-    }, 16);
-  }, [appendMessage, updateMessageContent]);
-
-  const flushAiTyping = useCallback((stop: boolean) => {
-    if (aiTextBufferRef.current.length > 0 && lastAiMessageIdRef.current) {
-      const chunk = aiTextBufferRef.current;
-      aiTextBufferRef.current = '';
-      const targetId = lastAiMessageIdRef.current;
-      updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
-    }
-
-    if (stop && aiTypingIntervalRef.current != null) {
-      clearInterval(aiTypingIntervalRef.current);
-      aiTypingIntervalRef.current = null;
-    }
-
-    if (stop) {
-      setActiveAiMessageId(null);
-    }
-  }, [updateMessageContent]);
-
-  const handleAiTranscriptDelta = useCallback((text: string) => {
-    if (!text) {
-      return;
-    }
-
-    aiTextBufferRef.current += text;
-    startAiTyping();
-  }, [startAiTyping]);
+  // (moved earlier) startAiTyping, flushAiTyping, handleAiTranscriptDelta
 
   const handleUserTranscriptionStarted = useCallback(() => {
     if (!isUserSpeakingRef.current) {
@@ -1739,7 +1741,10 @@ export default function Studio() {
       });
 
       const archiveBytes = createZipArchive(files);
-      const blob = new Blob([archiveBytes], { type: 'application/zip' });
+      // Ensure we pass a proper ArrayBuffer (not ArrayBufferLike) to Blob
+      const buffer = new ArrayBuffer(archiveBytes.byteLength);
+      new Uint8Array(buffer).set(archiveBytes);
+      const blob = new Blob([buffer], { type: 'application/zip' });
       const downloadUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = downloadUrl;
