@@ -378,6 +378,15 @@ export default function Studio() {
     }
   }, []);
 
+  const resetUserTranscriptionState = useCallback(() => {
+    userPendingTextRef.current = '';
+    setUserTranscriptionDisplay('');
+    stopUserTyping();
+    updateIsUserSpeaking(false);
+    setIsTranscribing(false);
+    currentUserMessageRef.current = null;
+  }, [stopUserTyping, updateIsUserSpeaking]);
+
   const startUserTyping = useCallback(() => {
     if (typeof window === 'undefined') {
       return;
@@ -861,15 +870,6 @@ export default function Studio() {
     aiTextBufferRef.current += text;
     startAiTyping();
   }, [startAiTyping]);
-
-  const resetUserTranscriptionState = useCallback(() => {
-    userPendingTextRef.current = '';
-    setUserTranscriptionDisplay('');
-    stopUserTyping();
-    updateIsUserSpeaking(false);
-    setIsTranscribing(false);
-    currentUserMessageRef.current = null;
-  }, [stopUserTyping, updateIsUserSpeaking]);
 
   const handleUserTranscriptionStarted = useCallback(() => {
     if (!isUserSpeakingRef.current) {
