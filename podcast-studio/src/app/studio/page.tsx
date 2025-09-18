@@ -316,6 +316,14 @@ export default function Studio() {
   const userPendingTextRef = useRef('');
   const userTypingIntervalRef = useRef<number | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const userTranscriptEventSourceRef = useRef<EventSource | null>(null);
+  const aiTranscriptEventSourceRef = useRef<EventSource | null>(null);
+  const hasUserTranscriptSseRef = useRef(false);
+  const hasAiTranscriptSseRef = useRef(false);
+  const isCommittingRef = useRef(false);
+  const lastUserTranscriptRef = useRef<string | null>(null);
+  const isUserSpeakingRef = useRef(false);
 
   const sortMessages = useCallback((list: ConversationMessage[]) => {
     return [...list].sort((a, b) => {
@@ -324,6 +332,11 @@ export default function Studio() {
       }
       return a.timestamp.getTime() - b.timestamp.getTime();
     });
+  }, []);
+
+  const updateIsUserSpeaking = useCallback((value: boolean) => {
+    isUserSpeakingRef.current = value;
+    setIsUserSpeaking(value);
   }, []);
 
   const appendMessage = useCallback((message: ConversationMessage) => {
@@ -439,10 +452,10 @@ export default function Studio() {
 
   useEffect(() => {
     return () => {
-      stopUserTyping();
-      userPendingTextRef.current = '';
+      resetUserTranscriptionState();
+      lastUserTranscriptRef.current = null;
     };
-  }, [stopUserTyping]);
+  }, [resetUserTranscriptionState]);
 
   const paperPayload = useMemo(() => {
     if (!currentPaper) {
@@ -477,18 +490,24 @@ export default function Studio() {
       return;
     }
 
-    const root = transcriptScrollRef.current;
-    if (!root) {
-      return;
-    }
+    window.requestAnimationFrame(() => {
+      if (transcriptEndRef.current) {
+        transcriptEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        return;
+      }
 
-    const viewport = root.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
-    if (!viewport) {
-      return;
-    }
+      const root = transcriptScrollRef.current;
+      if (!root) {
+        return;
+      }
 
-    const targetTop = viewport.scrollHeight;
-    viewport.scrollTo({ top: targetTop, behavior: 'smooth' });
+      const viewport = root.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
+      if (!viewport) {
+        return;
+      }
+
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+    });
   }, []);
 
   const sendDataChannelSessionUpdate = useCallback(() => {
@@ -532,6 +551,16 @@ export default function Studio() {
         audioEventSourceRef.current.close();
         audioEventSourceRef.current = null;
       }
+      if (userTranscriptEventSourceRef.current) {
+        userTranscriptEventSourceRef.current.close();
+        userTranscriptEventSourceRef.current = null;
+      }
+      if (aiTranscriptEventSourceRef.current) {
+        aiTranscriptEventSourceRef.current.close();
+        aiTranscriptEventSourceRef.current = null;
+      }
+      hasUserTranscriptSseRef.current = false;
+      hasAiTranscriptSseRef.current = false;
       return;
     }
 
@@ -584,6 +613,132 @@ export default function Studio() {
     }
   }, [isConnected, sessionId]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!isConnected) {
+      if (userTranscriptEventSourceRef.current) {
+        userTranscriptEventSourceRef.current.close();
+        userTranscriptEventSourceRef.current = null;
+      }
+      hasUserTranscriptSseRef.current = false;
+      return;
+    }
+
+    if (userTranscriptEventSourceRef.current) {
+      return;
+    }
+
+    try {
+      const source = new EventSource(`/api/rt/user-transcripts?sessionId=${sessionId}`);
+      userTranscriptEventSourceRef.current = source;
+      hasUserTranscriptSseRef.current = true;
+
+      const handleComplete = (event: MessageEvent) => {
+        const data = (event.data || '').trim();
+        if (!data || data === 'Connected to user transcript stream') {
+          if (!data) {
+            resetUserTranscriptionState();
+          }
+          return;
+        }
+
+        handleUserTranscriptionComplete(data);
+      };
+
+      const handleDelta = (event: MessageEvent) => {
+        const data = (event.data || '').trim();
+        if (!data || data === 'Connected to user transcript stream') {
+          return;
+        }
+        handleUserTranscriptionDelta(data);
+      };
+
+      source.addEventListener('complete', handleComplete);
+      source.addEventListener('delta', handleDelta);
+      source.addEventListener('error', (event) => {
+        console.error('[ERROR] User transcript SSE stream error', event);
+        hasUserTranscriptSseRef.current = false;
+        if (userTranscriptEventSourceRef.current === source) {
+          source.close();
+          userTranscriptEventSourceRef.current = null;
+        }
+      });
+
+      return () => {
+        source.removeEventListener('complete', handleComplete);
+        source.removeEventListener('delta', handleDelta);
+        source.close();
+        if (userTranscriptEventSourceRef.current === source) {
+          userTranscriptEventSourceRef.current = null;
+        }
+        hasUserTranscriptSseRef.current = false;
+      };
+    } catch (error) {
+      console.error('[ERROR] Unable to open user transcript SSE stream', error);
+      hasUserTranscriptSseRef.current = false;
+    }
+  }, [handleUserTranscriptionComplete, handleUserTranscriptionDelta, isConnected, resetUserTranscriptionState, sessionId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!isConnected) {
+      if (aiTranscriptEventSourceRef.current) {
+        aiTranscriptEventSourceRef.current.close();
+        aiTranscriptEventSourceRef.current = null;
+      }
+      hasAiTranscriptSseRef.current = false;
+      return;
+    }
+
+    if (aiTranscriptEventSourceRef.current) {
+      return;
+    }
+
+    try {
+      const source = new EventSource(`/api/rt/transcripts?sessionId=${sessionId}`);
+      aiTranscriptEventSourceRef.current = source;
+      hasAiTranscriptSseRef.current = true;
+
+      source.onmessage = (event) => {
+        const data = (event.data || '').trim();
+        if (!data || data === 'Connected to AI transcript stream') {
+          return;
+        }
+        handleAiTranscriptDelta(data);
+      };
+
+      source.addEventListener('done', () => {
+        flushAiTyping(true);
+      });
+
+      source.addEventListener('error', (event) => {
+        console.error('[ERROR] AI transcript SSE stream error', event);
+        hasAiTranscriptSseRef.current = false;
+        if (aiTranscriptEventSourceRef.current === source) {
+          source.close();
+          aiTranscriptEventSourceRef.current = null;
+        }
+      });
+
+      return () => {
+        source.close();
+        if (aiTranscriptEventSourceRef.current === source) {
+          aiTranscriptEventSourceRef.current = null;
+        }
+        hasAiTranscriptSseRef.current = false;
+      };
+    } catch (error) {
+      console.error('[ERROR] Unable to open AI transcript SSE stream', error);
+      hasAiTranscriptSseRef.current = false;
+    }
+  }, [flushAiTyping, handleAiTranscriptDelta, isConnected, sessionId]);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -627,8 +782,11 @@ export default function Studio() {
   }, [activeApiKey, activeProvider, paperPayload, sessionId]);
 
   // Fast typing animation helpers for AI transcript
-  const startAiTyping = () => {
-    if (aiTypingIntervalRef.current != null) return;
+  const startAiTyping = useCallback(() => {
+    if (aiTypingIntervalRef.current != null) {
+      return;
+    }
+
     aiTypingIntervalRef.current = window.setInterval(() => {
       if (!aiAudioStartedRef.current && aiTextBufferRef.current.length === 0) {
         clearInterval(aiTypingIntervalRef.current!);
@@ -636,7 +794,11 @@ export default function Studio() {
         setActiveAiMessageId(null);
         return;
       }
-      if (aiTextBufferRef.current.length === 0) return;
+
+      if (aiTextBufferRef.current.length === 0) {
+        return;
+      }
+
       if (!lastAiMessageIdRef.current) {
         const id = `ai_${Date.now()}`;
         lastAiMessageIdRef.current = id;
@@ -652,31 +814,131 @@ export default function Studio() {
         });
         setActiveAiMessageId(id);
       }
+
       const maxPerTick = Math.min(64, Math.max(2, Math.floor(aiTextBufferRef.current.length / 8)));
       const chunk = aiTextBufferRef.current.slice(0, maxPerTick);
       aiTextBufferRef.current = aiTextBufferRef.current.slice(maxPerTick);
+
       if (lastAiMessageIdRef.current) {
         const targetId = lastAiMessageIdRef.current;
         updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
       }
     }, 16);
-  };
+  }, [appendMessage, updateMessageContent]);
 
-  const flushAiTyping = (stop: boolean) => {
+  const flushAiTyping = useCallback((stop: boolean) => {
     if (aiTextBufferRef.current.length > 0 && lastAiMessageIdRef.current) {
       const chunk = aiTextBufferRef.current;
       aiTextBufferRef.current = '';
       const targetId = lastAiMessageIdRef.current;
       updateMessageContent(targetId, (message) => ({ ...message, content: message.content + chunk }));
     }
+
     if (stop && aiTypingIntervalRef.current != null) {
       clearInterval(aiTypingIntervalRef.current);
       aiTypingIntervalRef.current = null;
     }
+
     if (stop) {
       setActiveAiMessageId(null);
     }
-  };
+  }, [updateMessageContent]);
+
+  const handleAiTranscriptDelta = useCallback((text: string) => {
+    if (!text) {
+      return;
+    }
+
+    aiTextBufferRef.current += text;
+    startAiTyping();
+  }, [startAiTyping]);
+
+  const resetUserTranscriptionState = useCallback(() => {
+    userPendingTextRef.current = '';
+    setUserTranscriptionDisplay('');
+    stopUserTyping();
+    updateIsUserSpeaking(false);
+    setIsTranscribing(false);
+    lastUserTranscriptRef.current = null;
+  }, [stopUserTyping, updateIsUserSpeaking]);
+
+  const handleUserTranscriptionStarted = useCallback(() => {
+    if (!isUserSpeakingRef.current) {
+      userPendingTextRef.current = '';
+      setUserTranscriptionDisplay('');
+      lastUserTranscriptRef.current = null;
+    }
+    stopUserTyping();
+    updateIsUserSpeaking(true);
+    setIsTranscribing(true);
+  }, [stopUserTyping, updateIsUserSpeaking]);
+
+  const handleUserTranscriptionDelta = useCallback((delta: string) => {
+    if (!delta) {
+      return;
+    }
+
+    if (!isUserSpeakingRef.current) {
+      handleUserTranscriptionStarted();
+    } else {
+      updateIsUserSpeaking(true);
+      setIsTranscribing(true);
+    }
+
+    userPendingTextRef.current += delta;
+    startUserTyping();
+  }, [handleUserTranscriptionStarted, startUserTyping, updateIsUserSpeaking]);
+
+  const commitAudioTurn = useCallback(async () => {
+    if (!isConnected || !isSessionReady) {
+      return;
+    }
+
+    if (isCommittingRef.current) {
+      return;
+    }
+
+    isCommittingRef.current = true;
+    try {
+      const response = await fetch('/api/rt/audio-commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+        cache: 'no-store'
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = typeof payload?.error === 'string' ? payload.error : 'Failed to commit audio turn';
+        console.warn('[WARN] Audio commit request failed', { message, status: response.status });
+      }
+    } catch (error) {
+      console.error('[ERROR] Audio commit request failed', error);
+    } finally {
+      isCommittingRef.current = false;
+    }
+  }, [isConnected, isSessionReady, sessionId]);
+
+  const handleUserTranscriptionComplete = useCallback((transcript: string) => {
+    const finalTranscript = transcript.trim();
+    if (finalTranscript && lastUserTranscriptRef.current !== finalTranscript) {
+      const order = ++messageSequenceRef.current;
+      const userMessage: ConversationMessage = {
+        id: `user_${Date.now()}`,
+        role: 'user',
+        content: finalTranscript,
+        timestamp: new Date(),
+        type: 'text',
+        speaker: 'Host (You)',
+        order,
+      };
+      appendMessage(userMessage);
+      lastUserTranscriptRef.current = finalTranscript;
+    }
+
+    resetUserTranscriptionState();
+    void commitAudioTurn();
+  }, [appendMessage, commitAudioTurn, resetUserTranscriptionState]);
 
   const handleSendText = async () => {
     const trimmed = textInput.trim();
@@ -909,10 +1171,7 @@ export default function Studio() {
     setHasCapturedAudio(false);
     messageSequenceRef.current = 0;
     setActiveAiMessageId(null);
-    setIsUserSpeaking(false);
-    setUserTranscriptionDisplay('');
-    userPendingTextRef.current = '';
-    stopUserTyping();
+    resetUserTranscriptionState();
 
     let pc: RTCPeerConnection | null = null;
     let localStream: MediaStream | null = null;
@@ -1000,13 +1259,12 @@ export default function Studio() {
             return;
           }
 
-          if (type === 'response.output_text.delta' || type === 'response.text.delta' || type === 'response.audio_transcript.delta') {
+          if (!hasAiTranscriptSseRef.current && (type === 'response.output_text.delta' || type === 'response.text.delta' || type === 'response.audio_transcript.delta')) {
             const deltaText = typeof msg.delta === 'string' ? msg.delta : '';
             const responseText = typeof msg.text === 'string' ? msg.text : '';
             const text = deltaText || responseText;
             if (text) {
-              aiTextBufferRef.current += text;
-              startAiTyping();
+              handleAiTranscriptDelta(text);
             }
           }
 
@@ -1015,44 +1273,28 @@ export default function Studio() {
             lastAiMessageIdRef.current = null;
           }
 
-          if (type === 'conversation.item.input_audio_transcription.started' || type === 'input_audio_buffer.transcription.started') {
-            setIsTranscribing(true);
-            setIsUserSpeaking(true);
-            setUserTranscriptionDisplay('');
-            userPendingTextRef.current = '';
-            stopUserTyping();
+          if (!hasUserTranscriptSseRef.current && (type === 'conversation.item.input_audio_transcription.started' || type === 'input_audio_buffer.transcription.started')) {
+            handleUserTranscriptionStarted();
           }
 
-          if (type === 'conversation.item.input_audio_transcription.delta' || type === 'input_audio_buffer.transcription.delta') {
+          if (!hasUserTranscriptSseRef.current && (type === 'conversation.item.input_audio_transcription.delta' || type === 'input_audio_buffer.transcription.delta')) {
             const delta = typeof msg.delta === 'string' ? msg.delta : '';
             if (delta) {
-              setIsTranscribing(true);
-              setIsUserSpeaking(true);
-              userPendingTextRef.current += delta;
-              startUserTyping();
+              handleUserTranscriptionDelta(delta);
             }
           }
 
-          if (type === 'conversation.item.input_audio_transcription.completed' || type === 'input_audio_buffer.transcription.completed') {
+          if (!hasUserTranscriptSseRef.current && (type === 'conversation.item.input_audio_transcription.completed' || type === 'input_audio_buffer.transcription.completed')) {
             const transcript = typeof msg.transcript === 'string' ? msg.transcript : '';
-            if (transcript.trim()) {
-              const order = ++messageSequenceRef.current;
-              const userMessage: ConversationMessage = {
-                id: `user_${Date.now()}`,
-                role: 'user',
-                content: transcript,
-                timestamp: new Date(),
-                type: 'text',
-                speaker: 'Host (You)',
-                order,
-              };
-              appendMessage(userMessage);
-            }
-            userPendingTextRef.current = '';
-            stopUserTyping();
-            setUserTranscriptionDisplay('');
-            setIsTranscribing(false);
-            setIsUserSpeaking(false);
+            handleUserTranscriptionComplete(transcript);
+          }
+
+          if (type === 'input_audio_buffer.speech_started') {
+            handleUserTranscriptionStarted();
+          }
+
+          if (type === 'input_audio_buffer.speech_stopped') {
+            void commitAudioTurn();
           }
 
           if (type === 'response.error') {
@@ -1125,9 +1367,7 @@ export default function Studio() {
       setSessionDuration(0);
       setIsConnected(true);
       setIsSessionReady(true);
-      setIsUserSpeaking(false);
-      setUserTranscriptionDisplay('');
-      setIsTranscribing(false);
+      resetUserTranscriptionState();
 
       console.log('[INFO] Connection successful - ready for conversation');
     } catch (error) {
@@ -1181,6 +1421,16 @@ export default function Studio() {
       if (audioEventSourceRef.current) {
         audioEventSourceRef.current.close();
         audioEventSourceRef.current = null;
+      }
+
+      if (userTranscriptEventSourceRef.current) {
+        userTranscriptEventSourceRef.current.close();
+        userTranscriptEventSourceRef.current = null;
+      }
+
+      if (aiTranscriptEventSourceRef.current) {
+        aiTranscriptEventSourceRef.current.close();
+        aiTranscriptEventSourceRef.current = null;
       }
 
       if (audioRef.current) {
@@ -1239,16 +1489,15 @@ export default function Studio() {
       clearInterval(aiTypingIntervalRef.current);
       aiTypingIntervalRef.current = null;
     }
+    hasUserTranscriptSseRef.current = false;
+    hasAiTranscriptSseRef.current = false;
     const hasStoredConversation = latestConversationRef.current != null;
     hasCapturedAudioRef.current = hasStoredConversation;
     setHasCapturedAudio(hasStoredConversation);
     messageSequenceRef.current = 0;
     setActiveAiMessageId(null);
-    stopUserTyping();
-    setIsUserSpeaking(false);
-    setUserTranscriptionDisplay('');
-    userPendingTextRef.current = '';
-  }, [sessionId, stopUserTyping]);
+    resetUserTranscriptionState();
+  }, [resetUserTranscriptionState, sessionId]);
 
   const buildConversationPayload = useCallback((): StoredConversation | null => {
     if (!currentPaper || messages.length === 0) {
@@ -1339,11 +1588,7 @@ export default function Studio() {
     setSessionDuration(0);
     setMessages([]);
     setError(null);
-    setIsTranscribing(false);
-    setIsUserSpeaking(false);
-    setUserTranscriptionDisplay('');
-    userPendingTextRef.current = '';
-    stopUserTyping();
+    resetUserTranscriptionState();
     setActiveAiMessageId(null);
     setIsAudioPlaying(false);
   };
@@ -1663,7 +1908,7 @@ export default function Studio() {
 
               {/* Live Transcript */}
               <div className="lg:col-span-2">
-                <Card className="h-[600px] flex flex-col animate-scale-in border border-gray-200 shadow-sm">
+                <Card className="h-[600px] flex flex-col overflow-hidden animate-scale-in border border-gray-200 shadow-sm">
                   <CardHeader className="flex-shrink-0 border-b border-gray-100 bg-gray-50/30">
                     <div className="flex items-center justify-between">
                       <CardTitle className="flex items-center space-x-2">
@@ -1805,6 +2050,7 @@ export default function Studio() {
                             </div>
                           </div>
                         )}
+                        <div ref={transcriptEndRef} />
                       </div>
                     </ScrollArea>
                   
