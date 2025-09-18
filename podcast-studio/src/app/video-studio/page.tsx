@@ -1167,76 +1167,80 @@ export default function VideoStudio() {
                           return (
                             <div
                               key={trackNum}
-                              className={`border-b border-gray-200 px-4 py-3 text-xs ${
+                              className={`relative overflow-hidden border-b border-gray-200 px-4 text-xs ${
                                 isMuted ? "bg-gray-100" : "bg-gray-50"
                               }`}
+                              style={{ height: TRACK_HEIGHT, minHeight: TRACK_HEIGHT }}
                             >
-                              <div className="flex items-center justify-between gap-2">
-                                <input
-                                  type="text"
-                                  value={settings.name}
-                                  onChange={(event) =>
-                                    handleTrackNameChange(
-                                      trackNumber,
-                                      event.target.value,
-                                    )
-                                  }
-                                  className="w-full rounded border border-transparent bg-transparent px-0 text-xs font-semibold text-gray-700 focus:border-gray-300 focus:outline-none focus:ring-0"
-                                  aria-label={`Rename track ${trackNumber}`}
-                                />
-                                <div className="flex items-center gap-1">
-                                  <Button
-                                    type="button"
-                                    size="xs"
-                                    variant={isMuted ? "destructive" : "ghost"}
-                                    onClick={() => toggleTrackMute(trackNumber)}
-                                    aria-pressed={isMuted}
-                                  >
-                                    {isMuted ? (
-                                      <VolumeX className="h-3 w-3" />
-                                    ) : (
-                                      <Volume2 className="h-3 w-3" />
-                                    )}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="xs"
-                                    variant="ghost"
-                                    onClick={() => handleRemoveTrack(trackNumber)}
-                                    disabled={!canRemove}
-                                    className="disabled:opacity-40"
-                                    title={
-                                      canRemove
-                                        ? "Remove track"
-                                        : "Remove clips before deleting"
+                              <div className="pointer-events-none absolute inset-x-0 top-1/2 z-0 -translate-y-1/2 border-t border-dashed border-gray-200/80" />
+                              <div className="relative z-10 flex h-full flex-col justify-center gap-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <input
+                                    type="text"
+                                    value={settings.name}
+                                    onChange={(event) =>
+                                      handleTrackNameChange(
+                                        trackNumber,
+                                        event.target.value,
+                                      )
                                     }
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
+                                    className="w-full rounded border border-transparent bg-transparent px-0 text-xs font-semibold text-gray-700 focus:border-gray-300 focus:outline-none focus:ring-0"
+                                    aria-label={`Rename track ${trackNumber}`}
+                                  />
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      type="button"
+                                      size="xs"
+                                      variant={isMuted ? "destructive" : "ghost"}
+                                      onClick={() => toggleTrackMute(trackNumber)}
+                                      aria-pressed={isMuted}
+                                    >
+                                      {isMuted ? (
+                                        <VolumeX className="h-3 w-3" />
+                                      ) : (
+                                        <Volume2 className="h-3 w-3" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="xs"
+                                      variant="ghost"
+                                      onClick={() => handleRemoveTrack(trackNumber)}
+                                      disabled={!canRemove}
+                                      className="disabled:opacity-40"
+                                      title={
+                                        canRemove
+                                          ? "Remove track"
+                                          : "Remove clips before deleting"
+                                      }
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
                                 </div>
-                              </div>
-                              <div className="mt-2 flex items-center gap-2">
-                                <input
-                                  type="range"
-                                  min={0}
-                                  max={1}
-                                  step={0.01}
-                                  value={settings.volume}
-                                  onChange={(event) =>
-                                    handleTrackVolumeChange(
-                                      trackNumber,
-                                      Number(event.target.value),
-                                    )
-                                  }
-                                  className="flex-1"
-                                  aria-label={`Adjust volume for track ${trackNumber}`}
-                                />
-                                <span className="w-10 text-right text-[11px] text-gray-500">
-                                  {Math.round(settings.volume * 100)}%
-                                </span>
-                              </div>
-                              <div className="mt-1 text-[10px] uppercase tracking-wide text-gray-400">
-                                {clipCount} clip{clipCount === 1 ? "" : "s"}
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="range"
+                                    min={0}
+                                    max={1}
+                                    step={0.01}
+                                    value={settings.volume}
+                                    onChange={(event) =>
+                                      handleTrackVolumeChange(
+                                        trackNumber,
+                                        Number(event.target.value),
+                                      )
+                                    }
+                                    className="flex-1"
+                                    aria-label={`Adjust volume for track ${trackNumber}`}
+                                  />
+                                  <span className="w-10 text-right text-[11px] text-gray-500">
+                                    {Math.round(settings.volume * 100)}%
+                                  </span>
+                                </div>
+                                <div className="text-[10px] uppercase tracking-wide text-gray-400">
+                                  {clipCount} clip{clipCount === 1 ? "" : "s"}
+                                </div>
                               </div>
                             </div>
                           );
@@ -1688,7 +1692,7 @@ function SimpleInspectorPanel({
                   mediaAssets.map((asset) => (
                     <div
                       key={asset.id}
-                      className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 transition hover:border-purple-300 hover:bg-purple-50/40"
+                      className="flex items-center gap-4 rounded-lg border border-gray-200 px-4 py-3 transition hover:border-purple-300 hover:bg-purple-50/40"
                     >
                       <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100">
                         {asset.type === "video" ? (
@@ -1713,7 +1717,7 @@ function SimpleInspectorPanel({
                         size="xs"
                         variant="outline"
                         onClick={() => onAddAssetToTimeline(asset)}
-                        className="text-xs"
+                        className="shrink-0 whitespace-nowrap text-xs"
                       >
                         Add to timeline
                       </Button>
