@@ -56,6 +56,7 @@ interface TranscriptEntry {
   startedAt: number;
   completedAt?: number;
   updatedAt?: number;
+  sequence: number;
 }
 
 const AI_BASE_INSTRUCTION_LINES = [
@@ -321,6 +322,7 @@ const StudioPage: React.FC = () => {
   const hasCapturedAudioRef = useRef(false);
   const latestConversationRef = useRef<StoredConversation | null>(null);
 
+  const entrySequenceRef = useRef(0);
   const hostActiveIdRef = useRef<string | null>(null);
   const aiActiveIdRef = useRef<string | null>(null);
   const hostPendingRef = useRef("");
@@ -439,17 +441,20 @@ const StudioPage: React.FC = () => {
   const startSegment = useCallback((speaker: Speaker) => {
     const id = `${speaker}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const startedAt = Date.now();
-    setEntries((prev) => [
-      ...prev,
-      {
-        id,
-        speaker,
-        text: "",
-        status: "streaming",
-        startedAt,
-        updatedAt: startedAt,
-      },
-    ]);
+    const entry: TranscriptEntry = {
+      id,
+      speaker,
+      text: "",
+      status: "streaming",
+      startedAt,
+      updatedAt: startedAt,
+      sequence: entrySequenceRef.current++,
+    };
+    setEntries((prev) => {
+      const next = [...prev, entry];
+      next.sort((a, b) => a.sequence - b.sequence);
+      return next;
+    });
     if (speaker === "host") {
       hostActiveIdRef.current = id;
     } else {
@@ -637,6 +642,7 @@ const StudioPage: React.FC = () => {
     setIsHostSpeaking(false);
     setIsAiSpeaking(false);
     setEntries([]);
+    entrySequenceRef.current = 0;
   }, [stopTypingInterval]);
 
   const base64ToUint8Array = useCallback((base64: string): Uint8Array => {
@@ -671,23 +677,23 @@ const StudioPage: React.FC = () => {
         "Invalid OpenAI API key format. OpenAI API keys should start with 'sk-'. Please check your API key in Settings.",
       );
     }
-    const payload: Record<string, unknown> = {
+    const requestPayload: Record<string, unknown> = {
       sessionId,
       provider: activeProvider,
     };
 
     if (activeApiKey) {
-      payload.apiKey = activeApiKey;
+      requestPayload.apiKey = activeApiKey;
     }
 
     if (paperPayload) {
-      payload.paper = paperPayload;
+      requestPayload.paper = paperPayload;
     }
 
     const response = await fetch("/api/rt/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(requestPayload),
       cache: "no-store",
     });
 
@@ -940,7 +946,9 @@ const StudioPage: React.FC = () => {
     const hostAudio = encodePcm16ChunksToWav(hostAudioChunksRef.current, sampleRate);
     const aiAudio = encodePcm16ChunksToWav(aiAudioChunksRef.current, 24000);
 
-    const transcript = entries.map((entry, index) => ({
+    const orderedEntries = [...entries].sort((a, b) => a.sequence - b.sequence);
+
+    const transcript = orderedEntries.map((entry, index) => ({
       id: entry.id,
       role: entry.speaker === "host" ? "user" as const : "expert" as const,
       content: entry.text.trim(),
@@ -950,8 +958,8 @@ const StudioPage: React.FC = () => {
       order: index,
     }));
 
-    const first = entries[0];
-    const last = entries[entries.length - 1];
+    const first = orderedEntries[0];
+    const last = orderedEntries[orderedEntries.length - 1];
     const timelineDuration = first && last
       ? Math.max(0, Math.round(((last.completedAt ?? last.updatedAt ?? last.startedAt) - first.startedAt) / 1000))
       : 0;
