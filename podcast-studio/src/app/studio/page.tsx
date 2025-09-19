@@ -296,6 +296,7 @@ export default function Studio() {
   const [paperLoadError, setPaperLoadError] = useState<string | null>(null);
   const [hasCapturedAudio, setHasCapturedAudio] = useState(false);
   const [activeAiMessageId, setActiveAiMessageId] = useState<string | null>(null);
+  const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null);
 
   // Refs for real-time functionality
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -390,7 +391,8 @@ export default function Studio() {
     updateIsUserSpeaking(false);
     setIsTranscribing(false);
     currentUserMessageRef.current = null;
-  }, [stopUserTyping, updateIsUserSpeaking]);
+    setActiveUserMessageId(null);
+  }, [stopUserTyping, updateIsUserSpeaking, setActiveUserMessageId]);
 
   const startUserTyping = useCallback(() => {
     if (typeof window === 'undefined') {
@@ -623,6 +625,7 @@ export default function Studio() {
     }
 
     if (stop) {
+      lastAiMessageIdRef.current = null;
       setActiveAiMessageId(null);
     }
   }, [updateMessageContent]);
@@ -828,12 +831,18 @@ export default function Studio() {
         speaker: 'Host (You)',
         order,
       });
+      setActiveUserMessageId(id);
+    } else {
+      const activeMessage = currentUserMessageRef.current;
+      if (activeMessage) {
+        setActiveUserMessageId(activeMessage.id);
+      }
     }
 
     stopUserTyping();
     updateIsUserSpeaking(true);
     setIsTranscribing(true);
-  }, [appendMessage, stopUserTyping, updateIsUserSpeaking]);
+  }, [appendMessage, setActiveUserMessageId, stopUserTyping, updateIsUserSpeaking]);
 
   const handleUserTranscriptionDelta = useCallback((delta: string) => {
     if (!delta) {
@@ -1308,7 +1317,6 @@ export default function Studio() {
 
           if (type === 'response.done' || type === 'response.completed' || type === 'response.output_text.done') {
             flushAiTyping(true);
-            lastAiMessageIdRef.current = null;
           }
 
           if (!hasUserTranscriptSseRef.current && (type === 'conversation.item.input_audio_transcription.started' || type === 'input_audio_buffer.transcription.started')) {
@@ -2058,6 +2066,9 @@ export default function Studio() {
                                 <div className={`p-4 rounded-xl border-2 shadow-sm transition-all hover:shadow-md ${messageStyles}`}>
                                   <p className="text-sm leading-relaxed">
                                     {entry.content}
+                                    {entry.id === activeUserMessageId && (
+                                      <span className="inline-block w-2 h-4 bg-purple-500/70 ml-1 animate-pulse rounded-sm align-middle" />
+                                    )}
                                     {entry.id === activeAiMessageId && (
                                       <span className="inline-block w-2 h-4 bg-blue-500/70 ml-1 animate-pulse rounded-sm align-middle" />
                                     )}
