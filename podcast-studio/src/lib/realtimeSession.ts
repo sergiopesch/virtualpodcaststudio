@@ -29,6 +29,37 @@ interface RealtimeEvent {
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined;
 
+const extractText = (value: unknown): string | undefined => {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((item) => extractText(item))
+      .filter((part): part is string => typeof part === 'string' && part.length > 0);
+    if (parts.length > 0) {
+      return parts.join('');
+    }
+    return undefined;
+  }
+
+  if (value && typeof value === 'object') {
+    const maybeText = (value as { text?: unknown; value?: unknown }).text ?? (value as { text?: unknown; value?: unknown }).value;
+    const direct = extractText(maybeText);
+    if (direct) {
+      return direct;
+    }
+
+    const content = (value as { content?: unknown }).content;
+    if (content !== undefined) {
+      return extractText(content);
+    }
+  }
+
+  return undefined;
+};
+
 const buildErrorMeta = (error: unknown): Record<string, unknown> => ({
   message: error instanceof Error ? error.message : String(error),
   stack: error instanceof Error ? error.stack : undefined,
@@ -398,7 +429,7 @@ class RTManager extends EventEmitter {
       case 'response.output_text.delta':
         {
           const payload = event as Record<string, unknown>;
-          const text = asString(payload.delta) ?? asString(payload.text);
+          const text = extractText(payload.delta) ?? extractText(payload.text);
           if (text) {
             log.debug(`Text delta received`, { sessionId: this.sessionId, text });
             this.emit('transcript', text);
@@ -409,7 +440,7 @@ class RTManager extends EventEmitter {
       case 'response.audio_transcript.delta':
         {
           const payload = event as Record<string, unknown>;
-          const text = asString(payload.delta);
+          const text = extractText(payload.delta) ?? extractText((payload as Record<string, unknown>).transcript);
           log.debug(`Audio transcript delta received`, { sessionId: this.sessionId, text });
           if (text) {
             this.emit('transcript', text);
@@ -425,7 +456,7 @@ class RTManager extends EventEmitter {
       case 'conversation.item.input_audio_transcription.completed':
         {
           const payload = event as Record<string, unknown>;
-          const transcript = asString(payload.transcript);
+          const transcript = extractText(payload.transcript);
           if (transcript) {
             log.info(`User speech transcribed`, { sessionId: this.sessionId, transcript });
             this.emit('user_transcript', transcript);
@@ -452,7 +483,7 @@ class RTManager extends EventEmitter {
       case 'conversation.item.input_audio_transcription.delta':
         {
           const payload = event as Record<string, unknown>;
-          const delta = asString(payload.delta);
+          const delta = extractText(payload.delta);
           if (delta) {
             log.debug(`User transcription delta`, { sessionId: this.sessionId, delta });
             this.emit('user_transcript_delta', delta);
@@ -464,7 +495,7 @@ class RTManager extends EventEmitter {
       case 'input_audio_buffer.transcription.delta':
         {
           const payload = event as Record<string, unknown>;
-          const delta = asString(payload.delta);
+          const delta = extractText(payload.delta);
           if (delta) {
             log.debug(`User transcription delta (alt)`, { sessionId: this.sessionId, delta });
             this.emit('user_transcript_delta', delta);
@@ -474,7 +505,7 @@ class RTManager extends EventEmitter {
       case 'input_audio_buffer.transcription.completed':
         {
           const payload = event as Record<string, unknown>;
-          const transcript = asString(payload.transcript);
+          const transcript = extractText(payload.transcript);
           if (transcript) {
             log.info(`User speech transcribed (alt)`, { sessionId: this.sessionId, transcript });
             this.emit('user_transcript', transcript);

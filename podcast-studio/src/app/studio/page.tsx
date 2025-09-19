@@ -1529,9 +1529,10 @@ export default function Studio() {
     }
     hasUserTranscriptSseRef.current = false;
     hasAiTranscriptSseRef.current = false;
-    const hasStoredConversation = latestConversationRef.current != null;
-    hasCapturedAudioRef.current = hasStoredConversation;
-    setHasCapturedAudio(hasStoredConversation);
+    const storedAudio = latestConversationRef.current?.audio;
+    const hasAudio = Boolean(storedAudio?.host || storedAudio?.ai);
+    hasCapturedAudioRef.current = hasAudio;
+    setHasCapturedAudio(hasAudio);
     messageSequenceRef.current = 0;
     setActiveAiMessageId(null);
     resetUserTranscriptionState();
@@ -1545,10 +1546,6 @@ export default function Studio() {
     const sampleRate = Math.round(audioContextRef.current?.sampleRate ?? 24000);
     const hostAudio = encodePcm16ChunksToWav(hostAudioChunksRef.current, sampleRate);
     const aiAudio = encodePcm16ChunksToWav(aiAudioChunksRef.current, 24000);
-
-    if (!hostAudio && !aiAudio) {
-      return null;
-    }
 
     const liveMessageId = currentUserMessageRef.current?.id;
     const liveTranscript = userTranscriptionDisplay.trim();
@@ -1573,10 +1570,17 @@ export default function Studio() {
       order: msg.order,
     }));
 
+    const firstMessage = orderedMessages[0];
+    const lastMessage = orderedMessages[orderedMessages.length - 1];
+    const timelineDuration = firstMessage && lastMessage
+      ? Math.max(0, Math.round((lastMessage.timestamp.getTime() - firstMessage.timestamp.getTime()) / 1000))
+      : 0;
+
     const durationSeconds = Math.max(
       hostAudio?.durationSeconds ?? 0,
       aiAudio?.durationSeconds ?? 0,
       sessionDuration,
+      timelineDuration,
     );
 
     return {
@@ -1618,9 +1622,14 @@ export default function Studio() {
       if (payload) {
         latestConversationRef.current = payload;
         saveConversationToSession(payload);
+        const hasAudio = Boolean(payload.audio.host || payload.audio.ai);
+        hasCapturedAudioRef.current = hasAudio;
+        setHasCapturedAudio(hasAudio);
         setStatusMessage('Conversation saved for the Video Studio.');
       } else {
         latestConversationRef.current = null;
+        hasCapturedAudioRef.current = false;
+        setHasCapturedAudio(false);
         setStatusMessage(null);
       }
     } catch (storageError) {
@@ -1650,13 +1659,16 @@ export default function Studio() {
 
       const payload = buildConversationPayload();
       if (!payload) {
-        setError('Capture a conversation with audio before sending it to the Video Studio.');
+        setError('Capture a conversation before sending it to the Video Studio.');
         setStatusMessage(null);
         return;
       }
 
       latestConversationRef.current = payload;
       saveConversationToSession(payload);
+      const hasAudio = Boolean(payload.audio.host || payload.audio.ai);
+      hasCapturedAudioRef.current = hasAudio;
+      setHasCapturedAudio(hasAudio);
       setError(null);
       setStatusMessage('Conversation handed off to the Video Studio.');
       router.push('/video-studio');
