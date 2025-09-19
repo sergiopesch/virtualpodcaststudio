@@ -40,26 +40,28 @@ export async function GET() {
       }, { status: 500 });
     }
     
-    const models = await response.json();
-    console.log('[TEST] Found', models.data?.length || 0, 'models');
-    
+    const models = await response.json() as { data?: Array<{ id: string }> };
+    const modelList = Array.isArray(models.data) ? models.data : [];
+    console.log('[TEST] Found', modelList.length, 'models');
+
     // Check if gpt-4o-realtime model is available
-    const realtimeModels = models.data?.filter((m: any) => m.id.includes('realtime')) || [];
-    console.log('[TEST] Realtime models found:', realtimeModels.map((m: any) => m.id));
+    const realtimeModels = modelList.filter((model) => typeof model.id === 'string' && model.id.includes('realtime'));
+    console.log('[TEST] Realtime models found:', realtimeModels.map((model) => model.id));
     
     return NextResponse.json({ 
       success: true,
       hasKey: true,
       keyLength: apiKey.length,
-      modelsCount: models.data?.length || 0,
-      realtimeModels: realtimeModels.map((m: any) => m.id)
+      modelsCount: modelList.length,
+      realtimeModels: realtimeModels.map((model) => model.id)
     });
-    
-  } catch (error: any) {
+
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to reach OpenAI';
     console.error('[TEST] Error testing OpenAI connection:', error);
-    return NextResponse.json({ 
-      error: error.message,
-      hasKey: !!process.env.OPENAI_API_KEY 
+    return NextResponse.json({
+      error: message,
+      hasKey: !!process.env.OPENAI_API_KEY
     }, { status: 500 });
   }
 }

@@ -36,15 +36,16 @@ export async function POST(req: Request) {
       message: 'Audio turn committed successfully' 
     });
     
-  } catch (error: any) {
-    console.error(`[ERROR] Failed to commit audio turn`, { 
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to commit audio turn';
+    console.error(`[ERROR] Failed to commit audio turn`, {
       sessionId,
-      error: error.message,
-      stack: error.stack 
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined
     });
-    
+
     let status = 500;
-    let errorMessage = error.message || 'Failed to commit audio turn';
+    const errorMessage = message;
     
     if (errorMessage.includes('Session not ready')) {
       status = 503;

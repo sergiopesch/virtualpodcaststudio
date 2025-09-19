@@ -34,14 +34,15 @@ export async function GET(req: Request) {
 
     return NextResponse.json(response);
     
-  } catch (error: any) {
-    console.error(`[ERROR] Status check failed`, { 
-      error: error.message,
-      stack: error.stack 
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to check status';
+    console.error(`[ERROR] Status check failed`, {
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined
     });
-    
-    return NextResponse.json({ 
-      error: error.message || 'Failed to check status' 
+
+    return NextResponse.json({
+      error: message
     }, { status: 500 });
   }
 }
