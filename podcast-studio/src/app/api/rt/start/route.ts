@@ -1,6 +1,7 @@
 // src/app/api/rt/start/route.ts
 import { NextResponse } from "next/server";
 import { rtSessionManager } from "@/lib/realtimeSession";
+import { SecureEnv } from "@/lib/secureEnv";
 
 export const runtime = "nodejs";
 
@@ -23,8 +24,9 @@ export async function POST(req: Request) {
         ? 'google'
         : 'openai';
     const incomingKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const fallbackKey = provider === 'openai' ? SecureEnv.getWithDefault('OPENAI_API_KEY', '') : '';
     const resolvedKey = provider === 'openai'
-      ? incomingKey || process.env.OPENAI_API_KEY || ''
+      ? incomingKey || fallbackKey
       : incomingKey;
     const model = typeof body.model === 'string' ? body.model.trim() : undefined;
     const rawPaper = body.paper;
@@ -48,6 +50,16 @@ export async function POST(req: Request) {
         error: `Missing API key for ${label}`,
         sessionId,
       }, { status: 400 });
+    }
+
+    if (!incomingKey && provider === 'openai') {
+      const info = SecureEnv.getInfo("OPENAI_API_KEY");
+      console.log(`[INFO] Using server-side OpenAI credential fallback`, {
+        sessionId,
+        hasFallback: info.exists,
+        length: info.length,
+        fingerprint: info.fingerprint,
+      });
     }
 
     const configChanged = manager.configure({ provider, apiKey: resolvedKey, model, paperContext });

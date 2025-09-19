@@ -1,6 +1,10 @@
 // src/lib/realtimeSession.ts
 import WebSocket from 'ws';
 import { EventEmitter } from "node:events";
+import type { IncomingMessage } from 'http';
+
+import { ApiKeySecurity } from "./apiKeySecurity";
+import { SecureEnv } from "./secureEnv";
 
 export type RTSignals = {
   audio: (data: Uint8Array) => void;
@@ -10,14 +14,100 @@ export type RTSignals = {
   close: () => void;
   error: (err: unknown) => void;
   ready: () => void;
+  assistant_done: () => void;
 };
 
-// Simple logging utility
+const LOG_SNIPPET_LIMIT = 180;
+const SENSITIVE_KEYS = new Set([
+  'apikey',
+  'api_key',
+  'api-key',
+  'key',
+  'authorization',
+  'token',
+  'secret',
+  'password',
+  'accesstoken',
+  'refreshtoken',
+  'bearertoken',
+]);
+
+const sanitizeLogString = (value: string, limit = LOG_SNIPPET_LIMIT): string =>
+  value.replace(/\s+/g, " ").trim().slice(0, limit);
+
+function sanitizeLogValue(value: unknown): unknown {
+  if (value instanceof Error) {
+    return {
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) {
+    return { length: value.length };
+  }
+
+  if (value instanceof Uint8Array) {
+    return { length: value.length };
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeLogValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, val]) => [
+        key,
+        sanitizeLogEntry(key, val),
+      ]),
+    );
+  }
+
+  if (typeof value === "string" && value.length > LOG_SNIPPET_LIMIT) {
+    return sanitizeLogString(value);
+  }
+
+  return value;
+}
+
+function sanitizeLogEntry(key: string, value: unknown): unknown {
+  const normalizedKey = key.toLowerCase();
+  if (SENSITIVE_KEYS.has(normalizedKey)) {
+    if (typeof value === "string") {
+      return ApiKeySecurity.maskKey(value);
+    }
+    if (value === null || value === undefined) {
+      return value;
+    }
+    return "[REDACTED]";
+  }
+
+  return sanitizeLogValue(value);
+}
+
+const sanitizeForLogging = (meta: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(
+    Object.entries(meta).map(([key, value]) => [key, sanitizeLogEntry(key, value)]),
+  );
+
 const log = {
-  info: (msg: string, meta?: Record<string, unknown>) => console.log(`[INFO] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  error: (msg: string, meta?: Record<string, unknown>) => console.error(`[ERROR] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  warn: (msg: string, meta?: Record<string, unknown>) => console.warn(`[WARN] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  debug: (msg: string, meta?: Record<string, unknown>) => console.debug(`[DEBUG] ${msg}`, meta ? JSON.stringify(meta) : '')
+  info: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.log(`[INFO] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : "");
+  },
+  error: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.error(`[ERROR] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : "");
+  },
+  warn: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.warn(`[WARN] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : "");
+  },
+  debug: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.debug(`[DEBUG] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : "");
+  }
 };
 
 interface RealtimeEvent {
@@ -66,7 +156,7 @@ const buildErrorMeta = (error: unknown): Record<string, unknown> => ({
 });
 
 const DEFAULT_OPENAI_REALTIME_MODEL =
-  process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-10-01';
+  SecureEnv.getWithDefault("OPENAI_REALTIME_MODEL", "gpt-4o-realtime-preview-2024-10-01");
 
 type SupportedProvider = 'openai' | 'google';
 
@@ -108,7 +198,7 @@ class RTManager extends EventEmitter {
   private connectionTimeout?: NodeJS.Timeout;
   private responseInFlight: boolean = false;
   private provider: SupportedProvider = 'openai';
-  private apiKey: string | null = process.env.OPENAI_API_KEY || null;
+  private apiKey: string | null = null;
   private model: string = DEFAULT_OPENAI_REALTIME_MODEL;
   private conversationContext: PaperContext | null = null;
   private lastPrimedSummary: string | null = null;
@@ -131,7 +221,9 @@ class RTManager extends EventEmitter {
     const trimmedKey = (config.apiKey || '').trim();
     const fallbackKey =
       trimmedKey ||
-      (normalizedProvider === 'openai' ? process.env.OPENAI_API_KEY || '' : '');
+      (normalizedProvider === 'openai'
+        ? SecureEnv.getWithDefault('OPENAI_API_KEY', '')
+        : '');
     const resolvedKey = fallbackKey.trim();
 
     if (!resolvedKey) {
@@ -166,9 +258,16 @@ class RTManager extends EventEmitter {
   }
 
   getConfiguration() {
+    const activeKey = (this.apiKey ?? '').trim();
+    const fallbackKey =
+      activeKey ||
+      (this.provider === 'openai'
+        ? SecureEnv.getWithDefault('OPENAI_API_KEY', '')
+        : '');
+
     return {
       provider: this.provider,
-      hasApiKey: !!this.apiKey,
+      hasApiKey: fallbackKey.trim().length > 0,
       model: this.model,
     };
   }
@@ -238,15 +337,16 @@ class RTManager extends EventEmitter {
   }
 
   private async _establishConnection(): Promise<void> {
-    const key = (this.apiKey || '').trim();
-
-    if (!key) {
-      const providerName = this.provider === 'openai' ? 'OpenAI' : 'Google';
-      throw new Error(`${providerName} API key is required to start a realtime session`);
-    }
-
     if (this.provider !== 'openai') {
       throw new Error('Google provider is not supported for realtime audio sessions yet');
+    }
+
+    const candidateKey = (this.apiKey ?? '').trim();
+    const fallbackKey = SecureEnv.getWithDefault('OPENAI_API_KEY', '');
+    const resolvedKey = (candidateKey || fallbackKey).trim();
+
+    if (!resolvedKey) {
+      throw new Error('OpenAI API key is required to start a realtime session');
     }
 
     return new Promise((resolve, reject) => {
@@ -254,44 +354,84 @@ class RTManager extends EventEmitter {
         sessionId: this.sessionId,
         provider: this.provider,
         model: this.model,
+        hasApiKey: resolvedKey.length > 0,
+        keySource: candidateKey ? 'session' : 'env',
       });
 
-      // First, let's test if we can reach OpenAI API with a simple HTTP request
-      fetch('https://api.openai.com/v1/models', {
+      const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
+      log.info(`Connecting to OpenAI Realtime API`, { sessionId: this.sessionId, url: wsUrl });
+
+      const ws = new WebSocket(wsUrl, {
         headers: {
-          'Authorization': `Bearer ${key}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${resolvedKey}`,
+          'OpenAI-Beta': 'realtime=v1'
         }
-      }).then(response => {
-        log.info(`OpenAI API test`, {
-          sessionId: this.sessionId,
-          status: response.status,
-          ok: response.ok
-        });
-
-        if (!response.ok) {
-          reject(new Error(`OpenAI API authentication failed: ${response.status}`));
-          return;
-        }
-
-        // Now try the WebSocket connection
-        const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
-        log.info(`Connecting to OpenAI Realtime API`, { sessionId: this.sessionId, url: wsUrl });
-
-        const ws = new WebSocket(wsUrl, {
-          headers: {
-            'Authorization': `Bearer ${key}`,
-            'OpenAI-Beta': 'realtime=v1'
-          }
-        });
-
-        this.ws = ws;
-        this._setupWebSocketHandlers(ws, resolve, reject);
-
-      }).catch(error => {
-        log.error(`Failed to test OpenAI API connection`, { sessionId: this.sessionId, error: error.message });
-        reject(new Error(`Cannot connect to OpenAI API: ${error.message}`));
       });
+
+      let settled = false;
+      const settleResolve = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
+      const settleReject = (error: Error) => {
+        if (!settled) {
+          settled = true;
+          reject(error);
+        }
+      };
+
+      const HTTP_ERROR_BODY_LIMIT = 200;
+      const handleUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+        const statusCode: number | undefined = response.statusCode ?? undefined;
+        const statusMessage: string | undefined = response.statusMessage ?? undefined;
+        let errorMessage = 'OpenAI realtime handshake failed';
+        if (statusCode === 401 || statusCode === 403) {
+          errorMessage = 'OpenAI realtime authentication failed';
+        } else if (typeof statusCode === 'number') {
+          errorMessage = `OpenAI realtime handshake failed (status ${statusCode})`;
+        }
+
+        const chunks: Buffer[] = [];
+        let collected = 0;
+        response.on('data', (chunk: Buffer) => {
+          if (collected >= HTTP_ERROR_BODY_LIMIT) {
+            return;
+          }
+          const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          const remaining = HTTP_ERROR_BODY_LIMIT - collected;
+          chunks.push(bufferChunk.subarray(0, remaining));
+          collected += Math.min(bufferChunk.length, remaining);
+        });
+        response.on('end', () => {
+          const snippet = chunks.length ? Buffer.concat(chunks).toString('utf8') : undefined;
+          log.error('Realtime handshake HTTP error', {
+            sessionId: this.sessionId,
+            statusCode,
+            statusMessage,
+            bodySnippet: snippet ? sanitizeLogString(snippet) : undefined,
+          });
+        });
+
+        settleReject(new Error(errorMessage));
+      };
+
+      ws.once('unexpected-response', handleUnexpectedResponse);
+
+      this.ws = ws;
+      this._setupWebSocketHandlers(
+        ws,
+        () => {
+          ws.removeListener('unexpected-response', handleUnexpectedResponse);
+          settleResolve();
+        },
+        (error) => {
+          ws.removeListener('unexpected-response', handleUnexpectedResponse);
+          const normalizedError = error instanceof Error ? error : new Error('Failed to establish realtime session');
+          settleReject(normalizedError);
+        }
+      );
     });
   }
 
@@ -345,10 +485,12 @@ class RTManager extends EventEmitter {
         
         this._handleEvent(event);
       } catch (error) {
+        const rawText = data.toString();
         log.error(`Failed to parse WebSocket message`, {
           sessionId: this.sessionId,
           ...buildErrorMeta(error),
-          rawData: data.toString()
+          rawLength: rawText.length,
+          rawSnippet: sanitizeLogString(rawText),
         });
       }
     });
@@ -431,7 +573,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const text = extractText(payload.delta) ?? extractText(payload.text);
           if (text) {
-            log.debug(`Text delta received`, { sessionId: this.sessionId, text });
+            log.debug(`Text delta received`, {
+              sessionId: this.sessionId,
+              length: text.length,
+            });
             this.emit('transcript', text);
           }
         }
@@ -441,7 +586,10 @@ class RTManager extends EventEmitter {
         {
           const payload = event as Record<string, unknown>;
           const text = extractText(payload.delta) ?? extractText((payload as Record<string, unknown>).transcript);
-          log.debug(`Audio transcript delta received`, { sessionId: this.sessionId, text });
+          log.debug(`Audio transcript delta received`, {
+            sessionId: this.sessionId,
+            length: text ? text.length : 0,
+          });
           if (text) {
             this.emit('transcript', text);
           }
@@ -458,7 +606,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const transcript = extractText(payload.transcript);
           if (transcript) {
-            log.info(`User speech transcribed`, { sessionId: this.sessionId, transcript });
+            log.info(`User speech transcribed`, {
+              sessionId: this.sessionId,
+              length: transcript.length,
+            });
             this.emit('user_transcript', transcript);
           }
         }
@@ -485,7 +636,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const delta = extractText(payload.delta);
           if (delta) {
-            log.debug(`User transcription delta`, { sessionId: this.sessionId, delta });
+            log.debug(`User transcription delta`, {
+              sessionId: this.sessionId,
+              length: delta.length,
+            });
             this.emit('user_transcript_delta', delta);
           }
         }
@@ -497,7 +651,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const delta = extractText(payload.delta);
           if (delta) {
-            log.debug(`User transcription delta (alt)`, { sessionId: this.sessionId, delta });
+            log.debug(`User transcription delta (alt)`, {
+              sessionId: this.sessionId,
+              length: delta.length,
+            });
             this.emit('user_transcript_delta', delta);
           }
         }
@@ -507,7 +664,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const transcript = extractText(payload.transcript);
           if (transcript) {
-            log.info(`User speech transcribed (alt)`, { sessionId: this.sessionId, transcript });
+            log.info(`User speech transcribed (alt)`, {
+              sessionId: this.sessionId,
+              length: transcript.length,
+            });
             this.emit('user_transcript', transcript);
           }
         }
@@ -571,25 +731,27 @@ class RTManager extends EventEmitter {
 
   async stop() {
     log.info(`Stopping session`, { sessionId: this.sessionId });
-    
+
     if (!this.ws) {
       log.debug(`No active session to stop`, { sessionId: this.sessionId });
       return;
     }
-    
-    try { 
+
+    try {
       this.ws.close();
       log.info(`Session stopped successfully`, { sessionId: this.sessionId });
     } catch (error) {
-      log.error(`Error closing session`, { 
+      log.error(`Error closing session`, {
         sessionId: this.sessionId,
         error: error instanceof Error ? error.message : 'Unknown error'
       });
     }
-    
+
     this.ws = null;
     this.startPromise = undefined;
     this.lastPrimedSummary = null;
+    this.responseInFlight = false;
+    this.apiKey = null;
 
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
@@ -658,7 +820,7 @@ class RTManager extends EventEmitter {
       session: {
         modalities: ['text', 'audio'],
         instructions: this._buildInstructions(),
-        voice: process.env.OPENAI_REALTIME_VOICE || 'alloy',
+        voice: SecureEnv.getWithDefault('OPENAI_REALTIME_VOICE', 'alloy'),
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
         input_audio_transcription: {
