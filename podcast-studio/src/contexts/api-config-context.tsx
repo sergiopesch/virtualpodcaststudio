@@ -65,12 +65,6 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
           models: parsed.models ?? {},
         });
       }
-      
-      // Load API keys from secure storage
-      setApiKeys({
-        openai: ApiKeySecurity.retrieveKey("openai"),
-        google: ApiKeySecurity.retrieveKey("google"),
-      });
     } catch (error) {
       console.error("Failed to hydrate API configuration", error);
     } finally {
@@ -98,19 +92,13 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
   }, []);
 
   const setApiKey = useCallback((provider: LlmProvider, key: string) => {
-    const trimmedKey = key.trim();
-    
-    // Store securely
-    ApiKeySecurity.storeKey(provider, trimmedKey);
-    
     setApiKeys((previous) => ({
       ...previous,
-      [provider]: trimmedKey,
+      [provider]: key.trim(),
     }));
   }, []);
 
   const clearApiKey = useCallback((provider: LlmProvider) => {
-    ApiKeySecurity.removeKey(provider);
     setApiKeys((previous) => ({
       ...previous,
       [provider]: "",
