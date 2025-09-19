@@ -292,6 +292,7 @@ class RTManager extends EventEmitter {
   private startPromise?: Promise<void>;
   private connectionTimeout?: NodeJS.Timeout;
   private responseInFlight: boolean = false;
+  private pendingResponseReason: string | null = null;
   private provider: SupportedProvider = 'openai';
   private apiKey: string | null = SecureEnv.get('OPENAI_API_KEY') || null;
   private model: string = DEFAULT_OPENAI_REALTIME_MODEL;
@@ -701,7 +702,10 @@ class RTManager extends EventEmitter {
 
       case 'response.created':
         this.responseInFlight = true;
-        log.debug(`Response created`, { sessionId: this.sessionId });
+        log.debug(`Response created`, {
+          sessionId: this.sessionId,
+          reason: this.pendingResponseReason,
+        });
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
@@ -713,21 +717,13 @@ class RTManager extends EventEmitter {
             this.emit('user_transcript', transcript);
           }
         }
-        // Ensure a response is generated even if server VAD didn't auto-create
-        if (!this.responseInFlight) {
-          try {
-            this._sendEvent({
-              type: 'response.create',
-              response: { modalities: ['text', 'audio'] }
-            });
-            this.responseInFlight = true;
-            log.debug(`Auto-triggered response after transcription completion`, { sessionId: this.sessionId });
-          } catch (error) {
-            log.error(`Failed to auto-trigger response`, {
-              sessionId: this.sessionId,
-              ...buildErrorMeta(error),
-            });
-          }
+        try {
+          this._requestAssistantResponse('transcription-completed');
+        } catch (error) {
+          log.error(`Failed to auto-trigger response`, {
+            sessionId: this.sessionId,
+            ...buildErrorMeta(error),
+          });
         }
         break;
 
@@ -762,45 +758,44 @@ class RTManager extends EventEmitter {
             this.emit('user_transcript', transcript);
           }
         }
-        if (!this.responseInFlight) {
-          try {
-            this._sendEvent({
-              type: 'response.create',
-              response: { modalities: ['text', 'audio'] }
-            });
-            this.responseInFlight = true;
-            log.debug(`Auto-triggered response after alt transcription completed`, { sessionId: this.sessionId });
-          } catch (error) {
-            log.error(`Failed to auto-trigger response (alt)`, {
-              sessionId: this.sessionId,
-              ...buildErrorMeta(error),
-            });
-          }
+        try {
+          this._requestAssistantResponse('transcription-completed-alt');
+        } catch (error) {
+          log.error(`Failed to auto-trigger response (alt)`, {
+            sessionId: this.sessionId,
+            ...buildErrorMeta(error),
+          });
         }
         break;
 
       case 'input_audio_buffer.speech_stopped':
-        // Fallback hook: if speech stopped and no response yet, create one
-        if (!this.responseInFlight) {
-          try {
-            this._sendEvent({
-              type: 'response.create',
-              response: { modalities: ['text', 'audio'] }
-            });
-            this.responseInFlight = true;
-            log.debug(`Auto-triggered response on speech stop`, { sessionId: this.sessionId });
-          } catch (error) {
-            log.error(`Failed to trigger response on speech stop`, {
-              sessionId: this.sessionId,
-              ...buildErrorMeta(error),
-            });
-          }
+        try {
+          this._requestAssistantResponse('speech-stopped');
+        } catch (error) {
+          log.error(`Failed to trigger response on speech stop`, {
+            sessionId: this.sessionId,
+            ...buildErrorMeta(error),
+          });
         }
         break;
 
       case 'error':
         log.error(`Realtime API error`, { sessionId: this.sessionId, error: event.error });
         this.emit('error', event.error);
+        break;
+
+      case 'response.error':
+        this.responseInFlight = false;
+        this.pendingResponseReason = null;
+        {
+          const payload = event as Record<string, unknown>;
+          const responseError = payload.error ?? new Error('Assistant response error');
+          log.error(`Assistant response errored`, {
+            sessionId: this.sessionId,
+            error: responseError,
+          });
+          this.emit('error', responseError);
+        }
         break;
 
       case 'session.updated':
@@ -811,7 +806,15 @@ class RTManager extends EventEmitter {
       case 'response.completed':
         log.debug(`Response completed`, { sessionId: this.sessionId });
         this.responseInFlight = false;
+        this.pendingResponseReason = null;
         this.emit('assistant_done');
+        break;
+
+      case 'response.cancelled':
+      case 'response.canceled':
+        log.debug(`Response cancelled`, { sessionId: this.sessionId });
+        this.responseInFlight = false;
+        this.pendingResponseReason = null;
         break;
 
       default:
@@ -841,6 +844,8 @@ class RTManager extends EventEmitter {
     this.ws = null;
     this.startPromise = undefined;
     this.lastPrimedSummary = null;
+    this.responseInFlight = false;
+    this.pendingResponseReason = null;
 
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
@@ -854,6 +859,58 @@ class RTManager extends EventEmitter {
     }
 
     this.ws.send(JSON.stringify(event));
+  }
+
+  private _requestAssistantResponse(
+    reason: string,
+    options: { force?: boolean; modalities?: Array<'text' | 'audio'> } = {},
+  ) {
+    const { force = false, modalities = ['text', 'audio'] as Array<'text' | 'audio'> } = options;
+
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      const error = new Error("Session not ready - WebSocket not connected");
+      log.error('Cannot request assistant response - session not ready', {
+        sessionId: this.sessionId,
+        reason,
+      });
+      throw error;
+    }
+
+    if (this.responseInFlight && !force) {
+      log.debug('Skipping response request - assistant already responding', {
+        sessionId: this.sessionId,
+        reason,
+        pendingReason: this.pendingResponseReason,
+      });
+      return;
+    }
+
+    const responseEvent = {
+      type: 'response.create',
+      response: { modalities },
+    } as const;
+
+    this.responseInFlight = true;
+    this.pendingResponseReason = reason;
+
+    try {
+      this._sendEvent(responseEvent);
+      log.debug('Requested assistant response', {
+        sessionId: this.sessionId,
+        reason,
+        force,
+        modalities,
+      });
+    } catch (error) {
+      this.responseInFlight = false;
+      this.pendingResponseReason = null;
+      log.error('Failed to request assistant response', {
+        sessionId: this.sessionId,
+        reason,
+        ...buildErrorMeta(error),
+      });
+      throw error;
+    }
   }
 
   private _normalizeContext(context?: PaperContext | null): PaperContext | null {
@@ -1066,15 +1123,7 @@ class RTManager extends EventEmitter {
       
       this._sendEvent(conversationItemEvent);
       
-      // Create a response
-      const responseEvent = {
-        type: "response.create",
-        response: {
-          modalities: ["text", "audio"]
-        }
-      };
-      
-      this._sendEvent(responseEvent);
+      this._requestAssistantResponse('user-text', { force: true });
       log.debug(`Text sent successfully`, { sessionId: this.sessionId });
     } catch (error) {
       log.error(`Failed to send text`, { 
@@ -1128,15 +1177,7 @@ class RTManager extends EventEmitter {
       };
       this._sendEvent(commitEvent);
       
-      // Create a response
-      const responseEvent = {
-        type: "response.create",
-        response: {
-          modalities: ["text", "audio"]
-        }
-      };
-      this._sendEvent(responseEvent);
-      
+      this._requestAssistantResponse('manual-commit', { force: true });
       log.debug(`Audio turn committed successfully`, { sessionId: this.sessionId });
     } catch (error) {
       log.error(`Failed to commit turn`, { 
