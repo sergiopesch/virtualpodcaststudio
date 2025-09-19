@@ -1,92 +1,85 @@
 # Frontend Agent Guide
 
 ## Mission & Stack
-The frontend is a Next.js 15 App Router project written in TypeScript. It powers the full
-"virtual podcast studio" experience: research discovery, realtime audio recording, and
-post-production dashboards. Styling leans on Tailwind CSS 4 with custom gradient/glass
-utilities defined in [`src/app/globals.css`](./src/app/globals.css).
+This Next.js 15 App Router project (TypeScript + Tailwind 4) powers the complete Virtual
+Podcast Studio workflow: researching papers, conducting realtime conversations with OpenAI, and
+simulating post-production tooling. Styling relies on utilities defined in
+[`src/app/globals.css`](./src/app/globals.css) together with shadcn-inspired primitives in
+`src/components/ui`.
 
 ```
 podcast-studio/
 ├── src/
 │   ├── app/               # App Router pages + API routes
-│   ├── components/        # Layout chrome, shadcn-based UI primitives
-│   ├── contexts/          # React context providers for sidebar + API keys
-│   ├── hooks/             # Legacy websocket hook (fallback path)
-│   └── lib/               # Realtime session manager + shared utilities
+│   ├── components/        # Layout chrome, shadcn-derived UI primitives
+│   ├── contexts/          # Sidebar + API provider state
+│   ├── hooks/             # Legacy websocket client (fallback)
+│   └── lib/               # Realtime session manager + conversation storage
 ├── package.json           # Next.js 15, React 19, Tailwind 4
 └── AGENT.md               # This guide
 ```
 
-## High-Level Flow
-1. **Research Hub (`src/app/page.tsx`)** – Users pick arXiv categories, call the Next.js
-   `/api/papers` route, and review normalized results. Choosing "Start Audio Studio"
-   persists the selected paper into `sessionStorage` (`vps:selectedPaper`).
-2. **Audio Studio (`src/app/studio/page.tsx`)** – Restores the stored paper, ensures a
-   realtime session via `/api/rt/start`, negotiates WebRTC with `/api/rt/webrtc`, and
-   streams PCM16 microphone chunks through `/api/rt/audio-append`. Server-Sent Events from
-   `/api/rt/audio`, `/api/rt/transcripts`, and `/api/rt/user-transcripts` render live audio
-   and captions.
-3. **Video Studio / Library / Publisher pages** – Rich mock dashboards that share layout
-   chrome and highlight the post-production pipeline.
-
-Backend communication happens exclusively through App Router API routes. They either proxy
-requests to FastAPI (`/api/papers`) or interact with the shared `rtSessionManager`
-(`src/lib/realtimeSession.ts`) for realtime sessions.
+## Application Flow
+1. **Layout wrappers** – `src/app/layout.tsx` wraps all pages with `SidebarProvider` and
+   `ApiConfigProvider` so layout collapse state and API credentials are available everywhere.
+2. **Research Hub (`src/app/page.tsx`)** – Client component that lets users toggle topics,
+   fetches papers through `/api/papers`, and persists the selected paper to
+   `sessionStorage` (`vps:selectedPaper`) before routing to the Audio Studio.
+3. **Audio Studio (`src/app/studio/page.tsx`)** – Restores the stored paper, validates API
+   provider settings, bootstraps realtime sessions via `/api/rt/start`, negotiates WebRTC with
+   `/api/rt/webrtc`, streams microphone chunks to `/api/rt/audio-append`/`audio-commit`, listens
+   to SSE feeds (`/audio`, `/transcripts`, `/user-transcripts`), and exposes export/handoff
+   controls.
+4. **Video Studio / Library / Publisher / Analytics** – Rich dashboard components that consume
+   conversations saved by the Audio Studio through `conversationStorage.ts`, letting users review
+   transcripts, timelines, and analytics.
+5. **API routes** – App Router endpoints under `src/app/api/` proxy browser actions to the
+   backend (`/api/papers`) and to the server-side realtime session manager (`/api/rt/*`). They all
+   run on the Node.js runtime.
 
 ## Key Modules
-- **Layout chrome** – `src/components/layout/sidebar.tsx`, `header.tsx`, and
-  `user-menu.tsx` render navigation, search, status, and workspace settings. They expect to
-  be wrapped in both `SidebarProvider` and `ApiConfigProvider` (see `src/app/layout.tsx`).
-- **UI primitives** – `src/components/ui` hosts shadcn-derived components (Button, Card,
-  Checkbox, ScrollArea, DropdownMenu, Sheet, Tabs). Follow their AGENT for styling rules.
-- **Contexts** – `SidebarProvider` manages collapse state; `ApiConfigProvider` persists
-  user-supplied API keys and active provider to `localStorage`.
-- **Realtime session manager** – `src/lib/realtimeSession.ts` implements a server-side
-  singleton that talks to OpenAI's Realtime WebSocket API, emits transcript/audio events,
-  and cleans up idle sessions. API routes under `src/app/api/rt` are thin wrappers around
-  it.
+- **Layout chrome** – `src/components/layout/sidebar.tsx`, `header.tsx`, `user-menu.tsx` render
+  navigation, status badges, search, and workspace settings. They expect the layout providers to
+  be present.
+- **UI primitives** – `src/components/ui` contains buttons, cards, sheets, dropdowns, etc. Follow
+  their AGENT for styling conventions.
+- **Contexts** – `SidebarProvider` manages the collapse state; `ApiConfigProvider` stores the
+  active provider, volatile API keys, and model overrides with localStorage hydration.
+- **Realtime session manager** – `src/lib/realtimeSession.ts` maintains OpenAI WebSocket
+  connections, normalises paper context, and emits events consumed by the `/api/rt/*` routes and
+  SSE streams.
+- **Conversation storage** – `src/lib/conversationStorage.ts` encodes PCM16 audio into WAV/base64
+  bundles and persists the latest conversation for the video tooling.
 
-## Adding or Modifying Features
-- **Stay in sync with the backend** – Any schema change to `Paper` or paper fetching must be
-  mirrored in both `/api/papers` (Next.js) and FastAPI (`backend/main.py`). `transformPapers`
-  in `src/app/page.tsx` and the Audio Studio's `SelectedPaper` interface expect the same
-  shape.
-- **Realtime flows** – Always start sessions (`/api/rt/start`) before posting audio/text.
-  When extending event types, update both the Audio Studio handlers and the session manager
-  event emitters. The WebSocket fallback (`src/hooks/useRealtimeConversation.ts`) still
-  expects the legacy FastAPI events—keep it compiling even if unused by default.
-- **Context usage** – Components that read `useSidebar` or `useApiConfig` must live under
-  the matching providers. If you add new providers, register them in `src/app/layout.tsx` so
-  all pages share the same context tree.
-- **Styling** – Prefer Tailwind utilities or the gradient/glass tokens defined in
-  `globals.css`. Avoid inline colors that drift from the design language; add utilities to
-  `globals.css` if needed.
-- **State hygiene** – Use `AbortController` when introducing new network requests on the
-  Research Hub to match the existing race-cancellation logic. Remember to clear additional
-  state inside `handleClearSelection` when you append new filters.
-- **Session storage contracts** – Keep the `vps:selectedPaper` payload backwards compatible
-  (Audio Studio will surface errors if parsing fails). When expanding its schema, update the
-  read/write logic in both pages simultaneously.
+## Implementation Guidelines
+- **Stay aligned with the backend** – Paper schemas and validation are shared with
+  `backend/main.py`. Update the Research Hub, `/api/papers`, and Audio Studio handoff together.
+- **Realtime lifecycle** – Always call `/api/rt/start` before uploading audio or sending text.
+  When emitting new events from `realtimeSession.ts`, update the Audio Studio data-channel/SSE
+  handlers and the API routes that forward them.
+- **Session storage contracts** – `vps:selectedPaper` and the conversation payload saved via
+  `conversationStorage.ts` are consumed across pages. Keep changes backwards compatible and guard
+  JSON parsing failures.
+- **Styling** – Prefer Tailwind utilities and the gradient/glass tokens from `globals.css`. Add
+  utilities there instead of hard-coding colours.
+- **Client vs server boundaries** – API routes and `realtimeSession.ts` must stay Node-only;
+  avoid importing client components or browser APIs in those modules.
 
 ## Environment Variables
-Create `.env.local` with:
-- `OPENAI_API_KEY` – used by server-side API routes if the user has not supplied a key.
-- `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE` – optional overrides for WebRTC
-  sessions.
-- `BACKEND_URL` / `NEXT_PUBLIC_BACKEND_URL` – override FastAPI base URL when not running on
+Create `.env.local` with any required server-side credentials:
+- `OPENAI_API_KEY` – fallback key used by realtime API routes when the user has not supplied one.
+- `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE` – optional overrides for session defaults.
+- `BACKEND_URL`, `NEXT_PUBLIC_BACKEND_URL` – override the FastAPI base URL when not running on
   `http://localhost:8000`.
 
-Do **not** expose secrets on the client. The API routes accept a user-provided key from the
-Settings sheet (`ApiConfigProvider`) and fall back to server env vars only on the server.
+Secrets are never written to persistent storage on the client—the workspace settings sheet keeps
+API keys in memory only.
 
-## Testing Checklist
-- `npm run lint` – ESLint 9 (fails currently due to known upstream issues; still run it and
-  note failures when filing PRs).
-- `npm run build` – Validate Turbopack builds for production when changing App Router or
-  API code.
-- Manual:
-  - Fetch papers with several topics and verify deduped cards.
-  - Start the Audio Studio, confirm session status via `/api/rt/status`, and inspect SSE
-    streams in browser dev tools.
-  - Exercise the workspace Settings sheet to ensure API key persistence works.
+## Testing
+- `npm run lint` – ESLint 9 (Next.js flat config).
+- `npm run build` – Validate the production bundle when modifying App Router pages or API routes.
+- Manual checks:
+  - Fetch multiple topics on the Research Hub and confirm deduped cards render.
+  - Start an Audio Studio session, speak into the microphone, verify transcript/audio SSE streams,
+    and test export/handoff actions.
+  - Open the workspace settings sheet to ensure provider/key changes persist via context.

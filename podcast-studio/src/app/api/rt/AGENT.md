@@ -1,69 +1,63 @@
 # Realtime API Routes – Agent Guide
 
-All files in this folder proxy browser requests to the server-side `rtSessionManager`
-(`src/lib/realtimeSession.ts`). They run on the Node.js runtime and must remain server-only
-(avoid importing client modules).
+All handlers in `src/app/api/rt/` run on the Node.js runtime and proxy browser actions to the
+server-side realtime session manager (`src/lib/realtimeSession.ts`). Do not import client
+components or browser-only APIs inside this folder.
 
 ```
 src/app/api/rt/
-├── start/route.ts          # Bootstrap or reconfigure a session
-├── status/route.ts         # Inspect session state
-├── stop/route.ts           # Tear down a session
-├── webrtc/route.ts         # SDP exchange with OpenAI
-├── audio-append/route.ts   # Upload PCM16 chunks
-├── audio-commit/route.ts   # Signal end-of-turn for audio
-├── text/route.ts           # Send typed messages
-├── audio/route.ts          # SSE stream of assistant audio (base64 PCM16)
-├── transcripts/route.ts    # SSE stream of assistant text deltas
-├── user-transcripts/route.ts # SSE stream of user speech transcripts
-└── AGENT.md                # This guide
+├── start/route.ts           # Configure + start a session
+├── status/route.ts          # Inspect session state
+├── stop/route.ts            # Tear down a session
+├── webrtc/route.ts          # Exchange SDP offers with OpenAI
+├── audio-append/route.ts    # Upload base64 PCM16 microphone chunks
+├── audio-commit/route.ts    # Signal end-of-turn after uploading audio
+├── text/route.ts            # Send typed messages
+├── audio/route.ts           # SSE stream of assistant audio (base64 WAV frames)
+├── transcripts/route.ts     # SSE stream of assistant transcript deltas
+├── user-transcripts/route.ts# SSE stream of user speech transcripts + deltas
+└── AGENT.md                 # This guide
 ```
 
 ## Lifecycle Overview
-1. **`POST /api/rt/start`** – Configures a session with `{sessionId, provider, apiKey, model}`.
-   Uses `rtSessionManager.getSession(sessionId)` and calls `configure()` + `start()`. Returns
-   `{ok, status, provider}` or surfaces meaningful error messages (missing API key,
-   authentication failure, timeout, etc.).
-2. **`POST /api/rt/webrtc`** – Accepts a browser SDP offer, forwards it to OpenAI (`/v1/realtime`)
-   with the resolved API key/model, and returns the SDP answer. Only the `openai` provider is
-   supported (others return 501).
-3. **Realtime traffic** – After `start()` succeeds:
-   - Upload microphone data via `/api/rt/audio-append` (base64 PCM16) followed by
-     `/api/rt/audio-commit` once a batch is flushed.
-   - Send typed chat via `/api/rt/text`.
-   - Subscribe to SSE endpoints for assistant audio (`/audio`), assistant text (`/transcripts`),
-     and user speech transcripts (`/user-transcripts`). Each handler listens to corresponding
-     `EventEmitter` events and cleans up listeners when the stream closes.
-4. **`POST /api/rt/stop`** – Removes the session from the manager, closing sockets and clearing
-   auto-cleanup timers.
-5. **`GET /api/rt/status`** – Diagnostic endpoint returning `{status, isActive, isStarting,
-   provider, model, activeSessionCount}` to help verify the manager state.
+1. **Start (`POST /api/rt/start`)** – Reads `{sessionId, provider, apiKey, model, paper}`. Calls
+   `manager.configure()` to set provider credentials and paper context, then `manager.start()` to
+   establish the OpenAI WebSocket. Returns `{ok, status, provider, duration}` or `{error}` with an
+   appropriate HTTP status (400 for missing key, 504 for timeouts, etc.).
+2. **Status (`GET /api/rt/status`)** – Returns `{status, isActive, isStarting, provider, hasApiKey,
+   model, activeSessionCount}` to aid debugging. Every call resets the session inactivity timer.
+3. **WebRTC (`POST /api/rt/webrtc`)** – Accepts `{sessionId, sdp}` payloads, forwards them to the
+   manager, which negotiates with OpenAI and returns the SDP answer. Currently only the `openai`
+   provider is implemented.
+4. **Streaming input** – After a session is active:
+   - `POST /api/rt/audio-append` receives base64 PCM16, converts it to `Uint8Array`, and calls
+     `manager.appendPcm16()`.
+   - `POST /api/rt/audio-commit` finalises the turn via `manager.commitTurn()` which triggers a
+     `response.create` event server-side.
+   - `POST /api/rt/text` sends typed input through `manager.sendText()`.
+5. **Streaming output** – SSE endpoints attach to the manager’s event emitters:
+   - `/audio` listens to `audio`, emits base64 WAV frames and keep-alives.
+   - `/transcripts` listens to `transcript` for assistant text deltas.
+   - `/user-transcripts` listens to `user_transcript` (complete) and `user_transcript_delta`
+     (interim) events. All streams register cleanup handlers and close when the session ends.
+6. **Stop (`POST /api/rt/stop`)** – Calls `manager.stop()` and removes the session from the
+   singleton. Clients should invoke this when disconnecting to release resources.
 
 ## Implementation Notes
-- Every route sets `export const runtime = "nodejs";` (either explicitly or implicitly). Do not
-  import `next/headers`/`cookies` since they are not available in the Node runtime when using
-  streaming responses.
-- SSE routes (`audio`, `transcripts`, `user-transcripts`) construct a `ReadableStream`. Attach
-  `manager.on(...)` listeners inside `start()` and store cleanup functions on the controller so
-  `cancel()` removes listeners and clears intervals. Always send an initial message so clients
-  know the stream is alive.
-- Error handling: catch exceptions from manager methods and return structured JSON with `{error,
-  sessionId}` where helpful. Honor HTTP status codes (e.g., 503 when the session is not active).
-- Keep logging informative but not noisy; the session manager already writes detailed logs.
-
-## Extending the API
-- When adding new realtime capabilities (e.g., file uploads, conversation commands), extend
-  `realtimeSession.ts` first, then mirror the behaviour in a new route under this directory.
-- Document any new EventEmitter names in both this file and the session manager AGENT so client
-  consumers know what to expect.
-- Maintain the session ID convention: the Audio Studio uses `session_${Date.now()}` and passes it
-  on every request; new routes should accept the same parameter to keep multiplexing working.
+- Every route either declares `export const runtime = "nodejs";` or relies on the default. Keep it
+  that way so Node APIs (e.g., `Buffer`, `ReadableStream`) remain available.
+- When extending `rtSessionManager` with new events, update the SSE handlers to wire up listeners
+  and detach them on stream cancellation.
+- Return structured `{ error, sessionId }` payloads with appropriate HTTP status codes on failure;
+  the Audio Studio surfaces these messages directly to users.
+- Avoid retaining per-request state at module scope. The manager already caches sessions and
+  handles hot-reload safe singletons.
 
 ## Testing
-- With the dev server running, issue:
-  - `POST /api/rt/start` (supply `sessionId` and API key in the body).
-  - `GET /api/rt/status?sessionId=...` to verify `status === 'active'`.
-  - Stream from `/api/rt/audio?sessionId=...` using `curl` or browser DevTools and confirm base64
-    frames arrive.
+- Start the dev server and issue:
+  - `POST /api/rt/start` with a valid API key and session ID.
+  - `GET /api/rt/status?sessionId=...` to verify the session is active.
+  - Stream `/api/rt/audio?sessionId=...` using `curl` or browser DevTools to ensure base64 frames
+    arrive.
   - Send text via `POST /api/rt/text` and watch `/api/rt/transcripts` for deltas.
-  - Call `/api/rt/stop` and ensure SSE streams close promptly.
+  - Call `/api/rt/stop` and ensure SSE streams close and status returns to `inactive`.

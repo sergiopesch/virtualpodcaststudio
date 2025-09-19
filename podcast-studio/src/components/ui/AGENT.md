@@ -1,73 +1,64 @@
 # UI Components Agent Guide
 
 ## Purpose
-Reusable UI primitives built on top of shadcn/ui (Radix UI + Tailwind) live in this folder.
-They provide consistent theming for the Research Hub, Studio, and post-production pages.
-Each component exports semantic props and uses the shared `cn` helper from
-`src/lib/utils.ts`.
+Reusable shadcn-inspired primitives live in this directory. They wrap Radix UI components with the
+Tailwind design tokens defined in `src/app/globals.css` and expose props consumed throughout the
+Research Hub, Audio Studio, and post-production dashboards. All components re-export the shared
+`cn()` helper from `@/lib/utils` to compose classes safely.
 
 ```
 src/components/ui/
-├── button.tsx        # cva-powered gradient buttons
+├── button.tsx        # cva-powered gradient/outline/button variants
 ├── card.tsx          # Glass/gradient cards with header/content slots
-├── checkbox.tsx      # Radix checkbox, Tailwind focus styles
-├── dropdown-menu.tsx # Workspace menu, keyboard friendly
-├── scroll-area.tsx   # Styled viewport + scrollbar
-├── sheet.tsx         # Settings drawer (Radix dialog)
-├── tabs.tsx          # Timeline/analytics tab strip
+├── checkbox.tsx      # Radix checkbox with custom focus rings
+├── dropdown-menu.tsx # Workspace menu primitives
+├── scroll-area.tsx   # Styled scrollbars + viewport wrapper
+├── sheet.tsx         # Sliding drawer built on Radix dialog
+├── tabs.tsx          # Accessible tab list and content panels
 └── AGENT.md          # This guide
 ```
 
 ## Component Notes
-- **Button** (`button.tsx`)
-  - Uses `class-variance-authority` to expose `variant` (`default`, `gradient`, `glass`,
-    `outline`, etc.) and `size` props. Extend variants here before referencing them in pages.
-  - `asChild` lets you wrap anchors (`<Button asChild><a/></Button>`), preserving focus
-    styles.
-- **Card** (`card.tsx`)
-  - Layout-friendly slots (`CardHeader`, `CardContent`, `CardFooter`, etc.) with subtle
-    borders and backdrop blur. Keep padding consistent—Research Hub and Studio rely on the
-    default spacing.
-- **Checkbox** (`checkbox.tsx`)
-  - Wraps `@radix-ui/react-checkbox` with Tailwind focus rings. Only accepts boolean `checked`
-    and `onCheckedChange` from Radix. Keep icons sized with `size-3.5` to align with topic
-    toggles.
-- **DropdownMenu** (`dropdown-menu.tsx`)
-  - Provides menu items, separators, shortcuts, checkbox/radio items, and submenus. Each item
-    forwards the `data-variant` attribute (default/destructive). Update this file if you need
-    new menu surface styles rather than inlining overrides.
-- **ScrollArea** (`scroll-area.tsx`)
-  - Combines `ScrollArea.Root`, `.Viewport`, and `.Scrollbar` with custom thumb styling.
-    Reuse for scrollable panels instead of raw `<div>` overflow to keep consistent
-    scrollbar/keep-alive behaviour.
-- **Sheet** (`sheet.tsx`)
-  - Radix dialog configured as a sliding drawer (right/left/top/bottom). The Settings sheet
-    depends on the `side="right"` animation classes—keep transitions intact when editing.
-- **Tabs** (`tabs.tsx`)
-  - Inline-flex tab list with active-state border and focus rings. Used heavily by the Video
-    Studio; maintain the root/list/trigger/content structure so keyboard navigation works.
+- **Button (`button.tsx`)** – Uses `class-variance-authority` to provide `variant` (`default`,
+  `gradient`, `glass`, `outline`, `secondary`, `ghost`, `link`, `destructive`) and `size`
+  (`xs`, `sm`, `default`, `lg`, `icon`) options. Supports `asChild` for anchor-wrapped buttons and
+  applies consistent focus rings (`focus-visible:ring-*`).
+- **Card (`card.tsx`)** – Provides `Card`, `CardHeader`, `CardTitle`, `CardContent`, etc. with glass
+  backgrounds and subtle borders. Padding matches layout expectations; adjust tokens in
+  `globals.css` if new spacing is required.
+- **Checkbox (`checkbox.tsx`)** – Wraps `@radix-ui/react-checkbox` with rounded outlines and uses
+  `lucide-react` icons sized to `size-3.5`. Exposes controlled props compatible with Radix.
+- **Dropdown Menu (`dropdown-menu.tsx`)** – Re-exports Radix primitives with Tailwind styling,
+  including support for checkbox/radio items and `data-variant="destructive"` states. Used by the
+  user menu and workspace settings.
+- **Scroll Area (`scroll-area.tsx`)** – Combines `ScrollArea.Root`, `.Viewport`, `.Scrollbar`, and
+  `.Thumb` with gradient track styling. Prefer it over raw `overflow-y-auto` when you need
+  consistent scrollbars.
+- **Sheet (`sheet.tsx`)** – Implements a sliding drawer using `@radix-ui/react-dialog`. Supports
+  `side` (`top`, `bottom`, `left`, `right`) and provides header/footer helpers. The Settings sheet
+  relies on the right-side animation classes—update them centrally if you need new transitions.
+- **Tabs (`tabs.tsx`)** – Wraps `@radix-ui/react-tabs` with keyboard-accessible triggers and focus
+  outlines. Maintain the exported `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent` structure so
+  assistive technology works as expected.
 
 ## Styling Conventions
-- All components rely on the design tokens defined in `globals.css` (`gradient-primary`,
-  `glass`, `shadow-*`). If you introduce a new visual treatment, add utility classes there
-  rather than hard-coding hex values.
-- Focus states come from Tailwind (`focus-visible:ring-[3px]` etc.). Keep them accessible and
-  ensure `data-slot` attributes remain so design tooling can target them.
-- When adding new components, prefer `@radix-ui` primitives to maintain accessibility. Follow
-  the patterns above: wrap the primitive, apply Tailwind classes, and export named helpers.
+- Use gradient/glass tokens defined in `globals.css` (e.g., `gradient-primary`, `glass`,
+  `shadow-glow`). If you need new visual treatments, add utility classes there instead of hard-
+  coding colours.
+- Focus states rely on Tailwind’s `focus-visible` utilities; keep them present for accessibility.
+- Components set `data-slot` attributes where necessary (e.g., `<Button>`). Preserve them if you
+  extend the markup so design tooling keeps targeting hooks.
 
 ## Usage Tips
-- Import components via aliases (`@/components/ui/button`). The Next.js `tsconfig` path
-  handles alias resolution.
-- Compose shadcn components using the exported slots: e.g., `Card` + `CardHeader` +
-  `CardContent`. Avoid creating ad-hoc wrappers in page files; extend the primitive if the
-  pattern is shared.
-- Keep props typed – extend `React.ComponentProps<typeof Primitive>` when adding options so
-  TypeScript infers the correct attributes.
+- Import via path aliases (`@/components/ui/button`). TypeScript types are derived from the Radix
+  primitives, so extend props using `React.ComponentProps<typeof Primitive>` patterns.
+- Compose cards/buttons/etc. using their exported slots rather than duplicating markup in page
+  components. If you need repeated patterns, extend the primitive instead of forking it.
+- Keep new components client-safe unless they must run on the server. All current files are client
+  components (`"use client"`) because they depend on Radix.
 
 ## Testing
-- Visual regressions: run the Next.js dev server (`npm run dev`) and inspect focus/hover
-  states in dark/light modes.
-- Accessibility: validate keyboard navigation for DropdownMenu, Sheet, and Tabs when altering
-  markup. Radix handles most ARIA attributes; avoid removing structural wrappers that provide
-  them.
+- Visual inspection: run `npm run dev` and verify hover/focus/disabled states in dark and light
+  backgrounds.
+- Accessibility: tab through DropdownMenu, Sheet, and Tabs to ensure keyboard controls and focus
+  management remain intact after changes.
