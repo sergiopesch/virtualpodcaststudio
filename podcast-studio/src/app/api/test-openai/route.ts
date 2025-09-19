@@ -1,65 +1,46 @@
-// Test OpenAI connection
 import { NextResponse } from "next/server";
+
+const MODELS_ENDPOINT = "https://api.openai.com/v1/models";
+const ERROR_SNIPPET_LIMIT = 160;
 
 export const runtime = "nodejs";
 
+const sanitizeSnippet = (input: string): string =>
+  input.replace(/\s+/g, " ").trim().slice(0, ERROR_SNIPPET_LIMIT);
+
 export async function GET() {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, error: "missing_api_key" }, { status: 500 });
+  }
+
   try {
-    console.log('[TEST] Checking OpenAI configuration...');
-    
-    // Check if API key exists
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ 
-        error: 'OpenAI API key not found in environment variables',
-        hasKey: false 
-      }, { status: 500 });
-    }
-    
-    console.log('[TEST] API key located in environment variables');
-    
-    // Test a simple OpenAI API call first
-    const response = await fetch('https://api.openai.com/v1/models', {
+    const response = await fetch(MODELS_ENDPOINT, {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      }
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "OpenAI-Beta": "realtime=v1",
+      },
     });
-    
-    console.log('[TEST] Models API response status:', response.status);
-    
+
     if (!response.ok) {
-      const errorData = await response.text();
-      const snippet = errorData.slice(0, 200);
-      console.log('[TEST] Models API error snippet:', snippet);
-      return NextResponse.json({
-        error: 'OpenAI API key validation failed',
+      const rawBody = await response.text();
+      const snippet = sanitizeSnippet(rawBody);
+      console.warn("[test-openai] Models endpoint returned non-2xx status", {
         status: response.status,
-        hasKey: true
-      }, { status: 500 });
-    }
-    
-    const models = await response.json() as { data?: Array<{ id: string }> };
-    const modelList = Array.isArray(models.data) ? models.data : [];
-    console.log('[TEST] Found', modelList.length, 'models');
+        snippet,
+      });
 
-    // Check if gpt-4o-realtime model is available
-    const realtimeModels = modelList.filter((model) => typeof model.id === 'string' && model.id.includes('realtime'));
-    console.log('[TEST] Realtime models found:', realtimeModels.map((model) => model.id));
-    
-    return NextResponse.json({ 
-      success: true,
-      hasKey: true,
-      modelsCount: modelList.length,
-      realtimeModels: realtimeModels.map((model) => model.id)
+      return NextResponse.json({ ok: false, error: "upstream_error" }, { status: 502 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("[test-openai] Connectivity check failed", {
+      message: error instanceof Error ? error.message : String(error),
     });
 
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Failed to reach OpenAI';
-    console.error('[TEST] Error testing OpenAI connection:', error);
-    return NextResponse.json({
-      error: message,
-      hasKey: !!process.env.OPENAI_API_KEY
-    }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "network_error" }, { status: 502 });
   }
 }

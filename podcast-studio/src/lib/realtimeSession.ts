@@ -11,6 +11,7 @@ export type RTSignals = {
   close: () => void;
   error: (err: unknown) => void;
   ready: () => void;
+  assistant_done: () => void;
 };
 
 // Simple logging utility
@@ -474,7 +475,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const text = extractText(payload.delta) ?? extractText(payload.text);
           if (text) {
-            log.debug(`Text delta received`, { sessionId: this.sessionId, text });
+            log.debug(`Text delta received`, {
+              sessionId: this.sessionId,
+              length: text.length,
+            });
             this.emit('transcript', text);
           }
         }
@@ -484,7 +488,10 @@ class RTManager extends EventEmitter {
         {
           const payload = event as Record<string, unknown>;
           const text = extractText(payload.delta) ?? extractText((payload as Record<string, unknown>).transcript);
-          log.debug(`Audio transcript delta received`, { sessionId: this.sessionId, text });
+          log.debug(`Audio transcript delta received`, {
+            sessionId: this.sessionId,
+            length: text ? text.length : 0,
+          });
           if (text) {
             this.emit('transcript', text);
           }
@@ -501,7 +508,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const transcript = extractText(payload.transcript);
           if (transcript) {
-            log.info(`User speech transcribed`, { sessionId: this.sessionId, transcript });
+            log.info(`User speech transcribed`, {
+              sessionId: this.sessionId,
+              length: transcript.length,
+            });
             this.emit('user_transcript', transcript);
           }
         }
@@ -528,7 +538,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const delta = extractText(payload.delta);
           if (delta) {
-            log.debug(`User transcription delta`, { sessionId: this.sessionId, delta });
+            log.debug(`User transcription delta`, {
+              sessionId: this.sessionId,
+              length: delta.length,
+            });
             this.emit('user_transcript_delta', delta);
           }
         }
@@ -540,7 +553,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const delta = extractText(payload.delta);
           if (delta) {
-            log.debug(`User transcription delta (alt)`, { sessionId: this.sessionId, delta });
+            log.debug(`User transcription delta (alt)`, {
+              sessionId: this.sessionId,
+              length: delta.length,
+            });
             this.emit('user_transcript_delta', delta);
           }
         }
@@ -550,7 +566,10 @@ class RTManager extends EventEmitter {
           const payload = event as Record<string, unknown>;
           const transcript = extractText(payload.transcript);
           if (transcript) {
-            log.info(`User speech transcribed (alt)`, { sessionId: this.sessionId, transcript });
+            log.info(`User speech transcribed (alt)`, {
+              sessionId: this.sessionId,
+              length: transcript.length,
+            });
             this.emit('user_transcript', transcript);
           }
         }
