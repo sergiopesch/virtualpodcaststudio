@@ -1,74 +1,73 @@
 # Research Hub Page – Agent Guide
 
 ## Overview
+[`src/app/page.tsx`](./page.tsx) is the landing page for the Research Hub. It is a client
+component that renders within the shared layout (Sidebar + Header) and manages the full
+lifecycle for selecting arXiv topics, fetching papers, and transferring the chosen paper to the
+Audio Studio via `sessionStorage`.
 
-The Research Hub lives in [`src/app/page.tsx`](./page.tsx) and serves as the landing page of the Virtual Podcast Studio. It combines topic selection, arXiv paper retrieval, and navigation hand-offs to the Audio Studio. The component is a client-side React page (`"use client"`) that orchestrates UI chrome from the shared layout (`Sidebar`, `Header`) with data fetched through the `/api/papers` Next.js API proxy.
-
-## Page Structure
-
+## Page Anatomy
 ```
-Research Hub layout
-├─ Sidebar / Header (shared layout controls)
-├─ Stats Overview cards (animated KPIs)
-├─ Topic Selection grid (toggleable research areas)
-├─ Action Card (find + clear buttons, selection summary)
-└─ Paper List (scrollable results / empty & error states)
+<Sidebar> (from layout context)
+<Header>
+└─ main content
+   ├─ Research Topics card (toggle buttons)
+   ├─ Action card (Find / Clear buttons + selection summary)
+   └─ Research Papers card (scrollable results, empty + error states)
 ```
+- Topics are defined in a local `topics` array (currently AI, ML, Computer Vision, Robotics).
+  Icons come from `lucide-react`; styling uses the shared `cn()` helper for Tailwind classes.
+- Paper results render inside a `ScrollArea` with CTA buttons for “Start Audio Studio” and
+  “Read Paper”.
 
-- **Sidebar/Header**: Provided by `@/components/layout`. `useSidebar()` supplies collapse state; keep props aligned if APIs change.
-- **Stats Overview**: Driven by the `stats` constant. Animation delay is controlled via inline `style`—if you add cards, keep unique `key`s and incremental delays.
-- **Topic Selection**: Buttons generated from the `topics` array. Classes rely on the shared `cn` helper for conditional Tailwind styling and on lucide-react icons.
-- **Action Card**: Houses the "Find Papers" and "Clear" buttons. Primary button uses the custom `variant="gradient"`; ensure new variants exist in the button component before referencing them.
-- **Paper List**: Wrapped in a `ScrollArea` with `h-96` height. Includes three states: error, results, and empty placeholder. Result cards route to `/studio` via `Link`.
-
-## Data & State Flow
-
-- `selectedTopics`: Array of topic IDs; stored as an ordered array derived from a `Set` to preserve deterministic ordering.
-- `papers`: Holds `PaperCardData` objects (enriched arXiv metadata).
-- `loading` / `error`: Booleans & strings controlling UI feedback.
-- `abortControllerRef`: Ensures only the latest `/api/papers` request resolves; remember to abort previous fetches when introducing new network calls.
+## State & Derived Data
+- `selectedTopics` – array of topic IDs. A `Set` derived via `useMemo` keeps toggles stable and
+  preserves ordering when converting back to an array.
+- `papers` – array of `PaperCardData` returned by `transformPapers`.
+- `loading`, `error` – control button states and empty/error UI.
+- `abortControllerRef` – ensures only the most recent `/api/papers` request resolves.
 
 ### `transformPapers`
-
 - Deduplicates by `paper.id` using a `Set`.
-- Splits the `authors` comma list into `primaryAuthor` and `hasAdditionalAuthors` flags.
-- Converts `published` to `toLocaleDateString()` when valid; otherwise preserves the raw string.
-- When modifying backend payloads, update this function and the backend serializer together so keys stay in sync.
+- Splits `authors` to compute `primaryAuthor` and `hasAdditionalAuthors` flags.
+- Converts `published` to a locale date string when possible.
+- Extend this function when the backend payload changes so both the card view and Audio Studio
+  receive the same shape.
 
 ### Fetch Lifecycle (`handleFetchPapers`)
-
 1. Bail out if no topics are selected.
-2. Abort any inflight request and register a fresh `AbortController`.
-3. POST to `/api/papers` with `cache: "no-store"` to avoid stale results.
-4. On success, call `transformPapers`; on failure, set `error` and log the exception.
-5. Clean up the controller and `loading` state only if it matches the latest request.
-
-Keep this pattern intact when adding new async operations so race conditions remain handled.
+2. Abort any inflight request, create a new `AbortController`, and store it in the ref.
+3. POST to `/api/papers` with `cache: "no-store"` so the backend always recomputes results.
+4. On success, pass `result.papers` to `transformPapers`; on failure, set an error message.
+5. Only clear `loading`/controller state if the resolving controller matches the latest ref.
 
 ## Audio Studio Handoff
+- `handleStartAudioStudio` writes the selected `PaperCardData` to
+  `sessionStorage.setItem('vps:selectedPaper', JSON.stringify(payload))`, including `storedAt` for
+  freshness checks. Wrap the write in `try/catch` and always push to `/studio` afterwards.
+- Keep this payload synchronised with the Audio Studio’s `SelectedPaper` type. Add fields in both
+  places simultaneously and ensure they degrade gracefully if older entries are present.
 
-- `handleStartAudioStudio` persists the clicked `PaperCardData` into `sessionStorage` using the `vps:selectedPaper` key before routing to `/studio`.
-- Extend that stored payload whenever you add new paper fields that the Audio Studio needs (mirror any schema updates in `studio/page.tsx`).
-- Storage writes are wrapped in `try/catch`; surface meaningful errors in the console if persistence fails so the Audio Studio can warn users when no paper is available.
-
-## Styling Conventions
-
-- Tailwind CSS with gradient backgrounds (`gradient-primary`, `shadow-glow`) defined in `globals.css`. Reuse existing utility classes instead of inlining custom CSS.
-- Animation utilities (`animate-fade-in`, `animate-slide-up`, `animate-scale-in`) expect matching keyframes in global styles—verify before introducing new names.
-- Maintain accessibility: use `aria-pressed` for toggle buttons and ensure icons include text labels.
+## Styling Notes
+- Tailwind utilities from `globals.css` (e.g., `gradient-primary`, `shadow-glow`) provide the
+  gradient/glass look. Extend the CSS file instead of adding ad-hoc inline styles.
+- Toggle buttons set `aria-pressed` and custom focus rings for accessibility.
+- Empty and error states render friendly messaging with icons; keep them consistent when adding
+  new states.
 
 ## Extension Guidelines
-
-- **New Topics**: Add objects to `topics` with `id`, `label`, `icon`, and color tokens. Update backend/topic validation if you introduce unfamiliar arXiv categories.
-- **Additional Filters**: Compose new state with `useState`/`useMemo`, but reset them inside `handleClearSelection` to keep the "Clear" action predictable.
-- **Paper Card Actions**: Wrap new CTAs in `<Button asChild>` for consistent styling and add `rel="noopener noreferrer"` to external links.
-- **Search Field**: `Header` currently logs queries; if you wire it up, debounce requests and share the existing abort controller.
+- **New topics** – Add entries to the `topics` array and update backend validation if the category
+  format changes.
+- **Extra filters** – Keep additional state reset within `handleClearSelection` so the Clear button
+  restores the initial view.
+- **Search integration** – The `Header` exposes a `search.onSearch` callback; debounce new fetches
+  and reuse the existing `AbortController` pattern.
+- **Paper actions** – Use `<Button asChild>` for external links to keep styling consistent and add
+  `rel="noopener noreferrer"` on anchors.
 
 ## Testing Checklist
-
-- Trigger fetch with multiple topics and confirm deduplication (no repeated cards).
-- Abort scenario: rapidly click "Find Papers" twice and verify the UI does not flicker outdated results.
-- Empty + error states: clear selection and simulate a failed fetch (e.g., temporarily disconnect backend) to ensure messaging appears.
-- Run `npm run lint` from `podcast-studio/` after structural changes touching hooks or dependencies.
-
-Following this guide will help future agents modify the Research Hub while preserving responsive layout, fetch hygiene, and visual polish.
+- Toggle topics quickly and ensure the request abort logic prevents stale results from flashing.
+- Trigger error states by stopping the backend or forcing validation failures.
+- Verify that selecting a paper, refreshing `/studio`, and returning to `/` keeps the latest
+  selection available until cleared.
+- Run `npm run lint` when modifying hooks or component structure.

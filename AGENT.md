@@ -1,81 +1,77 @@
 # Virtual Podcast Studio – Agent Handbook
 
-This repository delivers an end-to-end “virtual podcast studio” experience built from two major services:
+## Overview
+This repository delivers an end-to-end "virtual podcast studio" experience composed of two
+services that collaborate closely:
 
-- **FastAPI backend (`backend/`)** that retrieves research content from arXiv and (optionally) proxies realtime voice sessions to OpenAI.【F:backend/main.py†L1-L205】【F:backend/main.py†L206-L323】
-- **Next.js 15 frontend (`podcast-studio/`)** that renders the multi-stage production interface (research hub, audio studio, video studio, library, publisher) and exposes Node-powered API routes for realtime OpenAI conversations.【F:podcast-studio/src/app/page.tsx†L1-L473】【F:podcast-studio/src/app/studio/page.tsx†L1-L209】
+- **FastAPI backend (`backend/`)** – validates research topics, fetches arXiv results and
+  exposes a WebSocket bridge to OpenAI's realtime API.
+- **Next.js 15 frontend (`podcast-studio/`)** – renders the multi-stage production interface,
+  manages realtime sessions through server-side API routes, and hands conversations off to
+  post-production tooling.
 
-Directory-specific agent notes live inside `backend/AGENT.md` and `podcast-studio/AGENT.md`; consult them for deep dives before editing files under those trees.【F:backend/AGENT.md†L1-L109】【F:podcast-studio/AGENT.md†L1-L121】 This root guide explains how the pieces fit together and what to check when making cross-cutting changes.
+Supporting utilities include a health-check CLI (`quick_health_check.py`) and shared
+configuration documentation (`README.md`).
 
----
+## Repository Layout
 
-## Repository Tour
+| Path | Purpose |
+| --- | --- |
+| `backend/` | Single-module FastAPI app (`main.py`) serving `/health`, `/api/papers`, and `/ws/conversation`. |
+| `podcast-studio/` | Next.js App Router project covering the Research Hub, Audio Studio, Video Studio, Library, Publisher, Analytics pages, and all realtime API routes. |
+| `quick_health_check.py` | Lightweight script that verifies `backend/.env` contains `OPENAI_API_KEY` and confirms the `/health` endpoint responds. |
+| `README.md` | Setup guide, architecture overview, and troubleshooting notes. |
 
-| Path | Purpose | Key Artifacts |
-| --- | --- | --- |
-| `backend/` | FastAPI app serving `/health`, `/api/papers`, and `/ws/conversation` plus rate limiting, arXiv ingestion, and OpenAI Realtime relaying. | `main.py`, `requirements.txt` |
-| `podcast-studio/` | Next.js App Router project with UI, client pages, shadcn components, realtime hooks, and API routes for OpenAI sessions. | `src/app/**/*`, `src/lib/realtimeSession.ts`, `src/app/api/**/*` |
-| `quick_health_check.py` | CLI helper to verify `.env` secrets and the FastAPI health endpoint. | – |
-| `README.md` | Setup, architecture, topic list, troubleshooting. | – |
+## End-to-End Flow
 
----
+1. **Research discovery** – The Research Hub (`src/app/page.tsx`) submits topics to
+   `POST /api/papers`. The Next.js API route validates the payload and proxies the request to
+   the FastAPI backend, which sanitises topics, calls arXiv, de-duplicates entries, and returns
+   the newest papers first.
+2. **Realtime conversation** – The Audio Studio (`src/app/studio/page.tsx`) requests a session
+   via `POST /api/rt/start`, negotiates WebRTC through `/api/rt/webrtc`, and streams
+   microphone audio with `/api/rt/audio-append` + `/api/rt/audio-commit`. Assistant audio and
+   transcripts are consumed through the Server-Sent Events routes (`/api/rt/audio`,
+   `/api/rt/transcripts`, `/api/rt/user-transcripts`). A legacy fallback WebSocket is still
+   available at `backend/ws/conversation` for non-WebRTC clients.
+3. **Post-production handoff** – Finished sessions are serialised with
+   `src/lib/conversationStorage.ts`, stored in `sessionStorage`, and consumed by the Video
+   Studio, Library, and Publisher dashboards to simulate editing/export workflows.
 
-## Data & Control Flow
+## Service Highlights
 
-1. **Research discovery** – Frontend `POST /api/papers` → Next proxy route → FastAPI `/api/papers` → arXiv Atom feed → deduped & sorted list back to UI cards. The Research Hub transforms responses into enriched card metadata while aborting stale requests so the UI never flashes outdated topics.【F:podcast-studio/src/app/api/papers/route.ts†L1-L61】【F:backend/main.py†L206-L323】【F:podcast-studio/src/app/page.tsx†L93-L215】
-2. **Realtime conversation (WebRTC path)** – Studio page builds a browser `RTCPeerConnection`, exchanges SDP with `/api/rt/webrtc`, and streams audio/text directly from OpenAI via the Node session manager.【F:podcast-studio/src/app/studio/page.tsx†L400-L533】【F:podcast-studio/src/app/api/rt/webrtc/route.ts†L1-L37】 Audio/text deltas flow through SSE endpoints (`/api/rt/audio`, `/api/rt/transcripts`, `/api/rt/user-transcripts`).【F:podcast-studio/src/app/api/rt/audio/route.ts†L1-L107】【F:podcast-studio/src/app/api/rt/transcripts/route.ts†L1-L104】
-3. **Realtime conversation (WebSocket fallback)** – `backend/main.py` still exposes `/ws/conversation` that relays user audio/text to OpenAI Realtime over websockets for legacy or alternative clients.【F:backend/main.py†L101-L205】【F:backend/main.py†L324-L399】
-4. **UI rendering** – Shared sidebar/header layout wraps every page via `src/app/layout.tsx` and context providers (`SidebarProvider`). Page components focus on their domain (e.g., research hub grid, audio studio controls, production dashboards).【F:podcast-studio/src/app/layout.tsx†L1-L36】【F:podcast-studio/src/app/page.tsx†L218-L468】
+### FastAPI backend
+- **Rate limiting** – A sliding window cap (100 requests/minute per client IP) protects both
+  HTTP and WebSocket endpoints.
+- **Paper ingestion** – `fetch_arxiv_papers` sanitises each topic, queries arXiv sequentially
+  via `httpx.AsyncClient`, normalises authors/abstracts, and sorts by `published` date before
+  truncating to the configured max results.
+- **Realtime bridge** – `RealtimeSession` opens a WebSocket to OpenAI using the configured
+  realtime model/voice, forwards audio or text input events, and relays audio/text deltas plus
+  speech boundary notifications back to the browser client.
 
----
-
-## Backend Quick Facts
-
-- **Framework & deps**: FastAPI + httpx + feedparser + websockets; see `requirements.txt` for exact pins.【F:backend/requirements.txt†L1-L12】
-- **Endpoints**:
-  - `GET /health` → availability ping with timestamp.【F:backend/main.py†L332-L336】
-  - `POST /api/papers` → validates up to 10 topics, sanitizes input, queries arXiv concurrently, dedupes, sorts by published date.【F:backend/main.py†L206-L323】
-  - `WS /ws/conversation` → rate-limited realtime bridge that streams OpenAI audio/text events back to the browser.【F:backend/main.py†L101-L205】【F:backend/main.py†L338-L399】
-- **Rate limiting**: Simple in-memory sliding window per client IP (`RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW`).【F:backend/main.py†L24-L41】
-- **Environment**: `.env` expects `OPENAI_API_KEY`, optional `ALLOWED_ORIGINS`; defaults allow `http://localhost:3000`.【F:backend/main.py†L43-L47】
-- **When editing**: Keep request validation and deduplication aligned with the frontend expectations, and preserve async patterns (httpx.AsyncClient, `async def`) to avoid blocking.
-
----
-
-## Frontend Quick Facts
-
-- **Stack**: Next.js 15 with the App Router, React 19, TypeScript, Tailwind 4, shadcn/ui, lucide-react icons, and Turbopack for dev/build.【F:podcast-studio/package.json†L1-L36】
-- **Layout & navigation**: `Sidebar` and `Header` components manage the chrome; `SidebarProvider` exposes collapse state globally.【F:podcast-studio/src/components/layout/sidebar.tsx†L1-L149】【F:podcast-studio/src/components/layout/header.tsx†L1-L83】【F:podcast-studio/src/contexts/sidebar-context.tsx†L1-L36】
-- **Pages**:
-  - `src/app/page.tsx` – Research Hub: accessible topic toggles backed by a memoized `Set`, abortable fetch workflow, paper transformation helpers, interactive card actions, and a sessionStorage handoff (`vps:selectedPaper`) that powers the Audio Studio's context card.【F:podcast-studio/src/app/page.tsx†L125-L466】
-  - `src/app/studio/page.tsx` – Audio Studio: WebRTC connect workflow, PCM16 microphone upload, live transcript/chat rendering, export controls, sessionStorage-driven current paper hydration, and a sidebar that only shows the LIVE badge while `isRecording` is true.【F:podcast-studio/src/app/studio/page.tsx†L1-L318】【F:podcast-studio/src/app/studio/page.tsx†L600-L1013】
-  - `src/app/video-studio/page.tsx`, `src/app/library/page.tsx`, `src/app/publisher/page.tsx` – Detailed mock production dashboards with editing controls and analytics to round out the workflow.【F:podcast-studio/src/app/video-studio/page.tsx†L1-L120】【F:podcast-studio/src/app/library/page.tsx†L1-L120】【F:podcast-studio/src/app/publisher/page.tsx†L1-L120】
-- **Shared UI**: shadcn components live in `src/components/ui/` (see their AGENT for usage patterns). Utilities like `cn()` are in `src/lib/utils.ts`.【F:podcast-studio/src/components/ui/AGENT.md†L1-L121】【F:podcast-studio/src/lib/utils.ts†L1-L5】
-
----
-
-## Realtime Session Infrastructure (Next.js)
-
-- **Session manager**: `src/lib/realtimeSession.ts` keeps a hot-reload-safe singleton of `RTSessionManager`. It opens a WebSocket to the OpenAI Realtime API, forwards audio/text deltas, auto-triggers responses, and cleans up idle sessions.【F:podcast-studio/src/lib/realtimeSession.ts†L1-L199】【F:podcast-studio/src/lib/realtimeSession.ts†L200-L475】
-- **API routes**: Located in `src/app/api/rt/`.
-  - `start`/`status`/`stop` manage lifecycle and expose health info.【F:podcast-studio/src/app/api/rt/start/route.ts†L1-L64】【F:podcast-studio/src/app/api/rt/status/route.ts†L1-L37】【F:podcast-studio/src/app/api/rt/stop/route.ts†L1-L18】
-  - `audio-append`, `audio-commit`, `text` push user input to OpenAI via the manager.【F:podcast-studio/src/app/api/rt/audio-append/route.ts†L1-L57】【F:podcast-studio/src/app/api/rt/audio-commit/route.ts†L1-L49】【F:podcast-studio/src/app/api/rt/text/route.ts†L1-L57】
-  - `audio`, `transcripts`, `user-transcripts` stream assistant output and live transcriptions back over Server-Sent Events.【F:podcast-studio/src/app/api/rt/audio/route.ts†L1-L107】【F:podcast-studio/src/app/api/rt/transcripts/route.ts†L1-L104】【F:podcast-studio/src/app/api/rt/user-transcripts/route.ts†L1-L103】
-  - `webrtc` exchanges SDP offers for low-latency media when browsers prefer WebRTC.【F:podcast-studio/src/app/api/rt/webrtc/route.ts†L1-L37】
-- **Hook**: `useRealtimeConversation.ts` provides a legacy WebSocket client that talks to the FastAPI `/ws/conversation`. Keep it in sync if you maintain the fallback path.【F:podcast-studio/src/hooks/useRealtimeConversation.ts†L1-L110】
-
----
+### Next.js frontend
+- **Layout & context** – `src/app/layout.tsx` wraps pages in `SidebarProvider` and
+  `ApiConfigProvider`, enabling layout collapse state and provider/API-key selection across the
+  entire app.
+- **Pages** – Research Hub (topic selection + paper discovery), Audio Studio (session
+  orchestration, live transcript, export tools), Video Studio (timeline editor consuming stored
+  sessions), Library/Publisher/Analytics (dashboard-style mocks).
+- **API routes** – `/api/papers` proxies to FastAPI, while `/api/rt/*` endpoints manage realtime
+  sessions via the shared `rtSessionManager` singleton in `src/lib/realtimeSession.ts`.
+- **Shared libraries** – `realtimeSession.ts` maintains OpenAI connections and emits SSE
+  events; `conversationStorage.ts` encodes/decodes PCM16 audio and persists conversations for
+  the video tooling; `src/components/ui` hosts shadcn-inspired primitives.
 
 ## Environment & Secrets
 
-| Service | Required variables |
+| Area | Variables |
 | --- | --- |
-| Backend (`backend/.env`) | `OPENAI_API_KEY`, optional `ALLOWED_ORIGINS`, `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`. Defaults target `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01`.【F:backend/main.py†L68-L103】 |
-| Frontend (`podcast-studio/.env.local`) | `OPENAI_API_KEY` (for server-side API routes), optional `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`, `BACKEND_URL`, `NEXT_PUBLIC_BACKEND_URL`. The API routes will fail fast if the key is missing (`test-openai` endpoint helps validate).【F:podcast-studio/src/app/api/rt/webrtc/route.ts†L1-L37】【F:podcast-studio/src/app/api/test-openai/route.ts†L1-L53】 |
+| Backend (`backend/.env`) | `OPENAI_API_KEY` (required), optional `ALLOWED_ORIGINS`, `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`. |
+| Frontend (`podcast-studio/.env.local`) | `OPENAI_API_KEY` (server-side fallback for realtime routes), optional `OPENAI_REALTIME_MODEL`, `OPENAI_REALTIME_VOICE`, `BACKEND_URL`, `NEXT_PUBLIC_BACKEND_URL`. |
 
-Store secrets locally only; never commit `.env*` files.
-
----
+Never commit `.env*` files. Frontend API routes will fall back to the server-side key only
+when the user has not supplied one via the workspace settings sheet.
 
 ## Development Workflow
 
@@ -83,27 +79,31 @@ Store secrets locally only; never commit `.env*` files.
    - Backend: `cd backend && python -m venv venv && source venv/bin/activate && pip install -r requirements.txt`.
    - Frontend: `cd podcast-studio && npm install`.
 2. **Run services**
-   - Backend API: `uvicorn main:app --host 0.0.0.0 --port 8000 --reload` from the virtualenv.【F:README.md†L29-L61】
-   - Frontend dev server: `npm run dev` (Turbopack) and visit `http://localhost:3000/studio`.【F:README.md†L63-L87】
-3. **Health check**
-   - Execute `python quick_health_check.py` to confirm `.env` and backend availability.【F:quick_health_check.py†L1-L66】
-   - `GET /api/test-openai` (frontend) reports whether your OpenAI credentials can list models.【F:podcast-studio/src/app/api/test-openai/route.ts†L1-L53】
+   - Backend: `uvicorn main:app --host 0.0.0.0 --port 8000 --reload`.
+   - Frontend: `npm run dev` (Turbopack) and visit `http://localhost:3000/studio`.
+3. **Verify configuration**
+   - Execute `python quick_health_check.py` to confirm the backend is reachable and the API
+     key is present.
+   - Hit `GET /api/test-openai` from the frontend to ensure the OpenAI credential can list
+     models.
 4. **Quality gates**
-   - Frontend lint: `npm run lint` (ESLint 9).【F:podcast-studio/package.json†L1-L36】
-   - Frontend build: `npm run build` before shipping major UI/API changes.
-   - Backend: run `uvicorn` locally and exercise `/health` + `/api/papers`; add automated tests if you extend business logic.
+   - Frontend lint: `npm run lint` (ESLint 9).
+   - Frontend build: `npm run build` before shipping substantial UI/API changes.
+   - Backend: exercise `/health`, `/api/papers`, and `/ws/conversation` (or the WebRTC flow)
+     using the running frontend.
 
----
+## Coordination Guardrails
 
-## Agent Best Practices
-
-- **Coordinate schema changes**: If you alter `Paper` fields in the backend, update the Next.js proxy route and UI card rendering simultaneously so `transformPapers` and the card view stay aligned. Remember to update both sides of the sessionStorage bridge (`Home.handleStartAudioStudio` ⇄ `Studio.SelectedPaper`).【F:backend/main.py†L52-L87】【F:podcast-studio/src/app/page.tsx†L93-L210】【F:podcast-studio/src/app/studio/page.tsx†L40-L140】
-- **Preserve input hygiene**: Topic sanitization lives in both backend (`sanitize_input`, Pydantic validators) and frontend proxy validation. Keep them consistent when expanding accepted formats.【F:backend/main.py†L139-L187】【F:podcast-studio/src/app/api/papers/route.ts†L1-L61】
-- **Respect realtime lifecycles**: Always start a session (`/api/rt/start` or WebRTC handshake) before pushing audio/text, and ensure you stop or clean up sessions to prevent orphaned WebSocket connections.【F:podcast-studio/src/app/api/rt/start/route.ts†L1-L64】【F:podcast-studio/src/app/api/rt/stop/route.ts†L1-L18】
-- **Maintain UI consistency**: Follow the design tokens in `globals.css` and reuse shadcn components; avoid inline styles that break the gradient/dark theme system.【F:podcast-studio/src/app/globals.css†L1-L120】【F:podcast-studio/src/components/ui/AGENT.md†L1-L121】
-- **Logging**: Both services emit structured console logs; keep them informative and avoid leaking secrets. Prefer `logger.info`/`console.log` patterns already present.【F:backend/main.py†L18-L24】【F:podcast-studio/src/lib/realtimeSession.ts†L1-L63】
-- **Documentation**: When adding a new workflow step or dependency, update `README.md` and relevant `AGENT.md` files so future agents understand the change.
-
----
-
-Use this handbook to orient yourself, then rely on the scoped `AGENT.md` files for detailed conventions inside each service. Keep the backend and frontend in sync, run the recommended checks, and verify realtime flows whenever you touch OpenAI integration.
+- **Shared schemas** – Any change to the paper payload must be applied in tandem across
+  `backend/main.py`, `src/app/api/papers/route.ts`, the Research Hub's `transformPapers`, and
+  the Audio Studio's stored paper shape.
+- **Session storage contract** – `vps:selectedPaper` and the conversation archive stored by
+  `conversationStorage.ts` are read by multiple pages. Keep them backwards compatible when
+  adding fields.
+- **Realtime events** – When emitting new events from `realtimeSession.ts`, update the
+  corresponding API routes and Audio Studio consumers (data channel handlers + SSE listeners)
+  so everything stays in sync.
+- **Logging** – Both services log to stdout. Preserve the existing patterns and avoid printing
+  raw audio buffers or secrets.
+- **Documentation** – Update this handbook, nested `AGENT.md` files, and the README whenever
+  you introduce new workflows, environment variables, or developer steps.
