@@ -4,6 +4,64 @@ import { EventEmitter } from "node:events";
 import { ApiKeySecurity } from "./apiKeySecurity";
 import { SecureEnv } from "./secureEnv";
 
+export type RealtimeSessionErrorCode =
+  | 'MISSING_API_KEY'
+  | 'INVALID_API_KEY'
+  | 'UNSUPPORTED_PROVIDER'
+  | 'NETWORK_ERROR'
+  | 'UPSTREAM_ERROR'
+  | 'RATE_LIMITED'
+  | 'FORBIDDEN'
+  | 'TIMEOUT'
+  | 'INVALID_REQUEST'
+  | 'WEBSOCKET_ERROR'
+  | 'UNKNOWN';
+
+interface RealtimeSessionErrorOptions {
+  status?: number;
+  details?: Record<string, unknown>;
+  cause?: unknown;
+}
+
+export class RealtimeSessionError extends Error {
+  code: RealtimeSessionErrorCode;
+  status?: number;
+  details?: Record<string, unknown>;
+
+  constructor(code: RealtimeSessionErrorCode, message: string, options: RealtimeSessionErrorOptions = {}) {
+    super(message);
+    this.name = 'RealtimeSessionError';
+    this.code = code;
+    this.status = options.status;
+    this.details = options.details;
+    if (options.cause !== undefined) {
+      (this as { cause?: unknown }).cause = options.cause;
+    }
+  }
+}
+
+export const REALTIME_ERROR_STATUS: Record<RealtimeSessionErrorCode, number> = {
+  MISSING_API_KEY: 400,
+  INVALID_API_KEY: 401,
+  UNSUPPORTED_PROVIDER: 501,
+  NETWORK_ERROR: 502,
+  UPSTREAM_ERROR: 502,
+  RATE_LIMITED: 429,
+  FORBIDDEN: 403,
+  TIMEOUT: 504,
+  INVALID_REQUEST: 400,
+  WEBSOCKET_ERROR: 502,
+  UNKNOWN: 500,
+};
+
+export function resolveRealtimeHttpStatus(error: RealtimeSessionError): number {
+  return error.status ?? REALTIME_ERROR_STATUS[error.code] ?? 500;
+}
+
+export function isRealtimeSessionError(error: unknown): error is RealtimeSessionError {
+  return error instanceof RealtimeSessionError;
+}
+
 export type RTSignals = {
   audio: (data: Uint8Array) => void;
   transcript: (text: string) => void;
@@ -52,6 +110,99 @@ const log = {
     const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
     console.debug(`[DEBUG] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : '');
   }
+};
+
+const sanitizeUpstreamMessage = (message?: string) => {
+  if (!message) {
+    return undefined;
+  }
+  return message.replace(/sk-[a-zA-Z0-9]{10,}/g, (match) => ApiKeySecurity.maskKey(match));
+};
+
+export function interpretOpenAiHttpError(status: number, bodyText: string): RealtimeSessionError {
+  let code: RealtimeSessionErrorCode = 'UPSTREAM_ERROR';
+  let message = `OpenAI request failed with status ${status}.`;
+  let upstreamMessage: string | undefined;
+
+  try {
+    const parsed = JSON.parse(bodyText) as { error?: { message?: string } };
+    upstreamMessage = sanitizeUpstreamMessage(parsed?.error?.message);
+  } catch {
+    upstreamMessage = sanitizeUpstreamMessage(bodyText);
+  }
+
+  const hasDetail = Boolean(upstreamMessage && upstreamMessage.trim().length > 0);
+
+  switch (status) {
+    case 400:
+      code = 'INVALID_REQUEST';
+      message = hasDetail
+        ? upstreamMessage!
+        : 'OpenAI rejected the request payload. Please retry or contact support if the problem persists.';
+      break;
+    case 401:
+      code = 'INVALID_API_KEY';
+      message = hasDetail && upstreamMessage!.toLowerCase().includes('invalid api key')
+        ? 'Invalid OpenAI API key. Please double-check your key in Settings and ensure it starts with "sk-".'
+        : 'OpenAI could not authenticate your API key. Please verify it in Settings.';
+      break;
+    case 403:
+      code = 'FORBIDDEN';
+      message = hasDetail
+        ? upstreamMessage!
+        : 'OpenAI denied access to the realtime API. Confirm that your account has access and billing enabled.';
+      break;
+    case 429:
+      code = 'RATE_LIMITED';
+      message = hasDetail
+        ? upstreamMessage!
+        : 'OpenAI rate limit exceeded. Please wait a moment before trying again.';
+      break;
+    default:
+      if (status >= 500) {
+        code = 'UPSTREAM_ERROR';
+        message = hasDetail
+          ? upstreamMessage!
+          : 'OpenAI realtime service is temporarily unavailable. Please try again shortly.';
+      } else if (hasDetail) {
+        message = upstreamMessage!;
+      }
+  }
+
+  return new RealtimeSessionError(code, message, {
+    status,
+    details: hasDetail ? { upstreamMessage } : { status },
+  });
+}
+
+const toRealtimeSessionError = (
+  error: unknown,
+  fallback?: { code?: RealtimeSessionErrorCode; message?: string; status?: number; details?: Record<string, unknown> },
+): RealtimeSessionError => {
+  if (isRealtimeSessionError(error)) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    const normalizedMessage = error.message || fallback?.message || 'Realtime session failed';
+    if (normalizedMessage.toLowerCase().includes('timeout')) {
+      return new RealtimeSessionError('TIMEOUT', normalizedMessage, {
+        status: fallback?.status,
+        details: fallback?.details,
+        cause: error,
+      });
+    }
+    return new RealtimeSessionError(fallback?.code ?? 'UNKNOWN', normalizedMessage, {
+      status: fallback?.status,
+      details: fallback?.details,
+      cause: error,
+    });
+  }
+
+  return new RealtimeSessionError(fallback?.code ?? 'UNKNOWN', fallback?.message ?? 'Realtime session failed', {
+    status: fallback?.status,
+    details: fallback?.details,
+  });
 };
 
 interface RealtimeEvent {
@@ -230,43 +381,59 @@ class RTManager extends EventEmitter {
   private async _doStart(): Promise<void> {
     this.starting = true;
     log.info(`Beginning session handshake`, { sessionId: this.sessionId });
-    
-    // Set connection timeout
-    const timeoutPromise = new Promise<never>((_, reject) => {
+
+    const timeoutPromise = new Promise<{ ok: false; error: RealtimeSessionError }>((resolve) => {
       this.connectionTimeout = setTimeout(() => {
-        reject(new Error('Session connection timeout after 10 seconds'));
+        resolve({
+          ok: false,
+          error: new RealtimeSessionError(
+            'TIMEOUT',
+            'Realtime session connection timed out after 10 seconds',
+            { status: REALTIME_ERROR_STATUS.TIMEOUT },
+          ),
+        });
       }, 10000);
     });
 
     try {
-      // Race between connection and timeout
-      const sessionPromise = this._establishConnection();
-      await Promise.race([sessionPromise, timeoutPromise]);
-      
-      if (this.connectionTimeout) {
-        clearTimeout(this.connectionTimeout);
-        this.connectionTimeout = undefined;
+      const sessionPromise = this._establishConnection().then(
+        () => ({ ok: true as const }),
+        (error) => ({ ok: false as const, error: toRealtimeSessionError(error) }),
+      );
+
+      const result = await Promise.race([sessionPromise, timeoutPromise]);
+
+      if (!result.ok) {
+        throw result.error;
       }
 
       this.emit('ready');
       log.info(`Session established successfully`, { sessionId: this.sessionId });
-      
+
     } catch (error) {
-      log.error(`Session handshake failed`, { 
-        sessionId: this.sessionId, 
-        error: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
+      const sessionError = toRealtimeSessionError(error);
+      log.error(`Session handshake failed`, {
+        sessionId: this.sessionId,
+        code: sessionError.code,
+        status: sessionError.status,
+        error: sessionError.message,
+        stack: sessionError.stack,
       });
-      
+
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        try {
+          this.ws.close(1000, 'Realtime handshake failed');
+        } catch {}
+        this.ws = null;
+      }
+
+      throw sessionError;
+    } finally {
       if (this.connectionTimeout) {
         clearTimeout(this.connectionTimeout);
         this.connectionTimeout = undefined;
       }
-      
-      // Clean up failed attempt
       this.startPromise = undefined;
-      throw error;
-    } finally {
       this.starting = false;
     }
   }
@@ -276,11 +443,17 @@ class RTManager extends EventEmitter {
 
     if (!key) {
       const providerName = this.provider === 'openai' ? 'OpenAI' : 'Google';
-      throw new Error(`${providerName} API key is required to start a realtime session`);
+      throw new RealtimeSessionError('MISSING_API_KEY', `${providerName} API key is required to start a realtime session`, {
+        status: REALTIME_ERROR_STATUS.MISSING_API_KEY,
+      });
     }
 
     if (this.provider !== 'openai') {
-      throw new Error('Google provider is not supported for realtime audio sessions yet');
+      throw new RealtimeSessionError(
+        'UNSUPPORTED_PROVIDER',
+        'Google provider is not supported for realtime audio sessions yet',
+        { status: REALTIME_ERROR_STATUS.UNSUPPORTED_PROVIDER },
+      );
     }
 
     return new Promise((resolve, reject) => {
@@ -291,13 +464,17 @@ class RTManager extends EventEmitter {
         hasApiKey: !!key,
       });
 
-      // First, let's test if we can reach OpenAI API with a simple HTTP request
-      fetch('https://api.openai.com/v1/models', {
+      const controller = new AbortController();
+      const controllerTimeout = setTimeout(() => controller.abort(), 6000);
+
+      fetch('https://api.openai.com/v1/models?limit=1', {
         headers: {
           'Authorization': `Bearer ${key}`,
           'Content-Type': 'application/json'
-        }
+        },
+        signal: controller.signal,
       }).then(async response => {
+        clearTimeout(controllerTimeout);
         log.info(`OpenAI API test`, {
           sessionId: this.sessionId,
           status: response.status,
@@ -305,39 +482,14 @@ class RTManager extends EventEmitter {
         });
 
         if (!response.ok) {
-          let errorMessage = `OpenAI API authentication failed: ${response.status}`;
-          
-          // Try to get more detailed error information
-          try {
-            const errorBody = await response.text();
-            log.error(`OpenAI API error details`, {
-              sessionId: this.sessionId,
-              status: response.status,
-              body: errorBody
-            });
-            
-            // Parse error response for more helpful messages
-            if (response.status === 401) {
-              if (errorBody.includes('Invalid API key')) {
-                errorMessage = 'Invalid OpenAI API key. Please check your API key in Settings and ensure it starts with "sk-".';
-              } else if (errorBody.includes('Incorrect API key')) {
-                errorMessage = 'Incorrect OpenAI API key. Please verify your API key in Settings.';
-              } else {
-                errorMessage = 'OpenAI API key authentication failed. Please check your API key in Settings.';
-              }
-            } else if (response.status === 429) {
-              errorMessage = 'OpenAI API rate limit exceeded. Please try again in a moment.';
-            } else if (response.status === 403) {
-              errorMessage = 'OpenAI API access forbidden. Please check your account status and billing.';
-            }
-          } catch (parseError) {
-            log.warn(`Failed to parse error response`, {
-              sessionId: this.sessionId,
-              parseError: parseError instanceof Error ? parseError.message : 'Unknown error'
-            });
-          }
-          
-          reject(new Error(errorMessage));
+          const errorBody = await response.text();
+          const sanitizedBody = sanitizeUpstreamMessage(errorBody);
+          log.error(`OpenAI API error details`, {
+            sessionId: this.sessionId,
+            status: response.status,
+            body: sanitizedBody,
+          });
+          reject(interpretOpenAiHttpError(response.status, errorBody));
           return;
         }
 
@@ -356,8 +508,20 @@ class RTManager extends EventEmitter {
         this._setupWebSocketHandlers(ws, resolve, reject);
 
       }).catch(error => {
-        log.error(`Failed to test OpenAI API connection`, { sessionId: this.sessionId, error: error.message });
-        reject(new Error(`Cannot connect to OpenAI API: ${error.message}`));
+        clearTimeout(controllerTimeout);
+        if (error instanceof Error && error.name === 'AbortError') {
+          reject(new RealtimeSessionError('TIMEOUT', 'Timed out while validating OpenAI API key', {
+            status: REALTIME_ERROR_STATUS.TIMEOUT,
+          }));
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        log.error(`Failed to test OpenAI API connection`, { sessionId: this.sessionId, error: message });
+        reject(new RealtimeSessionError('NETWORK_ERROR', `Cannot connect to OpenAI API: ${message}`, {
+          status: REALTIME_ERROR_STATUS.NETWORK_ERROR,
+          cause: error instanceof Error ? error : undefined,
+        }));
       });
     });
   }
@@ -421,16 +585,27 @@ class RTManager extends EventEmitter {
     });
 
     ws.on('error', (error: Error & { code?: number }) => {
+      const wsError = new RealtimeSessionError('WEBSOCKET_ERROR', `WebSocket connection error: ${error.message}`, {
+        status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR,
+        details: { code: error.code },
+        cause: error,
+      });
       log.error(`WebSocket connection error`, {
         sessionId: this.sessionId,
-        message: error.message,
+        message: wsError.message,
+        code: error.code,
         stack: error.stack,
-        code: error.code
       });
-      this.emit('error', error);
+      this.emit('error', wsError);
+      try {
+        ws.close();
+      } catch {}
+      if (this.ws === ws) {
+        this.ws = null;
+      }
       if (!hasResolved) {
         hasResolved = true;
-        reject(error);
+        reject(wsError);
       }
     });
 
@@ -448,7 +623,16 @@ class RTManager extends EventEmitter {
 
       if (!hasResolved) {
         hasResolved = true;
-        reject(new Error(`WebSocket closed before session could be established: ${code} ${reasonString}`));
+        reject(
+          new RealtimeSessionError(
+            'WEBSOCKET_ERROR',
+            `WebSocket closed before session could be established: ${code} ${reasonString}`,
+            {
+              status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR,
+              details: { code, reason: reasonString },
+            },
+          ),
+        );
       }
     });
   }

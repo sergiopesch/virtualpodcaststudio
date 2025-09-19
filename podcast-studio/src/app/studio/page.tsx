@@ -697,16 +697,20 @@ const StudioPage: React.FC = () => {
       cache: "no-store",
     });
 
-    let payload: { error?: string } | null = null;
+    let payload: { error?: string; code?: string } | null = null;
     try {
-      payload = (await response.json()) as { error?: string };
+      payload = (await response.json()) as { error?: string; code?: string };
     } catch {
       payload = null;
     }
 
     if (!response.ok || (payload && payload.error)) {
       const message = payload?.error || `Failed to start realtime session (${response.status})`;
-      throw new Error(message);
+      const error = new Error(message) as Error & { code?: string };
+      if (payload?.code && typeof payload.code === "string") {
+        error.code = payload.code;
+      }
+      throw error;
     }
   }, [activeApiKey, activeProvider, paperPayload, sessionId]);
 
@@ -1381,7 +1385,47 @@ const StudioPage: React.FC = () => {
     } catch (err) {
       console.error("[ERROR] Connection failed:", err);
       setStatusMessage(null);
-      setError(err instanceof Error ? err.message : "Failed to connect to AI");
+
+      const errorCode =
+        err && typeof err === "object" && "code" in err && typeof (err as { code?: string }).code === "string"
+          ? (err as { code?: string }).code
+          : undefined;
+
+      let friendlyMessage = err instanceof Error ? err.message : "Failed to connect to AI";
+
+      switch (errorCode) {
+        case "MISSING_API_KEY":
+          friendlyMessage = "Add an OpenAI API key in Settings before starting a live session.";
+          break;
+        case "INVALID_API_KEY":
+          friendlyMessage = "The OpenAI API key looks invalid. Double-check the value in Settings and try again.";
+          break;
+        case "UNSUPPORTED_PROVIDER":
+          friendlyMessage = "Realtime studio currently supports only OpenAI. Switch providers in Settings to continue.";
+          break;
+        case "RATE_LIMITED":
+          friendlyMessage = "OpenAI is rate limiting requests right now. Please wait a few moments and try again.";
+          break;
+        case "FORBIDDEN":
+          friendlyMessage = "OpenAI denied access to the realtime API. Verify your account has billing enabled.";
+          break;
+        case "NETWORK_ERROR":
+          friendlyMessage = "Unable to reach OpenAI. Check your network connection and try again.";
+          break;
+        case "INVALID_REQUEST":
+          friendlyMessage = "OpenAI rejected the realtime request. Please try again or verify your configuration.";
+          break;
+        case "TIMEOUT":
+          friendlyMessage = "Timed out while connecting to the realtime service. Please retry in a moment.";
+          break;
+        case "WEBSOCKET_ERROR":
+          friendlyMessage = "Realtime connection closed unexpectedly. Please try starting the session again.";
+          break;
+        default:
+          break;
+      }
+
+      setError(friendlyMessage);
       if (pc) {
         try {
           pc.getSenders().forEach((sender) => sender.track?.stop());
