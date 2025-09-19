@@ -312,6 +312,7 @@ const StudioPage: React.FC = () => {
   const isUploadingRef = useRef(false);
   const isCommittingRef = useRef(false);
   const aiTrackRef = useRef<MediaStreamTrack | null>(null);
+  const aiRecordProcessorRef = useRef<{ stop: () => void } | null>(null);
   const aiAudioChunksRef = useRef<Uint8Array[]>([]);
   const hostAudioChunksRef = useRef<Uint8Array[]>([]);
   const audioEventSourceRef = useRef<EventSource | null>(null);
@@ -671,48 +672,16 @@ const StudioPage: React.FC = () => {
       );
     }
 
-    // Validate API key format before making the request (only if key exists)
+    // Validate API key format before proceeding (only if key exists)
     if (activeProvider === "openai" && activeApiKey && activeApiKey.trim() && !activeApiKey.startsWith("sk-")) {
       throw new Error(
         "Invalid OpenAI API key format. OpenAI API keys should start with 'sk-'. Please check your API key in Settings.",
       );
     }
-    const requestPayload: Record<string, unknown> = {
-      sessionId,
-      provider: activeProvider,
-    };
 
-    if (activeApiKey) {
-      requestPayload.apiKey = activeApiKey;
-    }
-
-    if (paperPayload) {
-      requestPayload.paper = paperPayload;
-    }
-
-    const response = await fetch("/api/rt/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestPayload),
-      cache: "no-store",
-    });
-
-    let payload: { error?: string; code?: string } | null = null;
-    try {
-      payload = (await response.json()) as { error?: string; code?: string };
-    } catch {
-      payload = null;
-    }
-
-    if (!response.ok || (payload && payload.error)) {
-      const message = payload?.error || `Failed to start realtime session (${response.status})`;
-      const error = new Error(message) as Error & { code?: string };
-      if (payload?.code && typeof payload.code === "string") {
-        error.code = payload.code;
-      }
-      throw error;
-    }
-  }, [activeApiKey, activeProvider, paperPayload, sessionId]);
+    // No server session start here. WebRTC offer/answer will carry the API key via headers.
+    return;
+  }, [activeApiKey, activeProvider]);
 
   const commitAudioTurn = useCallback(async () => {
     if (phase !== "live") {
@@ -723,23 +692,29 @@ const StudioPage: React.FC = () => {
     }
     isCommittingRef.current = true;
     try {
-      const response = await fetch("/api/rt/audio-commit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        const message = typeof payload?.error === "string" ? payload.error : "Failed to commit audio turn";
-        console.warn("[WARN] Audio commit request failed", { message, status: response.status });
+      const channel = dcRef.current;
+      if (channel && channel.readyState === "open") {
+        // Commit buffered input audio and request a response over the WebRTC data channel
+        channel.send(
+          JSON.stringify({
+            type: "input_audio_buffer.commit",
+          }),
+        );
+        channel.send(
+          JSON.stringify({
+            type: "response.create",
+            response: { modalities: ["text", "audio"] },
+          }),
+        );
+      } else {
+        console.warn("[WARN] Data channel not open; cannot commit turn");
       }
     } catch (err) {
-      console.error("[ERROR] Audio commit request failed", err);
+      console.error("[ERROR] Commit via data channel failed", err);
     } finally {
       isCommittingRef.current = false;
     }
-  }, [phase, sessionId]);
+  }, [phase]);
 
   const stopMicrophonePipeline = useCallback(() => {
     if (mediaRecorderRef.current) {
@@ -791,6 +766,7 @@ const StudioPage: React.FC = () => {
       const source = audioContext.createMediaStreamSource(stream);
       const scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1);
 
+      // Capture mic locally for saving the conversation (no uploads)
       scriptProcessor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
         const pcm16Buffer = new Int16Array(inputData.length);
@@ -799,7 +775,6 @@ const StudioPage: React.FC = () => {
           pcm16Buffer[i] = Math.round(sample * 32767);
         }
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
-        micChunkQueueRef.current.push(uint8Array);
         hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
         if (!hasCapturedAudioRef.current) {
           hasCapturedAudioRef.current = true;
@@ -808,46 +783,6 @@ const StudioPage: React.FC = () => {
       };
 
       source.connect(scriptProcessor);
-
-      const flush = async () => {
-        if (isUploadingRef.current) return;
-        if (micChunkQueueRef.current.length === 0) return;
-        isUploadingRef.current = true;
-        try {
-          const totalLength = micChunkQueueRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
-          const combined = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const chunk of micChunkQueueRef.current) {
-            combined.set(chunk, offset);
-            offset += chunk.length;
-          }
-          micChunkQueueRef.current = [];
-          let binary = "";
-          const CHUNK_SIZE = 0x8000;
-          for (let i = 0; i < combined.length; i += CHUNK_SIZE) {
-            const chunk = combined.subarray(i, i + CHUNK_SIZE);
-            binary += String.fromCharCode(...chunk);
-          }
-          const base64 = btoa(binary);
-          const response = await fetch("/api/rt/audio-append", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ base64, sessionId }),
-          });
-          if (!response.ok) {
-            const errJson = await response.json().catch(() => ({}));
-            console.error("[ERROR] Failed to send batched audio:", errJson);
-          }
-        } catch (e) {
-          console.error("[ERROR] Mic flush failed:", e);
-        } finally {
-          isUploadingRef.current = false;
-        }
-      };
-
-      if (micFlushIntervalRef.current == null) {
-        micFlushIntervalRef.current = window.setInterval(flush, 50);
-      }
 
       const processor = {
         stop: () => {
@@ -870,7 +805,7 @@ const StudioPage: React.FC = () => {
       setError("Failed to access microphone. Please check permissions.");
       return false;
     }
-  }, [ensureRealtimeSession, sessionId]);
+  }, [ensureRealtimeSession]);
 
   const teardownRealtime = useCallback(async () => {
     stopMicrophonePipeline();
@@ -921,18 +856,17 @@ const StudioPage: React.FC = () => {
       } catch {}
       aiTrackRef.current = null;
     }
+    if (aiRecordProcessorRef.current) {
+      try { aiRecordProcessorRef.current.stop(); } catch {}
+      aiRecordProcessorRef.current = null;
+    }
 
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
 
-    await fetch("/api/rt/stop", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId }),
-      cache: "no-store",
-    }).catch(() => {});
+    // WebRTC-only teardown; no server stop needed
 
     micChunkQueueRef.current = [];
     hostAudioChunksRef.current = [];
@@ -1131,130 +1065,8 @@ const StudioPage: React.FC = () => {
     sendDataChannelSessionUpdate();
   }, [sendDataChannelSessionUpdate]);
 
-  useEffect(() => {
-    if (phase !== "live") {
-      if (audioEventSourceRef.current) {
-        audioEventSourceRef.current.close();
-        audioEventSourceRef.current = null;
-      }
-      if (userTranscriptEventSourceRef.current) {
-        userTranscriptEventSourceRef.current.close();
-        userTranscriptEventSourceRef.current = null;
-      }
-      if (aiTranscriptEventSourceRef.current) {
-        aiTranscriptEventSourceRef.current.close();
-        aiTranscriptEventSourceRef.current = null;
-      }
-      hasUserTranscriptSseRef.current = false;
-      hasAiTranscriptSseRef.current = false;
-      return;
-    }
-
-    if (!audioEventSourceRef.current) {
-      try {
-        const source = new EventSource(`/api/rt/audio?sessionId=${sessionId}`);
-        audioEventSourceRef.current = source;
-        source.addEventListener("connected", () => {
-          console.log("[INFO] Connected to AI audio stream");
-        });
-        source.onmessage = (event) => {
-          const payload = (event.data || "").trim();
-          if (!payload || payload === "Audio stream ready") {
-            return;
-          }
-          try {
-            const binary = atob(payload);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) {
-              bytes[i] = binary.charCodeAt(i);
-            }
-            aiAudioChunksRef.current.push(bytes);
-            if (!hasCapturedAudioRef.current) {
-              hasCapturedAudioRef.current = true;
-              setHasCapturedAudio(true);
-            }
-          } catch (error) {
-            console.error("[ERROR] Failed to capture AI audio chunk", error);
-          }
-        };
-        source.addEventListener("error", (event) => {
-          console.error("[ERROR] AI audio SSE stream error", event);
-        });
-      } catch (error) {
-        console.error("[ERROR] Unable to open AI audio SSE stream", error);
-      }
-    }
-
-    if (!aiTranscriptEventSourceRef.current) {
-      try {
-        const source = new EventSource(`/api/rt/transcripts?sessionId=${sessionId}`);
-        aiTranscriptEventSourceRef.current = source;
-        hasAiTranscriptSseRef.current = true;
-        source.onmessage = (event) => {
-          const data = (event.data || "").trim();
-          if (!data || data === "Connected to AI transcript stream") {
-            return;
-          }
-          handleAiTranscriptDelta(data);
-        };
-        source.addEventListener("done", () => {
-          finalizeSegment("ai");
-        });
-        source.addEventListener("error", (event) => {
-          console.error("[ERROR] AI transcript SSE stream error", event);
-          hasAiTranscriptSseRef.current = false;
-          if (aiTranscriptEventSourceRef.current === source) {
-            source.close();
-            aiTranscriptEventSourceRef.current = null;
-          }
-        });
-      } catch (error) {
-        console.error("[ERROR] Unable to open AI transcript SSE stream", error);
-        hasAiTranscriptSseRef.current = false;
-      }
-    }
-
-    if (!userTranscriptEventSourceRef.current) {
-      try {
-        const source = new EventSource(`/api/rt/user-transcripts?sessionId=${sessionId}`);
-        userTranscriptEventSourceRef.current = source;
-        hasUserTranscriptSseRef.current = true;
-
-        const handleComplete = (event: MessageEvent) => {
-          const data = (event.data || "").trim();
-          if (!data || data === "Connected to user transcript stream") {
-            if (!data) {
-              finalizeSegment("host");
-            }
-            return;
-          }
-          handleUserTranscriptionComplete(data);
-        };
-
-        const handleDelta = (event: MessageEvent) => {
-          const data = (event.data || "").trim();
-          if (!data || data === "Connected to user transcript stream") {
-            return;
-          }
-          handleUserTranscriptionDelta(data);
-        };
-
-        source.addEventListener("complete", handleComplete);
-        source.addEventListener("delta", handleDelta);
-        source.addEventListener("error", (event) => {
-          console.error("[ERROR] User transcript SSE stream error", event);
-          hasUserTranscriptSseRef.current = false;
-          if (userTranscriptEventSourceRef.current === source) {
-            source.close();
-            userTranscriptEventSourceRef.current = null;
-          }
-        });
-      } catch (error) {
-        console.error("[ERROR] Unable to open user transcript SSE stream", error);
-        hasUserTranscriptSseRef.current = false;
-      }
-    }
-  }, [finalizeSegment, handleAiTranscriptDelta, handleUserTranscriptionComplete, handleUserTranscriptionDelta, phase, sessionId]);
+  // WebRTC-only: transcripts and AI audio are handled via the data channel and remote audio track.
+  // Removed SSE streams for audio/transcripts.
 
   const startSession = useCallback(async () => {
     if (phase === "preparing" || phase === "live") {
@@ -1311,6 +1123,41 @@ const StudioPage: React.FC = () => {
         track.onended = () => {
           setIsAiSpeaking(false);
         };
+
+        // Begin capturing AI audio locally for export (WebRTC-only)
+        try {
+          if (!audioContextRef.current) {
+            const AudioContextConstructor =
+              window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+            if (AudioContextConstructor) {
+              audioContextRef.current = new AudioContextConstructor({ sampleRate: 24000 });
+            }
+          }
+          const audioContext = audioContextRef.current;
+          if (audioContext && !aiRecordProcessorRef.current) {
+            const aiStream = remoteStream ?? new MediaStream([track]);
+            const source = audioContext.createMediaStreamSource(aiStream);
+            const scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1);
+            scriptProcessor.onaudioprocess = (ev) => {
+              const inputData = ev.inputBuffer.getChannelData(0);
+              const pcm16Buffer = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) {
+                const sample = Math.max(-1, Math.min(1, inputData[i]));
+                pcm16Buffer[i] = Math.round(sample * 32767);
+              }
+              aiAudioChunksRef.current.push(new Uint8Array(pcm16Buffer.buffer));
+            };
+            source.connect(scriptProcessor);
+            aiRecordProcessorRef.current = {
+              stop: () => {
+                try { source.disconnect(); } catch {}
+                try { scriptProcessor.disconnect(); } catch {}
+              }
+            };
+          }
+        } catch (e) {
+          console.debug("[DEBUG] Failed to start AI audio capture", e);
+        }
       };
 
       pc.ondatachannel = (ev) => {
