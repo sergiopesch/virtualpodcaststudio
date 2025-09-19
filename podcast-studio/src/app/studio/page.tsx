@@ -659,20 +659,6 @@ const StudioPage: React.FC = () => {
   }, []);
 
   const ensureRealtimeSession = useCallback(async () => {
-    const friendlyProvider = activeProvider === "openai" ? "OpenAI" : "Google";
-
-    // Debug logging (will be masked by secure logging)
-    console.log("[DEBUG] API key validation", {
-      provider: activeProvider,
-      hasApiKey: !!activeApiKey,
-      keyLength: activeApiKey?.length || 0,
-      keyStart: activeApiKey?.substring(0, 7) + '...' || 'none'
-    });
-
-    if (!activeApiKey) {
-      throw new Error(`Add your ${friendlyProvider} API key in Settings before connecting.`);
-    }
-
     if (activeProvider === "google") {
       throw new Error(
         "Realtime studio currently supports only OpenAI sessions. Switch your active provider in Settings to continue.",
@@ -685,16 +671,23 @@ const StudioPage: React.FC = () => {
         "Invalid OpenAI API key format. OpenAI API keys should start with 'sk-'. Please check your API key in Settings.",
       );
     }
+    const payload: Record<string, unknown> = {
+      sessionId,
+      provider: activeProvider,
+    };
+
+    if (activeApiKey) {
+      payload.apiKey = activeApiKey;
+    }
+
+    if (paperPayload) {
+      payload.paper = paperPayload;
+    }
 
     const response = await fetch("/api/rt/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        provider: activeProvider,
-        apiKey: activeApiKey,
-        paper: paperPayload ?? undefined,
-      }),
+      body: JSON.stringify(payload),
       cache: "no-store",
     });
 
@@ -1330,16 +1323,21 @@ const StudioPage: React.FC = () => {
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await pc.setLocalDescription(offer);
 
+      const webrtcHeaders: Record<string, string> = {
+        "Content-Type": "application/sdp",
+        "X-LLM-Provider": activeProvider,
+        "X-LLM-Model": "gpt-4o-realtime-preview-2024-10-01",
+      };
+
+      if (activeApiKey) {
+        webrtcHeaders["X-LLM-Api-Key"] = activeApiKey;
+      }
+
       const resp = await fetch("/api/rt/webrtc?model=gpt-4o-realtime-preview-2024-10-01", {
         method: "POST",
         body: pc.localDescription?.sdp || "",
         cache: "no-store",
-        headers: {
-          "Content-Type": "application/sdp",
-          "X-LLM-Provider": activeProvider,
-          "X-LLM-Api-Key": activeApiKey,
-          "X-LLM-Model": "gpt-4o-realtime-preview-2024-10-01",
-        },
+        headers: webrtcHeaders,
       });
       if (!resp.ok) {
         const text = await resp.text();
