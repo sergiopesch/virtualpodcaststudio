@@ -1,6 +1,8 @@
 // src/lib/realtimeSession.ts
 import WebSocket from 'ws';
 import { EventEmitter } from "node:events";
+import { ApiKeySecurity } from "./apiKeySecurity";
+import { SecureEnv } from "./secureEnv";
 
 export type RTSignals = {
   audio: (data: Uint8Array) => void;
@@ -12,12 +14,44 @@ export type RTSignals = {
   ready: () => void;
 };
 
-// Simple logging utility
+// Secure logging utility that masks sensitive information
+const sanitizeForLogging = (obj: Record<string, unknown>): Record<string, unknown> => {
+  const sanitized = { ...obj };
+  
+  // Remove or mask sensitive fields
+  if (sanitized.apiKey) {
+    sanitized.apiKey = ApiKeySecurity.maskKey(String(sanitized.apiKey));
+  }
+  if (sanitized.key) {
+    sanitized.key = ApiKeySecurity.maskKey(String(sanitized.key));
+  }
+  if (sanitized.authorization) {
+    sanitized.authorization = '[REDACTED]';
+  }
+  if (sanitized.token) {
+    sanitized.token = '[REDACTED]';
+  }
+  
+  return sanitized;
+};
+
 const log = {
-  info: (msg: string, meta?: Record<string, unknown>) => console.log(`[INFO] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  error: (msg: string, meta?: Record<string, unknown>) => console.error(`[ERROR] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  warn: (msg: string, meta?: Record<string, unknown>) => console.warn(`[WARN] ${msg}`, meta ? JSON.stringify(meta) : ''),
-  debug: (msg: string, meta?: Record<string, unknown>) => console.debug(`[DEBUG] ${msg}`, meta ? JSON.stringify(meta) : '')
+  info: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.log(`[INFO] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : '');
+  },
+  error: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.error(`[ERROR] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : '');
+  },
+  warn: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.warn(`[WARN] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : '');
+  },
+  debug: (msg: string, meta?: Record<string, unknown>) => {
+    const safeMeta = meta ? sanitizeForLogging(meta) : undefined;
+    console.debug(`[DEBUG] ${msg}`, safeMeta ? JSON.stringify(safeMeta) : '');
+  }
 };
 
 interface RealtimeEvent {
@@ -66,7 +100,7 @@ const buildErrorMeta = (error: unknown): Record<string, unknown> => ({
 });
 
 const DEFAULT_OPENAI_REALTIME_MODEL =
-  process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview-2024-10-01';
+  SecureEnv.getWithDefault('OPENAI_REALTIME_MODEL', 'gpt-4o-realtime-preview-2024-10-01');
 
 type SupportedProvider = 'openai' | 'google';
 
@@ -108,7 +142,7 @@ class RTManager extends EventEmitter {
   private connectionTimeout?: NodeJS.Timeout;
   private responseInFlight: boolean = false;
   private provider: SupportedProvider = 'openai';
-  private apiKey: string | null = process.env.OPENAI_API_KEY || null;
+  private apiKey: string | null = SecureEnv.get('OPENAI_API_KEY') || null;
   private model: string = DEFAULT_OPENAI_REALTIME_MODEL;
   private conversationContext: PaperContext | null = null;
   private lastPrimedSummary: string | null = null;
@@ -131,7 +165,7 @@ class RTManager extends EventEmitter {
     const trimmedKey = (config.apiKey || '').trim();
     const fallbackKey =
       trimmedKey ||
-      (normalizedProvider === 'openai' ? process.env.OPENAI_API_KEY || '' : '');
+      (normalizedProvider === 'openai' ? SecureEnv.getWithDefault('OPENAI_API_KEY', '') : '');
     const resolvedKey = fallbackKey.trim();
 
     if (!resolvedKey) {
@@ -254,6 +288,7 @@ class RTManager extends EventEmitter {
         sessionId: this.sessionId,
         provider: this.provider,
         model: this.model,
+        hasApiKey: !!key,
       });
 
       // First, let's test if we can reach OpenAI API with a simple HTTP request
@@ -262,7 +297,7 @@ class RTManager extends EventEmitter {
           'Authorization': `Bearer ${key}`,
           'Content-Type': 'application/json'
         }
-      }).then(response => {
+      }).then(async response => {
         log.info(`OpenAI API test`, {
           sessionId: this.sessionId,
           status: response.status,
@@ -270,7 +305,39 @@ class RTManager extends EventEmitter {
         });
 
         if (!response.ok) {
-          reject(new Error(`OpenAI API authentication failed: ${response.status}`));
+          let errorMessage = `OpenAI API authentication failed: ${response.status}`;
+          
+          // Try to get more detailed error information
+          try {
+            const errorBody = await response.text();
+            log.error(`OpenAI API error details`, {
+              sessionId: this.sessionId,
+              status: response.status,
+              body: errorBody
+            });
+            
+            // Parse error response for more helpful messages
+            if (response.status === 401) {
+              if (errorBody.includes('Invalid API key')) {
+                errorMessage = 'Invalid OpenAI API key. Please check your API key in Settings and ensure it starts with "sk-".';
+              } else if (errorBody.includes('Incorrect API key')) {
+                errorMessage = 'Incorrect OpenAI API key. Please verify your API key in Settings.';
+              } else {
+                errorMessage = 'OpenAI API key authentication failed. Please check your API key in Settings.';
+              }
+            } else if (response.status === 429) {
+              errorMessage = 'OpenAI API rate limit exceeded. Please try again in a moment.';
+            } else if (response.status === 403) {
+              errorMessage = 'OpenAI API access forbidden. Please check your account status and billing.';
+            }
+          } catch (parseError) {
+            log.warn(`Failed to parse error response`, {
+              sessionId: this.sessionId,
+              parseError: parseError instanceof Error ? parseError.message : 'Unknown error'
+            });
+          }
+          
+          reject(new Error(errorMessage));
           return;
         }
 
@@ -658,7 +725,7 @@ class RTManager extends EventEmitter {
       session: {
         modalities: ['text', 'audio'],
         instructions: this._buildInstructions(),
-        voice: process.env.OPENAI_REALTIME_VOICE || 'alloy',
+        voice: SecureEnv.getWithDefault('OPENAI_REALTIME_VOICE', 'alloy'),
         input_audio_format: 'pcm16',
         output_audio_format: 'pcm16',
         input_audio_transcription: {

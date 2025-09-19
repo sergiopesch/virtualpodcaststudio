@@ -1,10 +1,11 @@
 // src/app/api/rt/webrtc/route.ts
 import { NextResponse } from "next/server";
+import { SecureEnv } from "@/lib/secureEnv";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  let model = process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview-2024-10-01";
+  let model = SecureEnv.getWithDefault('OPENAI_REALTIME_MODEL', "gpt-4o-realtime-preview-2024-10-01");
   try {
     const url = new URL(req.url);
     model = url.searchParams.get('model') || model;
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
 
     const headerKey = req.headers.get('x-llm-api-key')?.trim() || '';
     const resolvedKey = provider === 'openai'
-      ? headerKey || process.env.OPENAI_API_KEY || ''
+      ? headerKey || SecureEnv.getWithDefault('OPENAI_API_KEY', '')
       : headerKey;
 
     if (!resolvedKey) {

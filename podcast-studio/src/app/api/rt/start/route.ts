@@ -1,6 +1,7 @@
 // src/app/api/rt/start/route.ts
 import { NextResponse } from "next/server";
 import { rtSessionManager } from "@/lib/realtimeSession";
+import { SecureEnv } from "@/lib/secureEnv";
 
 export const runtime = "nodejs";
 
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
         : 'openai';
     const incomingKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
     const resolvedKey = provider === 'openai'
-      ? incomingKey || process.env.OPENAI_API_KEY || ''
+      ? incomingKey || SecureEnv.getWithDefault('OPENAI_API_KEY', '')
       : incomingKey;
     const model = typeof body.model === 'string' ? body.model.trim() : undefined;
     const rawPaper = body.paper;

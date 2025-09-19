@@ -661,6 +661,14 @@ const StudioPage: React.FC = () => {
   const ensureRealtimeSession = useCallback(async () => {
     const friendlyProvider = activeProvider === "openai" ? "OpenAI" : "Google";
 
+    // Debug logging (will be masked by secure logging)
+    console.log("[DEBUG] API key validation", {
+      provider: activeProvider,
+      hasApiKey: !!activeApiKey,
+      keyLength: activeApiKey?.length || 0,
+      keyStart: activeApiKey?.substring(0, 7) + '...' || 'none'
+    });
+
     if (!activeApiKey) {
       throw new Error(`Add your ${friendlyProvider} API key in Settings before connecting.`);
     }
@@ -668,6 +676,13 @@ const StudioPage: React.FC = () => {
     if (activeProvider === "google") {
       throw new Error(
         "Realtime studio currently supports only OpenAI sessions. Switch your active provider in Settings to continue.",
+      );
+    }
+
+    // Validate API key format before making the request (only if key exists)
+    if (activeProvider === "openai" && activeApiKey && activeApiKey.trim() && !activeApiKey.startsWith("sk-")) {
+      throw new Error(
+        "Invalid OpenAI API key format. OpenAI API keys should start with 'sk-'. Please check your API key in Settings.",
       );
     }
 
@@ -934,7 +949,7 @@ const StudioPage: React.FC = () => {
 
     const transcript = entries.map((entry, index) => ({
       id: entry.id,
-      role: entry.speaker === "host" ? "user" : "expert",
+      role: entry.speaker === "host" ? "user" as const : "expert" as const,
       content: entry.text.trim(),
       timestamp: new Date(entry.startedAt).toISOString(),
       speaker: entry.speaker === "host" ? "Host (You)" : "Dr. Sarah (AI Expert)",
@@ -1570,13 +1585,13 @@ const StudioPage: React.FC = () => {
   const headerStatus = useMemo(() => {
     switch (phase) {
       case "preparing":
-        return { label: "CONNECTING", color: "yellow", active: false };
+        return { label: "CONNECTING", color: "yellow" as const, active: false };
       case "live":
-        return { label: "LIVE", color: "red", active: true };
+        return { label: "LIVE", color: "red" as const, active: true };
       case "stopping":
-        return { label: "SAVING", color: "yellow", active: false };
+        return { label: "SAVING", color: "yellow" as const, active: false };
       default:
-        return { label: "IDLE", color: "gray", active: false };
+        return { label: "IDLE", color: "gray" as const, active: false };
     }
   }, [phase]);
 

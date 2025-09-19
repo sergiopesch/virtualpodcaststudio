@@ -8,6 +8,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { ApiKeySecurity } from "@/lib/apiKeySecurity";
 
 export type LlmProvider = "openai" | "google";
 
@@ -19,6 +20,7 @@ interface ApiConfigContextValue {
   setApiKey: (provider: LlmProvider, key: string) => void;
   clearApiKey: (provider: LlmProvider) => void;
   setModel: (provider: LlmProvider, model: string) => void;
+  validateApiKey: (provider: LlmProvider, key: string) => { isValid: boolean; message?: string };
 }
 
 const STORAGE_KEY = "vps:llmConfig";
@@ -63,6 +65,12 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
           models: parsed.models ?? {},
         });
       }
+      
+      // Load API keys from secure storage
+      setApiKeys({
+        openai: ApiKeySecurity.retrieveKey("openai"),
+        google: ApiKeySecurity.retrieveKey("google"),
+      });
     } catch (error) {
       console.error("Failed to hydrate API configuration", error);
     } finally {
@@ -90,15 +98,24 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
   }, []);
 
   const setApiKey = useCallback((provider: LlmProvider, key: string) => {
+    const trimmedKey = key.trim();
+    
+    // Store securely
+    ApiKeySecurity.storeKey(provider, trimmedKey);
+    
     setApiKeys((previous) => ({
       ...previous,
-      [provider]: key,
+      [provider]: trimmedKey,
     }));
   }, []);
 
   const clearApiKey = useCallback((provider: LlmProvider) => {
-    setApiKey(provider, "");
-  }, [setApiKey]);
+    ApiKeySecurity.removeKey(provider);
+    setApiKeys((previous) => ({
+      ...previous,
+      [provider]: "",
+    }));
+  }, []);
 
   const setModel = useCallback((provider: LlmProvider, model: string) => {
     setPreferences((previous) => ({
@@ -110,6 +127,10 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     }));
   }, []);
 
+  const validateApiKey = useCallback((provider: LlmProvider, key: string) => {
+    return ApiKeySecurity.validateKeyFormat(provider, key);
+  }, []);
+
   const value = useMemo<ApiConfigContextValue>(() => ({
     activeProvider: preferences.activeProvider,
     apiKeys,
@@ -118,7 +139,8 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     setApiKey,
     clearApiKey,
     setModel,
-  }), [preferences, apiKeys, setActiveProvider, setApiKey, clearApiKey, setModel]);
+    validateApiKey,
+  }), [preferences, apiKeys, setActiveProvider, setApiKey, clearApiKey, setModel, validateApiKey]);
 
   return (
     <ApiConfigContext.Provider value={value}>

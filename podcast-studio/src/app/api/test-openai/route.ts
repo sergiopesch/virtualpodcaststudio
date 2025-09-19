@@ -1,5 +1,6 @@
 // Test OpenAI connection
 import { NextResponse } from "next/server";
+import { SecureEnv } from "@/lib/secureEnv";
 
 export const runtime = "nodejs";
 
@@ -8,7 +9,7 @@ export async function GET() {
     console.log('[TEST] Checking OpenAI configuration...');
     
     // Check if API key exists
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = SecureEnv.get("OPENAI_API_KEY");
     if (!apiKey) {
       return NextResponse.json({ 
         error: 'OpenAI API key not found in environment variables',
@@ -16,8 +17,9 @@ export async function GET() {
       }, { status: 500 });
     }
     
-    console.log('[TEST] API key found, length:', apiKey.length);
-    console.log('[TEST] API key starts with:', apiKey.substring(0, 7));
+    const keyInfo = SecureEnv.getInfo("OPENAI_API_KEY");
+    console.log('[TEST] API key found, length:', keyInfo.length);
+    console.log('[TEST] API key starts with:', apiKey.substring(0, 7) + '...');
     
     // Test a simple OpenAI API call first
     const response = await fetch('https://api.openai.com/v1/models', {
@@ -61,7 +63,7 @@ export async function GET() {
     console.error('[TEST] Error testing OpenAI connection:', error);
     return NextResponse.json({
       error: message,
-      hasKey: !!process.env.OPENAI_API_KEY
+      hasKey: SecureEnv.exists("OPENAI_API_KEY")
     }, { status: 500 });
   }
 }
