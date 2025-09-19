@@ -41,15 +41,16 @@ export async function POST(req: Request) {
       message: 'Audio chunk appended successfully' 
     });
     
-  } catch (error: any) {
-    console.error(`[ERROR] Failed to append audio`, { 
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to append audio';
+    console.error(`[ERROR] Failed to append audio`, {
       sessionId,
-      error: error.message,
-      stack: error.stack 
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined
     });
-    
+
     let status = 500;
-    let errorMessage = error.message || 'Failed to append audio';
+    const errorMessage = message;
     
     if (errorMessage.includes('Session not ready')) {
       status = 503;

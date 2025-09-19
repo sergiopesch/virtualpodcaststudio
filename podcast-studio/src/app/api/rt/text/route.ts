@@ -42,15 +42,16 @@ export async function POST(req: Request) {
       message: 'Text sent successfully' 
     });
     
-  } catch (error: any) {
-    console.error(`[ERROR] Failed to send text`, { 
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to send text';
+    console.error(`[ERROR] Failed to send text`, {
       sessionId,
-      error: error.message,
-      stack: error.stack 
+      error: message,
+      stack: error instanceof Error ? error.stack : undefined
     });
-    
+
     let status = 500;
-    let errorMessage = error.message || 'Failed to send text';
+    const errorMessage = message;
     
     if (errorMessage.includes('Session not ready')) {
       status = 503;

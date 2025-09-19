@@ -130,10 +130,10 @@ export const useRealtimeConversation = () => {
         if (!response.ok) {
           throw new Error('Backend server not responding');
         }
-      } catch (fetchError) {
-        setState(prev => ({ 
-          ...prev, 
-          error: 'Backend server is not running. Please check your backend configuration.' 
+      } catch {
+        setState(prev => ({
+          ...prev,
+          error: 'Backend server is not running. Please check your backend configuration.'
         }));
         return;
       }

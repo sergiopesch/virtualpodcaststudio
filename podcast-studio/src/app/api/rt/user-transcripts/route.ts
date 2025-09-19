@@ -26,7 +26,9 @@ export async function GET(req: Request) {
       });
     }
     
-    const stream = new ReadableStream({
+    let cleanup: (() => void) | undefined;
+
+    const stream = new ReadableStream<string>({
       start(controller) {
         console.log(`[INFO] User transcript stream started`, { sessionId });
         
@@ -52,17 +54,19 @@ export async function GET(req: Request) {
         
         const onClose = () => {
           console.log(`[INFO] Session closed - ending user transcript stream`, { sessionId });
+          cleanup?.();
           try {
             controller.close();
           } catch (error) {
             console.error(`[ERROR] Failed to close user transcript stream`, { sessionId, error });
           }
         };
-        
-        const onError = (error: any) => {
-          console.error(`[ERROR] Session error in user transcript stream`, { sessionId, error });
+
+        const onError = (error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          console.error(`[ERROR] Session error in user transcript stream`, { sessionId, error: message });
           try {
-            controller.enqueue(`event: error\ndata: ${error.message || 'Unknown error'}\n\n`);
+            controller.enqueue(`event: error\ndata: ${message}\n\n`);
           } catch (e) {
             console.error(`[ERROR] Failed to send error to user transcript stream`, { sessionId, e });
           }
@@ -81,14 +85,13 @@ export async function GET(req: Request) {
         const interval = setInterval(() => {
           try {
             controller.enqueue(`: keep-alive\n\n`);
-          } catch (error) {
+          } catch {
             console.log(`[DEBUG] Keep-alive failed (stream likely closed)`, { sessionId });
             clearInterval(interval);
           }
         }, 15000);
-        
-        // Cleanup function
-        (controller as any)._cleanup = () => {
+
+        cleanup = () => {
           console.log(`[INFO] Cleaning up user transcript stream`, { sessionId });
           clearInterval(interval);
           manager.off("user_transcript", onUserTranscript);
@@ -96,9 +99,9 @@ export async function GET(req: Request) {
           manager.off("error", onError);
         };
       },
-      cancel() { 
+      cancel() {
         console.log(`[INFO] User transcript stream cancelled`, { sessionId });
-        (this as any)._cleanup?.(); 
+        cleanup?.();
       }
     });
     
@@ -112,9 +115,10 @@ export async function GET(req: Request) {
       } 
     });
     
-  } catch (error: any) {
-    console.error(`[ERROR] Failed to create user transcript stream`, { sessionId, error: error.message });
-    return new Response(`event: error\ndata: ${error.message}\n\n`, {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to create user transcript stream';
+    console.error(`[ERROR] Failed to create user transcript stream`, { sessionId, error: message });
+    return new Response(`event: error\ndata: ${message}\n\n`, {
       status: 500,
       headers: { "Content-Type": "text/event-stream" }
     });

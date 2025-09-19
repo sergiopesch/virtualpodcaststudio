@@ -14,10 +14,11 @@ export async function POST(req: Request) {
       ok: true, 
       message: 'Realtime session stopped successfully' 
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to stop realtime session';
     console.error('Error stopping realtime session:', error);
-    return NextResponse.json({ 
-      error: error.message || 'Failed to stop realtime session' 
+    return NextResponse.json({
+      error: message
     }, { status: 500 });
   }
 }

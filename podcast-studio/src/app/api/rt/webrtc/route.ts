@@ -52,8 +52,9 @@ export async function POST(req: Request) {
     }
 
     return new NextResponse(answer, { status: 200, headers: { 'Content-Type': 'application/sdp' } });
-  } catch (error: any) {
-    return new NextResponse(JSON.stringify({ error: error.message || 'Failed to exchange SDP' }), { status: 500 });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to exchange SDP';
+    return new NextResponse(JSON.stringify({ error: message }), { status: 500 });
   }
 }
 
