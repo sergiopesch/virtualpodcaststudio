@@ -1,6 +1,7 @@
 // src/lib/realtimeSession.ts
 import WebSocket from 'ws';
 import { EventEmitter } from "node:events";
+import type { IncomingMessage } from 'http';
 
 export type RTSignals = {
   audio: (data: Uint8Array) => void;
@@ -108,7 +109,7 @@ class RTManager extends EventEmitter {
   private connectionTimeout?: NodeJS.Timeout;
   private responseInFlight: boolean = false;
   private provider: SupportedProvider = 'openai';
-  private apiKey: string | null = process.env.OPENAI_API_KEY || null;
+  private apiKey: string | null = null;
   private model: string = DEFAULT_OPENAI_REALTIME_MODEL;
   private conversationContext: PaperContext | null = null;
   private lastPrimedSummary: string | null = null;
@@ -166,9 +167,13 @@ class RTManager extends EventEmitter {
   }
 
   getConfiguration() {
+    const fallbackKey = this.apiKey && this.apiKey.trim().length > 0
+      ? this.apiKey
+      : (this.provider === 'openai' ? (process.env.OPENAI_API_KEY || '').trim() : '');
+
     return {
       provider: this.provider,
-      hasApiKey: !!this.apiKey,
+      hasApiKey: fallbackKey.length > 0,
       model: this.model,
     };
   }
@@ -256,42 +261,80 @@ class RTManager extends EventEmitter {
         model: this.model,
       });
 
-      // First, let's test if we can reach OpenAI API with a simple HTTP request
-      fetch('https://api.openai.com/v1/models', {
+      const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
+      log.info(`Connecting to OpenAI Realtime API`, { sessionId: this.sessionId, url: wsUrl });
+
+      const ws = new WebSocket(wsUrl, {
         headers: {
           'Authorization': `Bearer ${key}`,
-          'Content-Type': 'application/json'
+          'OpenAI-Beta': 'realtime=v1'
         }
-      }).then(response => {
-        log.info(`OpenAI API test`, {
-          sessionId: this.sessionId,
-          status: response.status,
-          ok: response.ok
-        });
-
-        if (!response.ok) {
-          reject(new Error(`OpenAI API authentication failed: ${response.status}`));
-          return;
-        }
-
-        // Now try the WebSocket connection
-        const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
-        log.info(`Connecting to OpenAI Realtime API`, { sessionId: this.sessionId, url: wsUrl });
-
-        const ws = new WebSocket(wsUrl, {
-          headers: {
-            'Authorization': `Bearer ${key}`,
-            'OpenAI-Beta': 'realtime=v1'
-          }
-        });
-
-        this.ws = ws;
-        this._setupWebSocketHandlers(ws, resolve, reject);
-
-      }).catch(error => {
-        log.error(`Failed to test OpenAI API connection`, { sessionId: this.sessionId, error: error.message });
-        reject(new Error(`Cannot connect to OpenAI API: ${error.message}`));
       });
+
+      let settled = false;
+      const settleResolve = () => {
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      };
+      const settleReject = (error: Error) => {
+        if (!settled) {
+          settled = true;
+          reject(error);
+        }
+      };
+
+      const HTTP_ERROR_BODY_LIMIT = 200;
+      const handleUnexpectedResponse = (_request: unknown, response: IncomingMessage) => {
+        const statusCode: number | undefined = response.statusCode ?? undefined;
+        const statusMessage: string | undefined = response.statusMessage ?? undefined;
+        let errorMessage = 'OpenAI realtime handshake failed';
+        if (statusCode === 401 || statusCode === 403) {
+          errorMessage = 'OpenAI realtime authentication failed';
+        } else if (typeof statusCode === 'number') {
+          errorMessage = `OpenAI realtime handshake failed (status ${statusCode})`;
+        }
+
+        const chunks: Buffer[] = [];
+        let collected = 0;
+        response.on('data', (chunk: Buffer) => {
+          if (collected >= HTTP_ERROR_BODY_LIMIT) {
+            return;
+          }
+          const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          const remaining = HTTP_ERROR_BODY_LIMIT - collected;
+          chunks.push(bufferChunk.subarray(0, remaining));
+          collected += Math.min(bufferChunk.length, remaining);
+        });
+        response.on('end', () => {
+          const snippet = chunks.length ? Buffer.concat(chunks).toString('utf8') : undefined;
+          log.error('Realtime handshake HTTP error', {
+            sessionId: this.sessionId,
+            statusCode,
+            statusMessage,
+            bodySnippet: snippet,
+          });
+        });
+
+        settleReject(new Error(errorMessage));
+      };
+
+      ws.once('unexpected-response', handleUnexpectedResponse);
+
+      this.ws = ws;
+      this._setupWebSocketHandlers(
+        ws,
+        () => {
+          ws.removeListener('unexpected-response', handleUnexpectedResponse);
+          settleResolve();
+        },
+        (error) => {
+          ws.removeListener('unexpected-response', handleUnexpectedResponse);
+          const normalizedError = error instanceof Error ? error : new Error('Failed to establish realtime session');
+          settleReject(normalizedError);
+        }
+      );
     });
   }
 
@@ -571,25 +614,27 @@ class RTManager extends EventEmitter {
 
   async stop() {
     log.info(`Stopping session`, { sessionId: this.sessionId });
-    
+
     if (!this.ws) {
       log.debug(`No active session to stop`, { sessionId: this.sessionId });
       return;
     }
-    
-    try { 
+
+    try {
       this.ws.close();
       log.info(`Session stopped successfully`, { sessionId: this.sessionId });
     } catch (error) {
-      log.error(`Error closing session`, { 
+      log.error(`Error closing session`, {
         sessionId: this.sessionId,
         error: error instanceof Error ? error.message : 'Unknown error'
       });
     }
-    
+
     this.ws = null;
     this.startPromise = undefined;
     this.lastPrimedSummary = null;
+    this.responseInFlight = false;
+    this.apiKey = null;
 
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);

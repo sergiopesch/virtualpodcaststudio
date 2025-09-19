@@ -16,8 +16,7 @@ export async function GET() {
       }, { status: 500 });
     }
     
-    console.log('[TEST] API key found, length:', apiKey.length);
-    console.log('[TEST] API key starts with:', apiKey.substring(0, 7));
+    console.log('[TEST] API key located in environment variables');
     
     // Test a simple OpenAI API call first
     const response = await fetch('https://api.openai.com/v1/models', {
@@ -31,12 +30,12 @@ export async function GET() {
     
     if (!response.ok) {
       const errorData = await response.text();
-      console.log('[TEST] Models API error:', errorData);
-      return NextResponse.json({ 
+      const snippet = errorData.slice(0, 200);
+      console.log('[TEST] Models API error snippet:', snippet);
+      return NextResponse.json({
         error: 'OpenAI API key validation failed',
         status: response.status,
-        details: errorData,
-        hasKey: true 
+        hasKey: true
       }, { status: 500 });
     }
     
@@ -51,7 +50,6 @@ export async function GET() {
     return NextResponse.json({ 
       success: true,
       hasKey: true,
-      keyLength: apiKey.length,
       modelsCount: modelList.length,
       realtimeModels: realtimeModels.map((model) => model.id)
     });
