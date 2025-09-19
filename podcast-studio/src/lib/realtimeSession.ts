@@ -244,15 +244,20 @@ class RTManager extends EventEmitter {
   }
 
   private async _establishConnection(): Promise<void> {
-    const key = (this.apiKey || '').trim();
-
-    if (!key) {
-      const providerName = this.provider === 'openai' ? 'OpenAI' : 'Google';
-      throw new Error(`${providerName} API key is required to start a realtime session`);
-    }
-
+    // Provider must be supported first
     if (this.provider !== 'openai') {
       throw new Error('Google provider is not supported for realtime audio sessions yet');
+    }
+
+    // Fallback to environment variable for backward compatibility and parity with getConfiguration()
+    const key = (
+      (this.apiKey && this.apiKey.trim().length > 0
+        ? this.apiKey
+        : (process.env.OPENAI_API_KEY || ''))
+    ).trim();
+
+    if (!key) {
+      throw new Error('OpenAI API key is required to start a realtime session');
     }
 
     return new Promise((resolve, reject) => {
