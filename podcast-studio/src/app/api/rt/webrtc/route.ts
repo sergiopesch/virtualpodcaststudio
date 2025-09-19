@@ -1,6 +1,11 @@
 // src/app/api/rt/webrtc/route.ts
 import { NextResponse } from "next/server";
 import { SecureEnv } from "@/lib/secureEnv";
+import {
+  interpretOpenAiHttpError,
+  isRealtimeSessionError,
+  resolveRealtimeHttpStatus,
+} from "@/lib/realtimeSession";
 
 export const runtime = "nodejs";
 
@@ -49,11 +54,26 @@ export async function POST(req: Request) {
 
     const answer = await resp.text();
     if (!resp.ok) {
-      return new NextResponse(JSON.stringify({ error: "OpenAI SDP exchange failed", status: resp.status, details: answer }), { status: 502 });
+      const sessionError = interpretOpenAiHttpError(resp.status, answer);
+      return new NextResponse(
+        JSON.stringify({
+          error: sessionError.message,
+          code: sessionError.code,
+          upstream: sessionError.details,
+        }),
+        { status: resolveRealtimeHttpStatus(sessionError) },
+      );
     }
 
     return new NextResponse(answer, { status: 200, headers: { 'Content-Type': 'application/sdp' } });
   } catch (error: unknown) {
+    if (isRealtimeSessionError(error)) {
+      return new NextResponse(
+        JSON.stringify({ error: error.message, code: error.code, upstream: error.details }),
+        { status: resolveRealtimeHttpStatus(error) },
+      );
+    }
+
     const message = error instanceof Error ? error.message : 'Failed to exchange SDP';
     return new NextResponse(JSON.stringify({ error: message }), { status: 500 });
   }

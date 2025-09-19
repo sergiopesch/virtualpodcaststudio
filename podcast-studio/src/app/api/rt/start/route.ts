@@ -1,14 +1,57 @@
 // src/app/api/rt/start/route.ts
 import { NextResponse } from "next/server";
-import { rtSessionManager } from "@/lib/realtimeSession";
+import {
+  rtSessionManager,
+  isRealtimeSessionError,
+  resolveRealtimeHttpStatus,
+  type RealtimeSessionErrorCode,
+} from "@/lib/realtimeSession";
 import { SecureEnv } from "@/lib/secureEnv";
 
 export const runtime = "nodejs";
 
+function normalizeStartError(error: unknown): {
+  message: string;
+  status: number;
+  code?: RealtimeSessionErrorCode;
+  stack?: string;
+} {
+  if (isRealtimeSessionError(error)) {
+    return {
+      message: error.message,
+      status: resolveRealtimeHttpStatus(error),
+      code: error.code,
+      stack: error.stack,
+    };
+  }
+
+  if (error instanceof Error) {
+    const lowered = error.message.toLowerCase();
+    if (lowered.includes("timeout")) {
+      return {
+        message: error.message,
+        status: 504,
+        code: "TIMEOUT",
+        stack: error.stack,
+      };
+    }
+    return {
+      message: error.message,
+      status: 500,
+      stack: error.stack,
+    };
+  }
+
+  return {
+    message: "Failed to start realtime session",
+    status: 500,
+  };
+}
+
 export async function POST(req: Request) {
   const startTime = Date.now();
   let sessionId = 'default';
-  
+
   try {
     // For now, use a simple session ID. In production, extract from JWT/auth
     const body = await req.json().catch(() => ({}));
@@ -96,31 +139,21 @@ export async function POST(req: Request) {
     
   } catch (error: unknown) {
     const duration = Date.now() - startTime;
-    const message = error instanceof Error ? error.message : 'Failed to start realtime session';
-    const stack = error instanceof Error ? error.stack : undefined;
+    const normalized = normalizeStartError(error);
+
     console.error(`[ERROR] Failed to start session`, {
       sessionId,
       duration,
-      error: message,
-      stack
+      error: normalized.message,
+      code: normalized.code,
+      stack: normalized.stack,
     });
 
-    // Determine appropriate HTTP status
-    let status = 500;
-    let errorMessage = message;
-
-    if (errorMessage.includes('API_KEY')) {
-      status = 503;
-      errorMessage = 'OpenAI API configuration error';
-    } else if (errorMessage.includes('timeout')) {
-      status = 504;
-      errorMessage = 'Session connection timeout';
-    }
-    
-    return NextResponse.json({ 
-      error: errorMessage,
+    return NextResponse.json({
+      error: normalized.message,
       sessionId,
-      duration
-    }, { status });
+      duration,
+      code: normalized.code,
+    }, { status: normalized.status });
   }
 }
