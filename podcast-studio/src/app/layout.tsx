@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { SidebarProvider } from "@/contexts/sidebar-context";
@@ -20,10 +20,11 @@ export const metadata: Metadata = {
   },
 };
 
-export const viewport = {
-  width: 'device-width',
+export const viewport: Viewport = {
+  width: "device-width",
   initialScale: 1,
-  themeColor: '#9333ea',
+  viewportFit: "cover",
+  themeColor: "#9333ea",
 };
 
 export default function RootLayout({
@@ -34,6 +35,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.className} antialiased`} suppressHydrationWarning={true}>
+        <a
+          href="#main-content"
+          className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:left-4 focus-visible:top-4 focus-visible:z-50 focus-visible:rounded-full focus-visible:bg-gray-900 focus-visible:px-4 focus-visible:py-2 focus-visible:text-sm focus-visible:text-white focus-visible:shadow-lg"
+        >
+          Skip to content
+        </a>
         <ApiConfigProvider>
           <SidebarProvider>
             {children}

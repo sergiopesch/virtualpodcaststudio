@@ -220,7 +220,7 @@ export default function Publisher() {
             }
           />
 
-          <div className="p-6 space-y-6">
+          <main id="main-content" tabIndex={-1} className="p-6 space-y-6">
             {/* Hero */}
             <Card className="overflow-hidden">
               <CardContent className="p-0">
@@ -499,7 +499,7 @@ export default function Publisher() {
                 </Card>
               </div>
             </div>
-          </div>
+          </main>
         </div>
       </div>
     </div>

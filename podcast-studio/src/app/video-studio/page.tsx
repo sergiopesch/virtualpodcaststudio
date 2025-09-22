@@ -1400,7 +1400,7 @@ export default function VideoStudio() {
               </div>
             }
           />
-          <main className="space-y-6 p-4 sm:p-6">
+          <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6">
             <div className="flex flex-col gap-6 xl:flex-row">
               <div className="flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                 <div className="border-b border-gray-200 bg-white p-6">
@@ -2091,7 +2091,7 @@ function SimpleInspectorPanel({
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search media..."
+                  placeholder="Search media…"
                   value={mediaQuery}
                   onChange={(event) => setMediaQuery(event.target.value)}
                   className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
