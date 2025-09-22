@@ -58,6 +58,8 @@ export function Header({
     return colors[color as keyof typeof colors] || 'text-gray-500';
   };
 
+  const searchInputId = React.useId();
+
   return (
     <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60 px-6 py-5 sticky top-0 z-10">
       <div className="flex items-center justify-between">
@@ -105,11 +107,19 @@ export function Header({
           
           {search && (
             <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <label htmlFor={searchInputId} className="sr-only">
+                {search.placeholder}
+              </label>
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+                aria-hidden="true"
+              />
               <input
-                type="text"
+                id={searchInputId}
+                type="search"
+                inputMode="search"
                 placeholder={search.placeholder}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white/50 backdrop-blur-sm transition-all"
+                className="w-48 rounded-lg border border-gray-300 bg-white/60 pl-10 pr-4 py-2 text-base text-gray-900 shadow-sm transition focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none sm:w-64"
                 onChange={(e) => search.onSearch?.(e.target.value)}
               />
             </div>

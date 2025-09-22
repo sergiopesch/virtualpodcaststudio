@@ -248,12 +248,12 @@ export default function Home() {
             title="Research Hub"
             description="Discover and analyze research papers to fuel AI-powered podcast conversations"
             search={{
-              placeholder: "Search papers...",
-              onSearch: (query) => console.log("Search:", query)
+              placeholder: "Search papers…",
+              onSearch: (query) => console.log("Search:", query),
             }}
           />
 
-          <main className="p-6 space-y-8">
+          <main id="main-content" tabIndex={-1} className="p-6 space-y-8">
             {/* Topic Selection */}
             <section className="animate-slide-up">
               <Card>
@@ -276,7 +276,7 @@ export default function Home() {
                           onClick={() => handleTopicToggle(topic.id)}
                           aria-pressed={isSelected}
                           className={cn(
-                            "group flex w-full items-center space-x-4 rounded-xl border-2 p-4 text-left transition-all duration-200 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-200",
+                            "group flex w-full items-center space-x-4 rounded-xl border-2 p-4 text-left transition-all duration-200 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-200 touch-manipulation",
                             isSelected
                               ? `${topic.bgColor} ${topic.borderColor} border-opacity-60 shadow-md`
                               : "bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm"
@@ -333,18 +333,19 @@ export default function Home() {
                       className="flex-1"
                       onClick={handleFetchPapers}
                       disabled={!hasSelectedTopics || loading}
+                      aria-busy={loading}
                     >
-                      {loading ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                          Searching...
-                        </>
-                      ) : (
-                        <>
-                          <Search className="w-4 h-4 mr-2" />
-                          Find Papers
-                        </>
-                      )}
+                      <span className="flex w-full items-center justify-center gap-2">
+                        {loading ? (
+                          <span
+                            className="size-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <Search className="h-4 w-4" aria-hidden="true" />
+                        )}
+                        <span className="font-semibold tracking-tight">Find Papers</span>
+                      </span>
                     </Button>
                     <Button
                       variant="outline"
@@ -388,11 +389,11 @@ export default function Home() {
                 </CardHeader>
                 
                 <CardContent className="p-0">
-                  <ScrollArea className="h-96">
+                  <ScrollArea className="h-96" aria-live="polite">
                     {error ? (
-                      <div className="text-center py-12">
+                      <div className="py-12 text-center" role="alert">
                         <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                          <FileText className="w-6 h-6 text-red-600" />
+                          <FileText className="w-6 h-6 text-red-600" aria-hidden="true" />
                         </div>
                         <p className="text-red-600 font-medium mb-2">Error loading papers</p>
                         <p className="text-gray-500 text-sm">{error}</p>

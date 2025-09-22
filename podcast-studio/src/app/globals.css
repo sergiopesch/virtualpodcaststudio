@@ -132,11 +132,21 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    -webkit-tap-highlight-color: rgba(147, 51, 234, 0.2);
   }
-  
+
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    scroll-margin-top: 6rem;
   }
   
   /* Enhanced focus styles */

@@ -213,7 +213,7 @@ export default function AnalyticsPage() {
             }
           />
 
-          <main className="p-6 space-y-6">
+          <main id="main-content" tabIndex={-1} className="p-6 space-y-6">
             <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
               {overviewCards.map((card) => {
                 const Icon = card.icon;

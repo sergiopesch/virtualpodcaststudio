@@ -90,7 +90,7 @@ export default function Library() {
             }
           />
 
-          <main className="p-6 space-y-6">
+          <main id="main-content" tabIndex={-1} className="p-6 space-y-6">
             {/* Hero Section */}
             <div className="rounded-2xl p-6 bg-gradient-to-r from-purple-600 via-fuchsia-500 to-pink-500 text-white shadow-xl">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">

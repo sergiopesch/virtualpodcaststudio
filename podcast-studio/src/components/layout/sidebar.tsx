@@ -97,7 +97,7 @@ export function Sidebar({
       <div className={`${collapsed ? "p-2" : "p-4"} border-b border-gray-200/60 flex-shrink-0 relative z-10`}>
         <div className={`flex items-center ${collapsed ? "flex-col space-y-2" : "justify-between"}`}>
           {!collapsed && (
-            <Link href="/" className="group cursor-pointer">
+            <Link href="/" className="group cursor-pointer touch-manipulation">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center shadow-glow group-hover:shadow-glow-lg transition-all duration-300">
                   <Headphones className="w-6 h-6 text-white" />
@@ -143,7 +143,7 @@ export function Sidebar({
               key={item.href}
               href={item.href}
               title={collapsed ? item.name : undefined}
-              className={`group flex items-center ${collapsed ? "justify-center px-2 py-3" : "space-x-3 px-3 py-2.5"} rounded-lg transition-all duration-200 relative ${
+              className={`group flex items-center touch-manipulation ${collapsed ? "justify-center px-2 py-3" : "space-x-3 px-3 py-2.5"} rounded-lg transition-all duration-200 relative ${
                 isActive
                   ? "bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-lg border border-purple-500/30"
                   : "text-gray-700 hover:bg-gray-50 hover:text-purple-700"

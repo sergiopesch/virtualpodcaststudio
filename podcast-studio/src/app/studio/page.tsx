@@ -333,23 +333,6 @@ const StudioPage: React.FC = () => {
 
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const paperPayload = useMemo(() => {
-    if (!currentPaper) {
-      return null;
-    }
-
-    return {
-      id: currentPaper.id,
-      title: currentPaper.title,
-      authors: currentPaper.authors,
-      primaryAuthor: currentPaper.primaryAuthor,
-      hasAdditionalAuthors: currentPaper.hasAdditionalAuthors,
-      formattedPublishedDate: currentPaper.formattedPublishedDate,
-      abstract: currentPaper.abstract,
-      arxiv_url: currentPaper.arxiv_url ?? undefined,
-    };
-  }, [currentPaper]);
-
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -873,7 +856,7 @@ const StudioPage: React.FC = () => {
     aiAudioChunksRef.current = [];
     isUploadingRef.current = false;
     hasCapturedAudioRef.current = false;
-  }, [sessionId, stopMicrophonePipeline]);
+  }, [stopMicrophonePipeline]);
 
   const buildConversationPayload = useCallback((): StoredConversation | null => {
     if (!currentPaper || entries.length === 0) {
@@ -1509,7 +1492,7 @@ const StudioPage: React.FC = () => {
             timer={{ duration: sessionDuration, format: formatTime }}
           />
 
-          <main className="p-6 space-y-6">
+          <main id="main-content" tabIndex={-1} className="p-6 space-y-6">
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="space-y-6">
                 <Card className="shadow-sm border border-slate-200/70 backdrop-blur-sm bg-white/80">

@@ -24,7 +24,8 @@ import { ChevronDown, LogOut, Settings, User } from "lucide-react";
 
 interface UserMenuItem {
   key: UserMenuKey;
-  label: string;
+  menuLabel: string;
+  sheetTitle: string;
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 }
@@ -40,20 +41,22 @@ interface LlmSettingsState {
 const userMenuItems: UserMenuItem[] = [
   {
     key: "profile",
-    label: "Profile",
+    menuLabel: "Profile…",
+    sheetTitle: "Profile",
     description: "Update your public details and contact info.",
     icon: User,
   },
   {
     key: "settings",
-    label: "Workspace settings",
+    menuLabel: "Workspace settings…",
+    sheetTitle: "Workspace settings",
     description: "Configure collaboration preferences and AI providers.",
     icon: Settings,
   },
 ];
 
 const baseFieldClass =
-  "w-full rounded-lg border border-gray-300 bg-white/90 px-3 py-2 text-sm text-gray-900 shadow-sm transition focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200";
+  "w-full rounded-lg border border-gray-300 bg-white/90 px-3 py-2 text-base text-gray-900 shadow-sm transition focus-visible:border-purple-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-300";
 
 export function UserMenu() {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -403,7 +406,7 @@ export function UserMenu() {
                         openaiKey: event.target.value,
                       }))
                     }
-                    placeholder="sk-..."
+                    placeholder="sk-0123456789…"
                     className={`${baseFieldClass} flex-1`}
                   />
                   {llmSettings.openaiKey && (
@@ -447,7 +450,7 @@ export function UserMenu() {
                         googleKey: event.target.value,
                       }))
                     }
-                    placeholder="AIza..."
+                    placeholder="AIzaSyExample…"
                     className={`${baseFieldClass} flex-1`}
                   />
                   {llmSettings.googleKey && (
@@ -527,17 +530,17 @@ export function UserMenu() {
             return (
               <DropdownMenuItem
                 key={item.key}
-                className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-gray-700 transition-colors focus:bg-purple-50/80 focus:text-gray-900"
+                className="flex touch-manipulation items-center gap-3 rounded-xl px-3 py-2 text-sm text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-200 data-[highlighted]:bg-purple-50/80 data-[highlighted]:text-gray-900"
                 onSelect={(event) => {
                   event.preventDefault();
                   handleItemSelect(item);
                 }}
               >
                 <span className="flex size-9 items-center justify-center rounded-xl bg-purple-50 text-purple-600 shadow-inner">
-                  <Icon className="size-4" />
+                  <Icon className="size-4" aria-hidden="true" />
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{item.label}</p>
+                  <p className="text-sm font-medium text-gray-900 truncate">{item.menuLabel}</p>
                   <p className="text-xs text-gray-500 truncate">{item.description}</p>
                 </div>
               </DropdownMenuItem>
@@ -546,14 +549,14 @@ export function UserMenu() {
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
-            className="flex items-center gap-3 px-3 py-2"
+            className="flex touch-manipulation items-center gap-3 px-3 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-200 data-[highlighted]:bg-red-50/80"
             onSelect={(event) => {
               event.preventDefault();
               handleSignOut();
             }}
           >
             <span className="flex size-9 items-center justify-center rounded-xl bg-red-50 text-red-500">
-              <LogOut className="size-4" />
+              <LogOut className="size-4" aria-hidden="true" />
             </span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium">Sign out</p>
@@ -568,7 +571,7 @@ export function UserMenu() {
           {activeItem ? (
             <>
               <SheetHeader className="border-b border-gray-200 px-6 pt-6 pb-4">
-                <SheetTitle>{activeItem.label}</SheetTitle>
+                <SheetTitle>{activeItem.sheetTitle}</SheetTitle>
                 <SheetDescription>{activeItem.description}</SheetDescription>
               </SheetHeader>
               <div
