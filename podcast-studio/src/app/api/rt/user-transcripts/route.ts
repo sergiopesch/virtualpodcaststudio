@@ -31,7 +31,7 @@ export async function GET(req: Request) {
     const stream = new ReadableStream<string>({
       start(controller) {
         console.log(`[INFO] User transcript stream started`, { sessionId });
-        
+
         const send = (text: string, type: 'complete' | 'delta' = 'complete') => {
           try {
             const lines = `${text}`.split(/\r?\n/);
@@ -42,7 +42,16 @@ export async function GET(req: Request) {
             console.error(`[ERROR] Failed to send user transcript`, { sessionId, error });
           }
         };
-        
+
+        const sendSignal = (type: 'speech-started' | 'speech-stopped') => {
+          try {
+            controller.enqueue(`event: ${type}\ndata: ok\n\n`);
+            console.log(`[DEBUG] Sent user speech signal`, { sessionId, type });
+          } catch (error) {
+            console.error(`[ERROR] Failed to send user speech signal`, { sessionId, type, error });
+          }
+        };
+
         const onUserTranscript = (text: string) => {
           console.log(`[DEBUG] Received user transcript event`, { sessionId, text });
           send(text, 'complete');
@@ -52,7 +61,17 @@ export async function GET(req: Request) {
           console.log(`[DEBUG] Received user transcript delta`, { sessionId, text });
           send(text, 'delta');
         };
-        
+
+        const onSpeechStarted = () => {
+          console.log(`[DEBUG] Received user speech started`, { sessionId });
+          sendSignal('speech-started');
+        };
+
+        const onSpeechStopped = () => {
+          console.log(`[DEBUG] Received user speech stopped`, { sessionId });
+          sendSignal('speech-stopped');
+        };
+
         const onClose = () => {
           console.log(`[INFO] Session closed - ending user transcript stream`, { sessionId });
           cleanup?.();
@@ -72,13 +91,15 @@ export async function GET(req: Request) {
             console.error(`[ERROR] Failed to send error to user transcript stream`, { sessionId, e });
           }
         };
-        
+
         // Wire up event listeners
         manager.on("user_transcript", onUserTranscript);
         manager.on("user_transcript_delta", onUserTranscriptDelta);
+        manager.on("user_speech_started", onSpeechStarted);
+        manager.on("user_speech_stopped", onSpeechStopped);
         manager.once("close", onClose);
         manager.on("error", onError);
-        
+
         // Send initial connection confirmation as an SSE comment so the client ignores it
         controller.enqueue(`: connected\n\n`);
         
@@ -97,6 +118,8 @@ export async function GET(req: Request) {
           clearInterval(interval);
           manager.off("user_transcript", onUserTranscript);
           manager.off("user_transcript_delta", onUserTranscriptDelta);
+          manager.off("user_speech_started", onSpeechStarted);
+          manager.off("user_speech_stopped", onSpeechStopped);
           manager.off("error", onError);
           manager.off("close", onClose);
         };

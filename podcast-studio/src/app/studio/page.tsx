@@ -994,9 +994,8 @@ const StudioPage: React.FC = () => {
   const handleUserTranscriptionComplete = useCallback(
     (transcript: string) => {
       finalizeSegment("host", transcript);
-      void commitAudioTurn();
     },
-    [commitAudioTurn, finalizeSegment],
+    [finalizeSegment],
   );
 
   const handleAiTranscriptDelta = useCallback(
@@ -1050,6 +1049,16 @@ const StudioPage: React.FC = () => {
       const text = (event as MessageEvent).data ?? "";
       handleUserTranscriptionComplete(text);
     });
+    userSource.addEventListener("speech-started", () => {
+      setIsHostSpeaking(true);
+    });
+    userSource.addEventListener("speech-stopped", () => {
+      setIsHostSpeaking(false);
+      void (async () => {
+        await uploadMicChunks();
+        await commitAudioTurn();
+      })();
+    });
     userSource.onerror = (event) => {
       console.error("[ERROR] User transcript stream error", event);
     };
@@ -1077,12 +1086,14 @@ const StudioPage: React.FC = () => {
     audioEventSourceRef.current = audioSource;
   }, [
     base64ToUint8Array,
+    commitAudioTurn,
     finalizeSegment,
     handleAiTranscriptDelta,
     handleUserTranscriptionComplete,
     handleUserTranscriptionDelta,
     playAiAudioChunk,
     sessionId,
+    uploadMicChunks,
   ]);
 
 

@@ -33,7 +33,9 @@ The component is a client component rendered under `SidebarProvider` and `ApiCon
    - Sends the SDP offer to `/api/rt/webrtc`; applies the returned answer and waits for the data
      channel to open before sending initial session settings to OpenAI.
    - Registers SSE listeners for `/api/rt/audio`, `/api/rt/transcripts`, and
-     `/api/rt/user-transcripts` via `startSseStream` helper effects.
+     `/api/rt/user-transcripts` via `startSseStream` helper effects. The user transcript stream also
+     forwards `speech-started`/`speech-stopped` events that toggle host speaking indicators and
+     trigger an `audio-commit` after flushing queued mic samples.
 2. **Data channel handling (`handleDcMessage`)** – Parses JSON messages emitted by the server
    (assistant messages, transcript updates, error notifications). Guard unknown payloads with
    `try/catch` and log warnings instead of throwing.
@@ -48,10 +50,12 @@ The component is a client component rendered under `SidebarProvider` and `ApiCon
   pipes audio through a `ScriptProcessor` that converts Float32 buffers to PCM16 (`float32ToPcm16`).
 - PCM chunks are enqueued in `micChunkQueueRef`. A 50 ms interval flush posts batched base64 to
   `/api/rt/audio-append`, guarded by `isUploadingRef` to prevent concurrent uploads.
-- After each flush, `/api/rt/audio-commit` signals the end of the turn so OpenAI produces a
+- Once speech stops, `/api/rt/audio-commit` is invoked (after a final flush) so OpenAI produces a
   response.
 - `handleStopRecording` stops the processor, clears intervals, commits any remaining audio, and
   updates UI state.
+- Speech boundary events from the `/api/rt/user-transcripts` SSE feed call `uploadMicChunks` and
+  `commitAudioTurn` so the AI responds immediately after the host stops speaking.
 
 ## Transcripts & Messages
 - Messages are stored as `{id, role, content, timestamp, type, speaker, order}`. Helper utilities
