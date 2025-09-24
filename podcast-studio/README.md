@@ -44,5 +44,18 @@ src/
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
 - `npm run start` - Start production server
-- `npm run lint` - Run ESLint
+- `npm run lint` - Run ESLint (`--max-warnings=0` supported)
 - `npm run format` - Format code with Prettier
+- *(planned)* `npm run test` - Placeholder until automated tests are added
+
+## 🧩 Realtime Adapter
+
+- Realtime conversations are routed through `src/lib/ai/realtimeAdapter.ts`.
+- Providers register a `RealtimeAdapter` implementation; OpenAI is the default.
+- `/api/rt/start` and `/api/rt/webrtc` use the adapter to exchange SDP and bootstrap sessions.
+- To add a provider, register it in `providerRegistry` and supply a matching adapter.
+
+## 🧪 Testing Roadmap
+
+- Automated tests are not yet defined; run `npm run lint` for static analysis.
+- Planned: add adapter-level tests under `src/lib/ai/__tests__` (see TODO).

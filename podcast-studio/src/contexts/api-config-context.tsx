@@ -12,15 +12,27 @@ import { ApiKeySecurity } from "@/lib/apiKeySecurity";
 
 export type LlmProvider = "openai" | "google";
 
+const PROVIDER_DEFAULT_MODELS: Record<LlmProvider, string> = {
+  openai: process.env.NEXT_PUBLIC_OPENAI_REALTIME_MODEL ?? "gpt-4o-realtime-preview-2024-10-01",
+  google: process.env.NEXT_PUBLIC_GOOGLE_MODEL ?? "models/gemini-1.5-flash",
+};
+
+const PROVIDER_REALTIME_SUPPORT: Record<LlmProvider, boolean> = {
+  openai: true,
+  google: false,
+};
+
 interface ApiConfigContextValue {
   activeProvider: LlmProvider;
   apiKeys: Record<LlmProvider, string>;
   models: Partial<Record<LlmProvider, string>>;
+  defaultModels: Record<LlmProvider, string>;
   setActiveProvider: (provider: LlmProvider) => void;
   setApiKey: (provider: LlmProvider, key: string) => void;
   clearApiKey: (provider: LlmProvider) => void;
   setModel: (provider: LlmProvider, model: string) => void;
   validateApiKey: (provider: LlmProvider, key: string) => { isValid: boolean; message?: string };
+  supportsRealtime: (provider: LlmProvider) => boolean;
 }
 
 const STORAGE_KEY = "vps:llmConfig";
@@ -119,16 +131,22 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     return ApiKeySecurity.validateKeyFormat(provider, key);
   }, []);
 
+  const supportsRealtime = useCallback((provider: LlmProvider) => {
+    return PROVIDER_REALTIME_SUPPORT[provider];
+  }, []);
+
   const value = useMemo<ApiConfigContextValue>(() => ({
     activeProvider: preferences.activeProvider,
     apiKeys,
     models: preferences.models ?? {},
+    defaultModels: PROVIDER_DEFAULT_MODELS,
     setActiveProvider,
     setApiKey,
     clearApiKey,
     setModel,
     validateApiKey,
-  }), [preferences, apiKeys, setActiveProvider, setApiKey, clearApiKey, setModel, validateApiKey]);
+    supportsRealtime,
+  }), [preferences, apiKeys, setActiveProvider, setApiKey, clearApiKey, setModel, validateApiKey, supportsRealtime]);
 
   return (
     <ApiConfigContext.Provider value={value}>

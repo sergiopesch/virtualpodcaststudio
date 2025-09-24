@@ -42,4 +42,11 @@ export class ApiKeySecurity {
     
     return { isValid: true };
   }
+
+  static validateKeyOrThrow(provider: string, key: string) {
+    const result = this.validateKeyFormat(provider, key);
+    if (!result.isValid) {
+      throw new Error(result.message ?? `${provider} API key is invalid`);
+    }
+  }
 }

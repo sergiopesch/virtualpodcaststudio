@@ -284,8 +284,9 @@ const formatTime = (seconds: number) => {
 
 const StudioPage: React.FC = () => {
   const { collapsed, toggleCollapsed } = useSidebar();
-  const { activeProvider, apiKeys } = useApiConfig();
+  const { activeProvider, apiKeys, defaultModels, models, supportsRealtime } = useApiConfig();
   const activeApiKey = (apiKeys[activeProvider] ?? "").trim();
+  const activeModel = (models?.[activeProvider] ?? defaultModels[activeProvider]).trim();
   const router = useRouter();
 
   const [sessionId] = useState(() => `session_${Date.now()}`);
@@ -649,22 +650,14 @@ const StudioPage: React.FC = () => {
   }, []);
 
   const ensureRealtimeSession = useCallback(async () => {
-    if (activeProvider === "google") {
+    if (!supportsRealtime(activeProvider)) {
       throw new Error(
-        "Realtime studio currently supports only OpenAI sessions. Switch your active provider in Settings to continue.",
+        "Realtime studio is not supported for the selected provider. Choose a provider with realtime capabilities in Settings.",
       );
     }
 
-    // Validate API key format before proceeding (only if key exists)
-    if (activeProvider === "openai" && activeApiKey && activeApiKey.trim() && !activeApiKey.startsWith("sk-")) {
-      throw new Error(
-        "Invalid OpenAI API key format. OpenAI API keys should start with 'sk-'. Please check your API key in Settings.",
-      );
-    }
-
-    // No server session start here. WebRTC offer/answer will carry the API key via headers.
     return;
-  }, [activeApiKey, activeProvider]);
+  }, [activeProvider, supportsRealtime]);
 
   const commitAudioTurn = useCallback(async () => {
     if (phase !== "live") {
@@ -1181,17 +1174,17 @@ const StudioPage: React.FC = () => {
       const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
       await pc.setLocalDescription(offer);
 
-      const webrtcHeaders: Record<string, string> = {
-        "Content-Type": "application/sdp",
-        "X-LLM-Provider": activeProvider,
-        "X-LLM-Model": "gpt-4o-realtime-preview-2024-10-01",
-      };
+    const webrtcHeaders: Record<string, string> = {
+      "Content-Type": "application/sdp",
+      "X-LLM-Provider": activeProvider,
+      "X-LLM-Model": activeModel,
+    };
 
       if (activeApiKey) {
         webrtcHeaders["X-LLM-Api-Key"] = activeApiKey;
       }
 
-      const resp = await fetch("/api/rt/webrtc?model=gpt-4o-realtime-preview-2024-10-01", {
+      const resp = await fetch(`/api/rt/webrtc?model=${encodeURIComponent(activeModel)}`, {
         method: "POST",
         body: pc.localDescription?.sdp || "",
         cache: "no-store",
@@ -1247,7 +1240,7 @@ const StudioPage: React.FC = () => {
           friendlyMessage = "The OpenAI API key looks invalid. Double-check the value in Settings and try again.";
           break;
         case "UNSUPPORTED_PROVIDER":
-          friendlyMessage = "Realtime studio currently supports only OpenAI. Switch providers in Settings to continue.";
+          friendlyMessage = "Realtime studio is unavailable for the selected provider. Choose a provider with realtime capabilities in Settings.";
           break;
         case "RATE_LIMITED":
           friendlyMessage = "OpenAI is rate limiting requests right now. Please wait a few moments and try again.";

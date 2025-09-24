@@ -67,9 +67,7 @@ export async function POST(req: Request) {
         ? 'google'
         : 'openai';
     const incomingKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
-    const resolvedKey = provider === 'openai'
-      ? incomingKey || SecureEnv.getWithDefault('OPENAI_API_KEY', '')
-      : incomingKey;
+    const resolvedKey = incomingKey || SecureEnv.getWithDefault(provider === 'openai' ? 'OPENAI_API_KEY' : 'GOOGLE_API_KEY', '');
     const model = typeof body.model === 'string' ? body.model.trim() : undefined;
     const rawPaper = body.paper;
     const paperContext = rawPaper && typeof rawPaper === 'object'
