@@ -34,8 +34,9 @@ export async function GET(req: Request) {
         
         const send = (text: string) => {
           try {
-            const message = `data: ${text}\n\n`;
-            controller.enqueue(message);
+            const lines = `${text}`.split(/\r?\n/);
+            const payload = lines.map((line) => `data: ${line}`).join("\n");
+            controller.enqueue(`${payload}\n\n`);
             console.log(`[DEBUG] Sent transcript`, { sessionId, text });
           } catch (error) {
             console.error(`[ERROR] Failed to send transcript`, { sessionId, error });
@@ -80,8 +81,8 @@ export async function GET(req: Request) {
         manager.once("close", onClose);
         manager.on("error", onError);
         
-        // Send initial connection confirmation
-        send("Connected to AI transcript stream");
+        // Send initial connection confirmation as an SSE comment so the client ignores it
+        controller.enqueue(`: connected\n\n`);
         
         // Keep-alive ping every 15 seconds
         const interval = setInterval(() => {
@@ -99,6 +100,7 @@ export async function GET(req: Request) {
           manager.off("transcript", onTranscript);
           manager.off("assistant_done", onDone);
           manager.off("error", onError);
+          manager.off("close", onClose);
         };
       },
       cancel() {
