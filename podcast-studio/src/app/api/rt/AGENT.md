@@ -38,8 +38,10 @@ src/app/api/rt/
 5. **Streaming output** – SSE endpoints attach to the manager’s event emitters:
    - `/audio` listens to `audio`, emits base64 WAV frames and keep-alives.
    - `/transcripts` listens to `transcript` for assistant text deltas.
-   - `/user-transcripts` listens to `user_transcript` (complete) and `user_transcript_delta`
-     (interim) events. All streams register cleanup handlers and close when the session ends.
+  - `/user-transcripts` listens to `user_transcript` (complete), `user_transcript_delta`
+    (interim), and speech boundary events. It emits `complete`, `delta`, `speech-started`, and
+    `speech-stopped` SSE events so the Audio Studio can manage turn-taking. All streams register
+    cleanup handlers and close when the session ends.
 6. **Stop (`POST /api/rt/stop`)** – Calls `manager.stop()` and removes the session from the
    singleton. Clients should invoke this when disconnecting to release resources.
 
