@@ -748,6 +748,8 @@ const StudioPage: React.FC = () => {
 
       const source = audioContext.createMediaStreamSource(stream);
       const scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1);
+      const silentGain = audioContext.createGain();
+      silentGain.gain.value = 0;
 
       // Capture mic locally for saving the conversation (no uploads)
       scriptProcessor.onaudioprocess = (event) => {
@@ -766,11 +768,20 @@ const StudioPage: React.FC = () => {
       };
 
       source.connect(scriptProcessor);
+      scriptProcessor.connect(silentGain);
+      silentGain.connect(audioContext.destination);
 
       const processor = {
         stop: () => {
-          source.disconnect();
-          scriptProcessor.disconnect();
+          try {
+            source.disconnect();
+          } catch {}
+          try {
+            scriptProcessor.disconnect();
+          } catch {}
+          try {
+            silentGain.disconnect();
+          } catch {}
           stream.getTracks().forEach((track) => track.stop());
           if (micFlushIntervalRef.current != null) {
             window.clearInterval(micFlushIntervalRef.current);
@@ -1121,6 +1132,8 @@ const StudioPage: React.FC = () => {
             const aiStream = remoteStream ?? new MediaStream([track]);
             const source = audioContext.createMediaStreamSource(aiStream);
             const scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1);
+            const silentGain = audioContext.createGain();
+            silentGain.gain.value = 0;
             scriptProcessor.onaudioprocess = (ev) => {
               const inputData = ev.inputBuffer.getChannelData(0);
               const pcm16Buffer = new Int16Array(inputData.length);
@@ -1131,10 +1144,13 @@ const StudioPage: React.FC = () => {
               aiAudioChunksRef.current.push(new Uint8Array(pcm16Buffer.buffer));
             };
             source.connect(scriptProcessor);
+            scriptProcessor.connect(silentGain);
+            silentGain.connect(audioContext.destination);
             aiRecordProcessorRef.current = {
               stop: () => {
                 try { source.disconnect(); } catch {}
                 try { scriptProcessor.disconnect(); } catch {}
+                try { silentGain.disconnect(); } catch {}
               }
             };
           }

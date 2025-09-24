@@ -202,14 +202,6 @@ const WAVEFORM_HEIGHT = 36;
 const MIN_WAVEFORM_SAMPLES = 24;
 const WAVEFORM_VERTICAL_PADDING = 2;
 
-const createDefaultMediaAssets = (): MediaAsset[] => [
-  { id: createId(), name: "Host Avatar", type: "video", duration: "0:45", source: "library" },
-  { id: createId(), name: "Paper Visual", type: "image", duration: "Static", source: "library" },
-  { id: createId(), name: "Background Music", type: "audio", duration: "2:30", source: "library" },
-  { id: createId(), name: "Diagram Animation", type: "video", duration: "0:30", source: "library" },
-  { id: createId(), name: "Logo Intro", type: "video", duration: "0:10", source: "library" },
-];
-
 type TrackSetting = {
   mute: boolean;
   volume: number;
@@ -330,98 +322,15 @@ const createWaveformFromAudioTrack = (
   }
 };
 
-const createDefaultProject = (): VideoProjectData => {
-  const clips: VideoClip[] = [
-    {
-      id: createId(),
-      type: "video",
-      name: "Host Introduction",
-      startTime: 0,
-      duration: 15,
-      track: 1,
-      speaker: "Host",
-      content: "Welcome to today's AI Research Podcast",
-      visualStyle: "talking-head",
-      volume: 0.8,
-      opacity: 1,
-      scale: 1,
-      rotation: 0,
-      x: 0,
-      y: 0,
-      color: "#3b82f6",
-      filters: {
-        brightness: 100,
-        contrast: 100,
-        saturation: 100,
-        hue: 0,
-        blur: 0,
-        sharpen: 0,
-      },
-      waveform: generateWaveform("default-intro", 90, 0.4, 0.05),
-    },
-    {
-      id: createId(),
-      type: "audio",
-      name: "Background Music",
-      startTime: 0,
-      duration: 45,
-      track: 3,
-      volume: 0.3,
-      fadeInSec: 2,
-      fadeOutSec: 3,
-      color: "#10b981",
-      waveform: generateWaveform("default-music", 450, 0.6, 0.05),
-    },
-    {
-      id: createId(),
-      type: "video",
-      name: "Expert Response",
-      startTime: 15,
-      duration: 18,
-      track: 1,
-      speaker: "Expert",
-      content: "The authors were addressing fundamental limitations",
-      visualStyle: "paper-visual",
-      volume: 0.9,
-      opacity: 1,
-      scale: 1.05,
-      color: "#8b5cf6",
-      filters: {
-        brightness: 105,
-        contrast: 110,
-        saturation: 95,
-        hue: 0,
-        blur: 0,
-        sharpen: 0,
-      },
-      waveform: generateWaveform("default-expert", 108, 0.4, 0.05),
-    },
-    {
-      id: createId(),
-      type: "image",
-      name: "Paper Diagram",
-      startTime: 20,
-      duration: 10,
-      track: 2,
-      visualStyle: "diagram",
-      opacity: 0.9,
-      scale: 1,
-      color: "#f59e0b",
-    },
-  ];
-
-  return {
-    clips,
-    trackSettings: {
-      1: { mute: false, volume: 1, name: "Video" },
-      2: { mute: false, volume: 1, name: "B-roll" },
-      3: { mute: false, volume: 0.7, name: "Music" },
-    },
-    mediaAssets: createDefaultMediaAssets(),
-    summary: null,
-    primaryClipId: clips[0]?.id ?? null,
-  };
-};
+const createEmptyProject = (): VideoProjectData => ({
+  clips: [],
+  trackSettings: {
+    1: { mute: false, volume: 1, name: "Timeline" },
+  },
+  mediaAssets: [],
+  summary: null,
+  primaryClipId: null,
+});
 
 const createConversationSummary = (
   conversation: StoredConversation,
@@ -449,16 +358,23 @@ const createConversationSummary = (
 
 const createConversationProject = (conversation: StoredConversation): VideoProjectData => {
   const clips: VideoClip[] = [];
-  const mediaAssets: MediaAsset[] = [...createDefaultMediaAssets()];
-  const trackSettings: TrackSettings = {
-    1: { mute: false, volume: 1, name: "Host narration" },
-    2: { mute: false, volume: 0.95, name: "AI expert" },
-    3: { mute: false, volume: 1, name: "Visual overlays" },
-  };
+  const mediaAssets: MediaAsset[] = [];
+  const trackSettings: TrackSettings = {};
 
   let cursor = 0;
   let timelineEnd = 0;
   let primaryClipId: string | null = null;
+
+  let trackCounter = 1;
+  const registerTrack = (name: string, volume = 1, mute = false) => {
+    const id = trackCounter++;
+    trackSettings[id] = { name, volume, mute };
+    return id;
+  };
+
+  let hostTrackId: number | null = null;
+  let expertTrackId: number | null = null;
+  let overlayTrackId: number | null = null;
 
   const pushClip = (clip: VideoClip) => {
     clips.push(clip);
@@ -467,6 +383,9 @@ const createConversationProject = (conversation: StoredConversation): VideoProje
 
   const hostAudio = conversation.audio.host;
   if (hostAudio) {
+    if (!hostTrackId) {
+      hostTrackId = registerTrack("Host narration");
+    }
     const hostClipId = createId();
     const hostDuration = Math.max(hostAudio.durationSeconds || 0, MIN_CLIP_DURATION);
     pushClip({
@@ -475,7 +394,7 @@ const createConversationProject = (conversation: StoredConversation): VideoProje
       name: "Host narration",
       startTime: 0,
       duration: hostDuration,
-      track: 1,
+      track: hostTrackId,
       speaker: "Host",
       content: conversation.transcript
         .filter((message) => message.role === "user")
@@ -502,6 +421,9 @@ const createConversationProject = (conversation: StoredConversation): VideoProje
 
   const expertAudio = conversation.audio.ai;
   if (expertAudio) {
+    if (!expertTrackId) {
+      expertTrackId = registerTrack(hostAudio ? "AI expert" : "Conversation");
+    }
     const expertClipId = createId();
     const expertDuration = Math.max(expertAudio.durationSeconds || 0, MIN_CLIP_DURATION);
     const startTime = hostAudio ? cursor : 0;
@@ -511,7 +433,7 @@ const createConversationProject = (conversation: StoredConversation): VideoProje
       name: "AI expert response",
       startTime,
       duration: expertDuration,
-      track: hostAudio ? 2 : 1,
+      track: expertTrackId,
       speaker: "Expert",
       content: conversation.transcript
         .filter((message) => message.role === "expert")
@@ -546,34 +468,34 @@ const createConversationProject = (conversation: StoredConversation): VideoProje
   );
 
   if (overlayDuration > 0) {
-    pushClip({
-      id: createId(),
-      type: "text",
-      name: "Key takeaways overlay",
-      startTime: 0,
-      duration: Math.max(overlayDuration, MIN_CLIP_DURATION),
-      track: 3,
-      content: conversation.transcript
-        .filter((message) => message.role === "expert")
-        .slice(0, 2)
-        .map((message) => message.content)
-        .join(" • "),
-      opacity: 0.95,
-      color: "#f97316",
-      visualStyle: "overlay",
-    });
+    const highlightSource = conversation.transcript.filter(
+      (message) => message.content.trim().length > 0,
+    );
 
-    if (conversation.paper?.title) {
+    if (highlightSource.length > 0) {
+      if (!overlayTrackId) {
+        overlayTrackId = registerTrack("Transcript overlays");
+      }
+
+      const highlightEntries = highlightSource.slice(0, 4);
+      const highlightContent = highlightEntries
+        .map((message) => {
+          const speakerLabel = message.role === "user" ? "Host" : "Expert";
+          return `${speakerLabel}: ${message.content.trim()}`;
+        })
+        .join(" \u2022 ");
+
       pushClip({
         id: createId(),
-        type: "image",
-        name: "Paper visual",
+        type: "text",
+        name: "Conversation highlights",
         startTime: 0,
-        duration: Math.max(overlayDuration, 8),
-        track: 3,
-        visualStyle: "paper-visual",
-        opacity: 0.85,
-        color: "#fbbf24",
+        duration: Math.max(overlayDuration, MIN_CLIP_DURATION),
+        track: overlayTrackId,
+        content: highlightContent,
+        opacity: 0.95,
+        color: "#f97316",
+        visualStyle: "overlay",
       });
     }
   }
@@ -608,7 +530,7 @@ export default function VideoStudio() {
   } | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const { collapsed, toggleCollapsed } = useSidebar();
-  const defaultProjectRef = useRef<VideoProjectData>(createDefaultProject());
+  const defaultProjectRef = useRef<VideoProjectData>(createEmptyProject());
   const [conversation, setConversation] = useState<StoredConversation | null>(null);
   const [conversationSummary, setConversationSummary] = useState<ConversationSummary | null>(null);
   const [isLoadingConversation, setIsLoadingConversation] = useState(true);
