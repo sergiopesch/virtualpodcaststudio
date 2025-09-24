@@ -403,63 +403,69 @@ class RTManager extends EventEmitter {
       );
     }
 
-    await new Promise<void>((resolve, reject) => {
-      this.starting = true;
+    this.starting = true;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
+        const ws = new WebSocket(wsUrl, {
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "OpenAI-Beta": "realtime=v1",
+          },
+        });
 
-      const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
-      const ws = new WebSocket(wsUrl, {
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "OpenAI-Beta": "realtime=v1",
-        },
+        const clearTimeoutIfNeeded = () => {
+          if (this.connectionTimeout) {
+            clearTimeout(this.connectionTimeout);
+            this.connectionTimeout = undefined;
+          }
+        };
+
+        this.connectionTimeout = setTimeout(() => {
+          ws.terminate();
+          reject(
+            new RealtimeSessionError(
+              "TIMEOUT",
+              "Timed out while establishing realtime connection",
+              { status: REALTIME_ERROR_STATUS.TIMEOUT },
+            ),
+          );
+        }, 10_000);
+
+        ws.on("open", () => {
+          clearTimeoutIfNeeded();
+          this.ws = ws;
+          this.registerMessageHandlers(ws);
+          this.pushSessionUpdate();
+          this.emit("ready");
+          resolve();
+        });
+
+        ws.on("error", (error: Error & { code?: number }) => {
+          clearTimeoutIfNeeded();
+          try {
+            ws.terminate();
+          } catch {
+            // ignored
+          }
+          reject(
+            new RealtimeSessionError(
+              "WEBSOCKET_ERROR",
+              `WebSocket connection error: ${error.message}`,
+              { status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR, cause: error },
+            ),
+          );
+        });
+
+        ws.on("close", () => {
+          clearTimeoutIfNeeded();
+          this.ws = null;
+          this.emit("close");
+        });
       });
-
-      const clearTimeoutIfNeeded = () => {
-        if (this.connectionTimeout) {
-          clearTimeout(this.connectionTimeout);
-          this.connectionTimeout = undefined;
-        }
-      };
-
-      this.connectionTimeout = setTimeout(() => {
-        ws.terminate();
-        reject(
-          new RealtimeSessionError(
-            "TIMEOUT",
-            "Timed out while establishing realtime connection",
-            { status: REALTIME_ERROR_STATUS.TIMEOUT },
-          ),
-        );
-      }, 10_000);
-
-      ws.on("open", () => {
-        clearTimeoutIfNeeded();
-        this.ws = ws;
-        this.registerMessageHandlers(ws);
-        this.pushSessionUpdate();
-        this.emit("ready");
-        resolve();
-      });
-
-      ws.on("error", (error: Error & { code?: number }) => {
-        clearTimeoutIfNeeded();
-        reject(
-          new RealtimeSessionError(
-            "WEBSOCKET_ERROR",
-            `WebSocket connection error: ${error.message}`,
-            { status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR, cause: error },
-          ),
-        );
-      });
-
-      ws.on("close", () => {
-        clearTimeoutIfNeeded();
-        this.ws = null;
-        this.emit("close");
-      });
-    });
-
-    this.starting = false;
+    } finally {
+      this.starting = false;
+    }
   }
 
   private pushSessionUpdate() {

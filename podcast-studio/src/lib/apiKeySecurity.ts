@@ -35,7 +35,13 @@ export class ApiKeySecurity {
         return { isValid: false, message: "OpenAI API key appears to be too short" };
       }
     } else if (provider === "google") {
-      if (trimmedKey.length < 10) {
+      if (!trimmedKey.startsWith("AIza")) {
+        return { isValid: false, message: "Google API key should start with 'AIza'" };
+      }
+      if (!/^[A-Za-z0-9_\-]+$/.test(trimmedKey)) {
+        return { isValid: false, message: "Google API key contains invalid characters" };
+      }
+      if (trimmedKey.length < 30) {
         return { isValid: false, message: "Google API key appears to be too short" };
       }
     }

@@ -46,6 +46,10 @@ src/app/api/rt/
 ## Implementation Notes
 - Every route either declares `export const runtime = "nodejs";` or relies on the default. Keep it
   that way so Node APIs (e.g., `Buffer`, `ReadableStream`) remain available.
+- The start route normalises payloads via header fallbacks: `x-rt-session-id`, `x-llm-provider`,
+  `x-llm-api-key`, and `x-llm-model` are honoured when the JSON body omits them. Incoming paper
+  metadata is trimmed, length-limited, and deduplicated so we never forward extremely long strings
+  to OpenAI.
 - When extending `rtSessionManager` with new events, update the SSE handlers to wire up listeners
   and detach them on stream cancellation.
 - Return structured `{ error, sessionId }` payloads with appropriate HTTP status codes on failure;
