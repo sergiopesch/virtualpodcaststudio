@@ -34,8 +34,9 @@ export async function GET(req: Request) {
         
         const send = (text: string, type: 'complete' | 'delta' = 'complete') => {
           try {
-            const message = `event: ${type}\ndata: ${text}\n\n`;
-            controller.enqueue(message);
+            const lines = `${text}`.split(/\r?\n/);
+            const payload = lines.map((line) => `data: ${line}`).join("\n");
+            controller.enqueue(`event: ${type}\n${payload}\n\n`);
             console.log(`[DEBUG] Sent user transcript ${type}`, { sessionId, text });
           } catch (error) {
             console.error(`[ERROR] Failed to send user transcript`, { sessionId, error });
@@ -78,8 +79,8 @@ export async function GET(req: Request) {
         manager.once("close", onClose);
         manager.on("error", onError);
         
-        // Send initial connection confirmation
-        send("Connected to user transcript stream", 'complete');
+        // Send initial connection confirmation as an SSE comment so the client ignores it
+        controller.enqueue(`: connected\n\n`);
         
         // Keep-alive ping every 15 seconds
         const interval = setInterval(() => {
@@ -97,6 +98,7 @@ export async function GET(req: Request) {
           manager.off("user_transcript", onUserTranscript);
           manager.off("user_transcript_delta", onUserTranscriptDelta);
           manager.off("error", onError);
+          manager.off("close", onClose);
         };
       },
       cancel() {

@@ -73,9 +73,9 @@ export async function GET(req: Request) {
         manager.on("audio", onAudio);
         manager.once("close", onClose);
         manager.on("error", onError);
-        
-        // Send initial connection confirmation
-        controller.enqueue(`event: connected\ndata: Audio stream ready\n\n`);
+
+        // Send initial connection confirmation as a comment so clients don't treat it as audio data
+        controller.enqueue(`: connected\n\n`);
         
         // Keep-alive ping every 15 seconds
         const interval = setInterval(() => {
@@ -92,6 +92,7 @@ export async function GET(req: Request) {
           clearInterval(interval);
           manager.off("audio", onAudio);
           manager.off("error", onError);
+          manager.off("close", onClose);
         };
       },
       cancel() {

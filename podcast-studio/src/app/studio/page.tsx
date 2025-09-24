@@ -59,74 +59,6 @@ interface TranscriptEntry {
   sequence: number;
 }
 
-const AI_BASE_INSTRUCTION_LINES = [
-  "You are Dr. Sarah, an AI scientist joining a podcast conversation.",
-  "Respond conversationally, stay grounded in the selected research, and avoid speculation.",
-  "Keep every reply under three concise sentences (about 75 tokens) to control cost.",
-];
-
-const MAX_ABSTRACT_SNIPPET = 400;
-
-const sanitizeInstructionText = (value?: string | null) => {
-  if (!value) {
-    return undefined;
-  }
-  const trimmed = value.replace(/\s+/g, " ").trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  if (trimmed.length <= MAX_ABSTRACT_SNIPPET) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, MAX_ABSTRACT_SNIPPET)}…`;
-};
-
-const buildConversationInstructionsFromPaper = (paper: SelectedPaper | null): string => {
-  const base = AI_BASE_INSTRUCTION_LINES.join(" ");
-
-  if (!paper) {
-    return base;
-  }
-
-  const details: string[] = [];
-  const title = sanitizeInstructionText(paper.title);
-  const formattedDate = sanitizeInstructionText(paper.formattedPublishedDate);
-  const abstractSnippet = sanitizeInstructionText(paper.abstract);
-  const arxivUrl = sanitizeInstructionText(paper.arxiv_url);
-  const authorLine = sanitizeInstructionText(
-    paper.primaryAuthor
-      ? `${paper.primaryAuthor}${paper.hasAdditionalAuthors ? " et al." : ""}`
-      : paper.authors,
-  );
-
-  const contextParts: string[] = [];
-  if (title) {
-    contextParts.push(`Title: ${title}`);
-  }
-  if (authorLine) {
-    contextParts.push(`Authors: ${authorLine}`);
-  }
-  if (formattedDate) {
-    contextParts.push(`Published: ${formattedDate}`);
-  }
-  if (abstractSnippet) {
-    contextParts.push(`Summary: ${abstractSnippet}`);
-  }
-  if (arxivUrl) {
-    contextParts.push(`URL: ${arxivUrl}`);
-  }
-
-  if (contextParts.length > 0) {
-    details.push(`Context: ${contextParts.join("; ")}`);
-  }
-
-  details.push(
-    "Answer briefly, relate insights back to the paper, and avoid repeating this context verbatim.",
-  );
-
-  return `${base} ${details.join(" ")}`.trim();
-};
-
 const nextWordChunk = (text: string): [string, string] => {
   if (!text) {
     return ["", ""];
@@ -303,17 +235,12 @@ const StudioPage: React.FC = () => {
   const [isHostSpeaking, setIsHostSpeaking] = useState(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const dcRef = useRef<RTCDataChannel | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
   const micChunkQueueRef = useRef<Uint8Array[]>([]);
   const micFlushIntervalRef = useRef<number | null>(null);
   const isUploadingRef = useRef(false);
   const isCommittingRef = useRef(false);
-  const aiTrackRef = useRef<MediaStreamTrack | null>(null);
-  const aiRecordProcessorRef = useRef<{ stop: () => void } | null>(null);
   const aiAudioChunksRef = useRef<Uint8Array[]>([]);
   const hostAudioChunksRef = useRef<Uint8Array[]>([]);
   const audioEventSourceRef = useRef<EventSource | null>(null);
@@ -323,6 +250,8 @@ const StudioPage: React.FC = () => {
   const hasUserTranscriptSseRef = useRef(false);
   const hasCapturedAudioRef = useRef(false);
   const latestConversationRef = useRef<StoredConversation | null>(null);
+  const aiPlaybackTimeRef = useRef(0);
+  const aiPlaybackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
   const entrySequenceRef = useRef(0);
   const hostActiveIdRef = useRef<string | null>(null);
@@ -649,6 +578,85 @@ const StudioPage: React.FC = () => {
     throw new Error("Base64 decoding is not supported in this environment.");
   }, []);
 
+  const uint8ArrayToBase64 = useCallback((bytes: Uint8Array): string => {
+    if (typeof window !== "undefined" && typeof window.btoa === "function") {
+      let binary = "";
+      for (let index = 0; index < bytes.length; index++) {
+        binary += String.fromCharCode(bytes[index]);
+      }
+      return window.btoa(binary);
+    }
+
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(bytes).toString("base64");
+    }
+
+    throw new Error("Base64 encoding is not supported in this environment.");
+  }, []);
+
+  const playAiAudioChunk = useCallback(
+    async (chunk: Uint8Array) => {
+      if (chunk.length === 0) {
+        return;
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      let context = audioContextRef.current;
+      if (!context) {
+        const AudioContextConstructor =
+          window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) {
+          console.warn("[WARN] Web Audio API not available for AI playback");
+          return;
+        }
+        context = new AudioContextConstructor({ sampleRate: 24000 });
+        audioContextRef.current = context;
+      }
+
+      if (context.state === "suspended") {
+        await context.resume().catch(() => undefined);
+      }
+
+      const frameCount = Math.floor(chunk.length / 2);
+      if (frameCount <= 0) {
+        return;
+      }
+
+      const audioBuffer = context.createBuffer(1, frameCount, 24000);
+      const channel = audioBuffer.getChannelData(0);
+      const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      for (let index = 0; index < frameCount; index++) {
+        channel[index] = view.getInt16(index * 2, true) / 32767;
+      }
+
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(context.destination);
+
+      const startAt = Math.max(context.currentTime, aiPlaybackTimeRef.current);
+      source.start(startAt);
+      aiPlaybackSourcesRef.current.push(source);
+      aiPlaybackTimeRef.current = startAt + audioBuffer.duration;
+      setIsAudioPlaying(true);
+
+      source.onended = () => {
+        aiPlaybackSourcesRef.current = aiPlaybackSourcesRef.current.filter((node) => node !== source);
+        if (aiPlaybackSourcesRef.current.length === 0) {
+          const remaining = aiPlaybackTimeRef.current - context!.currentTime;
+          if (remaining <= 0.05) {
+            setIsAudioPlaying(false);
+            aiPlaybackTimeRef.current = context!.currentTime;
+          }
+        }
+      };
+    },
+    [setIsAudioPlaying],
+  );
+
+
   const ensureRealtimeSession = useCallback(async () => {
     if (!supportsRealtime(activeProvider)) {
       throw new Error(
@@ -656,8 +664,44 @@ const StudioPage: React.FC = () => {
       );
     }
 
-    return;
-  }, [activeProvider, supportsRealtime]);
+    const payload = {
+      sessionId,
+      provider: activeProvider,
+      apiKey: activeApiKey || undefined,
+      model: activeModel || undefined,
+      paper: currentPaper,
+    };
+
+    const response = await fetch("/api/rt/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      let message = "Failed to start realtime session.";
+      let code: string | undefined;
+      try {
+        const data = (await response.json()) as { error?: string; code?: string };
+        if (typeof data.error === "string" && data.error.trim()) {
+          message = data.error.trim();
+        }
+        if (typeof data.code === "string" && data.code.trim()) {
+          code = data.code.trim();
+        }
+      } catch {
+        message = await response.text();
+      }
+      const error = new Error(message || "Failed to start realtime session.");
+      if (code) {
+        (error as { code?: string }).code = code;
+      }
+      throw error;
+    }
+
+    return response.json().catch(() => ({}));
+  }, [activeApiKey, activeModel, activeProvider, currentPaper, sessionId, supportsRealtime]);
 
   const commitAudioTurn = useCallback(async () => {
     if (phase !== "live") {
@@ -668,29 +712,58 @@ const StudioPage: React.FC = () => {
     }
     isCommittingRef.current = true;
     try {
-      const channel = dcRef.current;
-      if (channel && channel.readyState === "open") {
-        // Commit buffered input audio and request a response over the WebRTC data channel
-        channel.send(
-          JSON.stringify({
-            type: "input_audio_buffer.commit",
-          }),
-        );
-        channel.send(
-          JSON.stringify({
-            type: "response.create",
-            response: { modalities: ["text", "audio"] },
-          }),
-        );
-      } else {
-        console.warn("[WARN] Data channel not open; cannot commit turn");
+      const response = await fetch("/api/rt/audio-commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ sessionId }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || "Failed to commit audio turn");
       }
     } catch (err) {
-      console.error("[ERROR] Commit via data channel failed", err);
+      console.error("[ERROR] Commit turn failed", err);
     } finally {
       isCommittingRef.current = false;
     }
-  }, [phase]);
+  }, [phase, sessionId]);
+
+  const uploadMicChunks = useCallback(async () => {
+    if (micChunkQueueRef.current.length === 0 || isUploadingRef.current) {
+      return;
+    }
+
+    const chunks = micChunkQueueRef.current.splice(0, micChunkQueueRef.current.length);
+    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    const merged = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    isUploadingRef.current = true;
+    try {
+      const response = await fetch("/api/rt/audio-append", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ sessionId, base64: uint8ArrayToBase64(merged) }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(async () => ({ error: await response.text() }));
+        const message = typeof data.error === "string" && data.error.trim() ? data.error : "Failed to upload audio";
+        throw new Error(message);
+      }
+    } catch (error) {
+      console.error("[ERROR] Failed to upload audio chunk", error);
+    } finally {
+      isUploadingRef.current = false;
+    }
+  }, [sessionId, uint8ArrayToBase64]);
 
   const stopMicrophonePipeline = useCallback(() => {
     if (mediaRecorderRef.current) {
@@ -701,20 +774,13 @@ const StudioPage: React.FC = () => {
       window.clearInterval(micFlushIntervalRef.current);
       micFlushIntervalRef.current = null;
     }
+    void uploadMicChunks();
     micChunkQueueRef.current = [];
     isUploadingRef.current = false;
     setIsRecording(false);
-  }, []);
+  }, [uploadMicChunks]);
 
   const startMicrophonePipeline = useCallback(async () => {
-    try {
-      await ensureRealtimeSession();
-    } catch (err) {
-      setStatusMessage(null);
-      setError(err instanceof Error ? err.message : "Failed to start realtime session.");
-      return false;
-    }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -753,6 +819,7 @@ const StudioPage: React.FC = () => {
           pcm16Buffer[i] = Math.round(sample * 32767);
         }
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
+        micChunkQueueRef.current.push(new Uint8Array(uint8Array));
         hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
         if (!hasCapturedAudioRef.current) {
           hasCapturedAudioRef.current = true;
@@ -780,10 +847,14 @@ const StudioPage: React.FC = () => {
             window.clearInterval(micFlushIntervalRef.current);
             micFlushIntervalRef.current = null;
           }
+          void uploadMicChunks();
         },
       };
 
       mediaRecorderRef.current = processor;
+      micFlushIntervalRef.current = window.setInterval(() => {
+        void uploadMicChunks();
+      }, 200);
       setIsRecording(true);
       return true;
     } catch (error) {
@@ -792,7 +863,7 @@ const StudioPage: React.FC = () => {
       setError("Failed to access microphone. Please check permissions.");
       return false;
     }
-  }, [ensureRealtimeSession]);
+  }, [uploadMicChunks]);
 
   const teardownRealtime = useCallback(async () => {
     stopMicrophonePipeline();
@@ -811,56 +882,38 @@ const StudioPage: React.FC = () => {
     }
     hasUserTranscriptSseRef.current = false;
     hasAiTranscriptSseRef.current = false;
+    setIsAiSpeaking(false);
+    setIsHostSpeaking(false);
 
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.srcObject = null;
-      audioRef.current.src = "";
-    }
-
-    if (dcRef.current) {
+    aiPlaybackSourcesRef.current.forEach((source) => {
       try {
-        dcRef.current.close();
-      } catch (err) {
-        console.debug("[DEBUG] Failed to close data channel", err);
-      }
-      dcRef.current = null;
-    }
-
-    if (pcRef.current) {
-      try {
-        pcRef.current.getSenders().forEach((sender) => sender.track?.stop());
-      } catch (err) {
-        console.debug("[DEBUG] Failed to stop senders", err);
-      }
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-
-    if (aiTrackRef.current) {
-      try {
-        aiTrackRef.current.stop();
+        source.stop();
       } catch {}
-      aiTrackRef.current = null;
-    }
-    if (aiRecordProcessorRef.current) {
-      try { aiRecordProcessorRef.current.stop(); } catch {}
-      aiRecordProcessorRef.current = null;
-    }
+    });
+    aiPlaybackSourcesRef.current = [];
+    aiPlaybackTimeRef.current = 0;
+    setIsAudioPlaying(false);
 
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
 
-    // WebRTC-only teardown; no server stop needed
-
     micChunkQueueRef.current = [];
     hostAudioChunksRef.current = [];
     aiAudioChunksRef.current = [];
     isUploadingRef.current = false;
     hasCapturedAudioRef.current = false;
-  }, [stopMicrophonePipeline]);
+    try {
+      await fetch("/api/rt/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+    } catch (error) {
+      console.debug("[DEBUG] Failed to notify realtime stop", error);
+    }
+  }, [sessionId, stopMicrophonePipeline]);
 
   const buildConversationPayload = useCallback((): StoredConversation | null => {
     if (!currentPaper || entries.length === 0) {
@@ -925,35 +978,11 @@ const StudioPage: React.FC = () => {
     };
   }, [currentPaper, entries, sessionDuration]);
 
-  const sendDataChannelSessionUpdate = useCallback(() => {
-    const channel = dcRef.current;
-    if (!channel || channel.readyState !== "open") {
-      return;
+  useEffect(() => {
+    if (phase === "live") {
+      void ensureRealtimeSession();
     }
-
-    try {
-      const instructions = buildConversationInstructionsFromPaper(currentPaper);
-      channel.send(
-        JSON.stringify({
-          type: "session.update",
-          session: {
-            modalities: ["text", "audio"],
-            voice: "alloy",
-            input_audio_transcription: { model: "whisper-1" },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 800,
-            },
-            instructions,
-          },
-        }),
-      );
-    } catch (err) {
-      console.error("[ERROR] Failed to send session update over data channel:", err);
-    }
-  }, [currentPaper]);
+  }, [ensureRealtimeSession, phase]);
 
   const handleUserTranscriptionDelta = useCallback(
     (delta: string) => {
@@ -977,83 +1006,85 @@ const StudioPage: React.FC = () => {
     [appendToSegment],
   );
 
-  const handleDcMessage = useCallback(
-    (data: unknown) => {
-      if (typeof data !== "string") {
+  const attachRealtimeStreams = useCallback(() => {
+    const params = new URLSearchParams({ sessionId });
+
+    if (aiTranscriptEventSourceRef.current) {
+      aiTranscriptEventSourceRef.current.close();
+      aiTranscriptEventSourceRef.current = null;
+    }
+    if (userTranscriptEventSourceRef.current) {
+      userTranscriptEventSourceRef.current.close();
+      userTranscriptEventSourceRef.current = null;
+    }
+    if (audioEventSourceRef.current) {
+      audioEventSourceRef.current.close();
+      audioEventSourceRef.current = null;
+    }
+
+    const transcriptSource = new EventSource(`/api/rt/transcripts?${params.toString()}`);
+    transcriptSource.onmessage = (event) => {
+      const text = event.data ?? "";
+      if (text) {
+        handleAiTranscriptDelta(text);
+      }
+    };
+    transcriptSource.addEventListener("done", () => {
+      finalizeSegment("ai");
+      setIsAiSpeaking(false);
+    });
+    transcriptSource.onerror = (event) => {
+      console.error("[ERROR] AI transcript stream error", event);
+    };
+    aiTranscriptEventSourceRef.current = transcriptSource;
+    hasAiTranscriptSseRef.current = true;
+
+    const userSource = new EventSource(`/api/rt/user-transcripts?${params.toString()}`);
+    userSource.addEventListener("delta", (event) => {
+      const text = (event as MessageEvent).data ?? "";
+      if (text) {
+        handleUserTranscriptionDelta(text);
+      }
+    });
+    userSource.addEventListener("complete", (event) => {
+      const text = (event as MessageEvent).data ?? "";
+      handleUserTranscriptionComplete(text);
+    });
+    userSource.onerror = (event) => {
+      console.error("[ERROR] User transcript stream error", event);
+    };
+    userTranscriptEventSourceRef.current = userSource;
+    hasUserTranscriptSseRef.current = true;
+
+    const audioSource = new EventSource(`/api/rt/audio?${params.toString()}`);
+    audioSource.onmessage = (event) => {
+      const base64 = event.data ?? "";
+      if (!base64) {
         return;
       }
-
       try {
-        const msg = JSON.parse(data) as Record<string, unknown>;
-        const type = typeof msg.type === "string" ? msg.type : "";
-        if (!type) {
-          return;
-        }
-
-        if (
-          !hasAiTranscriptSseRef.current &&
-          (type === "response.output_text.delta" || type === "response.text.delta" || type === "response.audio_transcript.delta")
-        ) {
-          const deltaText = typeof msg.delta === "string" ? msg.delta : "";
-          const responseText = typeof msg.text === "string" ? msg.text : "";
-          const text = deltaText || responseText;
-          if (text) {
-            handleAiTranscriptDelta(text);
-          }
-        }
-
-        if (type === "response.done" || type === "response.completed" || type === "response.output_text.done") {
-          finalizeSegment("ai");
-        }
-
-        if (
-          !hasUserTranscriptSseRef.current &&
-          (type === "conversation.item.input_audio_transcription.delta" || type === "input_audio_buffer.transcription.delta")
-        ) {
-          const delta = typeof msg.delta === "string" ? msg.delta : "";
-          if (delta) {
-            handleUserTranscriptionDelta(delta);
-          }
-        }
-
-        if (
-          !hasUserTranscriptSseRef.current &&
-          (type === "conversation.item.input_audio_transcription.completed" || type === "input_audio_buffer.transcription.completed")
-        ) {
-          const transcript = typeof msg.transcript === "string" ? msg.transcript : "";
-          handleUserTranscriptionComplete(transcript);
-        }
-
-        if (type === "conversation.item.input_audio_transcription.started" || type === "input_audio_buffer.transcription.started") {
-          ensureSegment("host");
-        }
-
-        if (type === "input_audio_buffer.speech_started") {
-          ensureSegment("host");
-        }
-
-        if (type === "input_audio_buffer.speech_stopped") {
-          void commitAudioTurn();
-        }
-
-        if (type === "response.error") {
-          const message = typeof msg.error === "string" ? msg.error : "Realtime session error";
-          setStatusMessage(null);
-          setError(message);
-        }
-      } catch (err) {
-        console.debug("[DEBUG] Failed to parse data channel message", err);
+        const bytes = base64ToUint8Array(base64);
+        aiAudioChunksRef.current.push(bytes);
+        void playAiAudioChunk(bytes);
+        setIsAiSpeaking(true);
+      } catch (error) {
+        console.error("[ERROR] Failed to process AI audio chunk", error);
       }
-    },
-    [commitAudioTurn, ensureSegment, finalizeSegment, handleAiTranscriptDelta, handleUserTranscriptionComplete, handleUserTranscriptionDelta],
-  );
+    };
+    audioSource.onerror = (event) => {
+      console.error("[ERROR] AI audio stream error", event);
+    };
+    audioEventSourceRef.current = audioSource;
+  }, [
+    base64ToUint8Array,
+    finalizeSegment,
+    handleAiTranscriptDelta,
+    handleUserTranscriptionComplete,
+    handleUserTranscriptionDelta,
+    playAiAudioChunk,
+    sessionId,
+  ]);
 
-  useEffect(() => {
-    sendDataChannelSessionUpdate();
-  }, [sendDataChannelSessionUpdate]);
-
-  // WebRTC-only: transcripts and AI audio are handled via the data channel and remote audio track.
-  // Removed SSE streams for audio/transcripts.
 
   const startSession = useCallback(async () => {
     if (phase === "preparing" || phase === "live") {
@@ -1070,157 +1101,19 @@ const StudioPage: React.FC = () => {
     latestConversationRef.current = null;
     hasCapturedAudioRef.current = false;
     setHasCapturedAudio(false);
-
-    let pc: RTCPeerConnection | null = null;
-    let localStream: MediaStream | null = null;
+    setIsAudioPlaying(false);
 
     try {
       await ensureRealtimeSession();
-
-      pc = new RTCPeerConnection({
-        iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
-      });
-
-      pc.ontrack = (event) => {
-        const [remoteStream] = event.streams;
-        const audioElement = audioRef.current;
-        if (audioElement) {
-          audioElement.srcObject = remoteStream;
-          const playPromise = audioElement.play();
-          if (playPromise !== undefined) {
-            playPromise.catch((err) => {
-              console.warn("[WARN] Autoplay prevented for remote audio:", err);
-            });
-          }
-        } else {
-          const fallback = new Audio();
-          fallback.srcObject = remoteStream;
-          fallback.autoplay = true;
-          fallback.play().catch(() => {});
-        }
-
-        const track = event.track;
-        aiTrackRef.current = track;
-        track.onunmute = () => {
-          setIsAiSpeaking(true);
-        };
-        track.onmute = () => {
-          setIsAiSpeaking(false);
-        };
-        track.onended = () => {
-          setIsAiSpeaking(false);
-        };
-
-        // Begin capturing AI audio locally for export (WebRTC-only)
-        try {
-          if (!audioContextRef.current) {
-            const AudioContextConstructor =
-              window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-            if (AudioContextConstructor) {
-              audioContextRef.current = new AudioContextConstructor({ sampleRate: 24000 });
-            }
-          }
-          const audioContext = audioContextRef.current;
-          if (audioContext && !aiRecordProcessorRef.current) {
-            const aiStream = remoteStream ?? new MediaStream([track]);
-            const source = audioContext.createMediaStreamSource(aiStream);
-            const scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1);
-            const silentGain = audioContext.createGain();
-            silentGain.gain.value = 0;
-            scriptProcessor.onaudioprocess = (ev) => {
-              const inputData = ev.inputBuffer.getChannelData(0);
-              const pcm16Buffer = new Int16Array(inputData.length);
-              for (let i = 0; i < inputData.length; i++) {
-                const sample = Math.max(-1, Math.min(1, inputData[i]));
-                pcm16Buffer[i] = Math.round(sample * 32767);
-              }
-              aiAudioChunksRef.current.push(new Uint8Array(pcm16Buffer.buffer));
-            };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(silentGain);
-            silentGain.connect(audioContext.destination);
-            aiRecordProcessorRef.current = {
-              stop: () => {
-                try { source.disconnect(); } catch {}
-                try { scriptProcessor.disconnect(); } catch {}
-                try { silentGain.disconnect(); } catch {}
-              }
-            };
-          }
-        } catch (e) {
-          console.debug("[DEBUG] Failed to start AI audio capture", e);
-        }
-      };
-
-      pc.ondatachannel = (ev) => {
-        const dc = ev.channel;
-        dcRef.current = dc;
-        dc.onmessage = (e) => handleDcMessage(e.data);
-        dc.onopen = () => sendDataChannelSessionUpdate();
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-        video: false,
-      });
-      localStream = stream;
-      localStream.getAudioTracks().forEach((track) => pc!.addTrack(track, localStream!));
-
-      const dc = pc.createDataChannel("oai-events");
-      dcRef.current = dc;
-      dc.onmessage = (e) => handleDcMessage(e.data);
-      dc.onopen = () => sendDataChannelSessionUpdate();
-
-      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
-      await pc.setLocalDescription(offer);
-
-    const webrtcHeaders: Record<string, string> = {
-      "Content-Type": "application/sdp",
-      "X-LLM-Provider": activeProvider,
-      "X-LLM-Model": activeModel,
-    };
-
-      if (activeApiKey) {
-        webrtcHeaders["X-LLM-Api-Key"] = activeApiKey;
-      }
-
-      const resp = await fetch(`/api/rt/webrtc?model=${encodeURIComponent(activeModel)}`, {
-        method: "POST",
-        body: pc.localDescription?.sdp || "",
-        cache: "no-store",
-        headers: webrtcHeaders,
-      });
-      if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`SDP exchange failed: ${resp.status} ${text}`);
-      }
-      const answerSdp = await resp.text();
-      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
-
-      pcRef.current = pc;
-
-      if (audioRef.current) {
-        const el = audioRef.current;
-        el.onplay = () => {
-          setIsAudioPlaying(true);
-        };
-        el.onpause = () => {
-          setIsAudioPlaying(false);
-        };
-        el.onended = () => {
-          setIsAudioPlaying(false);
-        };
-      }
-
-      setPhase("live");
-      setStatusMessage("Live recording started.");
+      attachRealtimeStreams();
 
       const micStarted = await startMicrophonePipeline();
       if (!micStarted) {
         throw new Error("Microphone access required to record the conversation.");
       }
 
-      sendDataChannelSessionUpdate();
+      setPhase("live");
+      setStatusMessage("Live recording started.");
     } catch (err) {
       console.error("[ERROR] Connection failed:", err);
       setStatusMessage(null);
@@ -1265,38 +1158,11 @@ const StudioPage: React.FC = () => {
       }
 
       setError(friendlyMessage);
-      if (pc) {
-        try {
-          pc.getSenders().forEach((sender) => sender.track?.stop());
-        } catch {}
-        pc.close();
-      }
-      if (localStream) {
-        localStream.getTracks().forEach((track) => track.stop());
-      }
-      if (pcRef.current) {
-        try {
-          pcRef.current.getSenders().forEach((sender) => sender.track?.stop());
-        } catch {}
-        pcRef.current.close();
-        pcRef.current = null;
-      }
-      if (dcRef.current) {
-        try {
-          dcRef.current.close();
-        } catch {}
-        dcRef.current = null;
-      }
-      if (aiTrackRef.current) {
-        try {
-          aiTrackRef.current.stop();
-        } catch {}
-        aiTrackRef.current = null;
-      }
+      await teardownRealtime();
       setPhase("idle");
       setIsRecording(false);
     }
-  }, [activeApiKey, activeProvider, activeModel, ensureRealtimeSession, handleDcMessage, phase, resetConversation, sendDataChannelSessionUpdate, startMicrophonePipeline]);
+  }, [attachRealtimeStreams, ensureRealtimeSession, phase, resetConversation, startMicrophonePipeline, teardownRealtime]);
 
   const stopSession = useCallback(async () => {
     if (phase === "idle" || phase === "stopping") {
@@ -1309,6 +1175,7 @@ const StudioPage: React.FC = () => {
 
     try {
       stopMicrophonePipeline();
+      await uploadMicChunks();
       const payload = buildConversationPayload();
       if (payload) {
         latestConversationRef.current = payload;
@@ -1333,7 +1200,9 @@ const StudioPage: React.FC = () => {
     setPhase("idle");
     setIsRecording(false);
     setIsAudioPlaying(false);
-  }, [buildConversationPayload, phase, stopMicrophonePipeline, teardownRealtime]);
+    setIsHostSpeaking(false);
+    setIsAiSpeaking(false);
+  }, [buildConversationPayload, phase, stopMicrophonePipeline, teardownRealtime, uploadMicChunks]);
 
   useEffect(() => {
     return () => {

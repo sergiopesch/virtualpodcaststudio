@@ -1,5 +1,5 @@
 // src/lib/realtimeSession.ts
-import WebSocket from 'ws';
+import WebSocket from "ws";
 import { EventEmitter } from "node:events";
 import { providerSupportsRealtime, getProviderDefaultModel } from "./ai/client";
 import { ApiKeySecurity } from "./apiKeySecurity";
@@ -191,12 +191,47 @@ function resolveModelFromRequest(request: Request, provider: SupportedProvider, 
   return fallback;
 }
 
+function resolveSessionIdFromRequest(request: Request): string {
+  const headerSession = request.headers.get("x-rt-session-id");
+  if (headerSession && headerSession.trim()) {
+    return headerSession.trim();
+  }
+
+  try {
+    const url = new URL(request.url);
+    const paramSessionId = url.searchParams.get("sessionId");
+    if (paramSessionId && paramSessionId.trim()) {
+      return paramSessionId.trim();
+    }
+  } catch {
+    // ignored
+  }
+
+  return "default";
+}
+
 function resolveApiKeyForProvider(provider: SupportedProvider, explicitKey: string | null): string {
   const fallback = SecureEnv.getWithDefault(
     provider === "openai" ? "OPENAI_API_KEY" : "GOOGLE_API_KEY",
     "",
   );
-  return (explicitKey ?? fallback).trim();
+  const resolved = (explicitKey ?? fallback).trim();
+
+  if (!resolved) {
+    return "";
+  }
+
+  try {
+    ApiKeySecurity.validateKeyOrThrow(provider, resolved);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid API key";
+    throw new RealtimeSessionError("INVALID_API_KEY", message, {
+      status: REALTIME_ERROR_STATUS.INVALID_API_KEY,
+      cause: error,
+    });
+  }
+
+  return resolved;
 }
 
 export async function handleRealtimeSdpExchange(options: RealtimeSdpExchangeOptions): Promise<RealtimeSdpExchangeResult> {
@@ -218,8 +253,11 @@ export async function handleRealtimeSdpExchange(options: RealtimeSdpExchangeOpti
   const defaultModel = getProviderDefaultModel(provider);
   const model = resolveModelFromRequest(request, provider, defaultModel);
 
+  const sessionId = resolveSessionIdFromRequest(request);
+  const manager = rtSessionManager.getExistingSession(sessionId);
+  const sessionKey = manager?.getResolvedApiKey() ?? null;
   const headerKey = request.headers.get("x-llm-api-key");
-  const resolvedKey = resolveApiKeyForProvider(provider, headerKey);
+  const resolvedKey = resolveApiKeyForProvider(provider, headerKey ?? sessionKey);
 
   if (!resolvedKey) {
     const label = provider === "openai" ? "OpenAI" : "Google";
@@ -294,6 +332,10 @@ class RTManager extends EventEmitter {
     return "inactive";
   }
 
+  getResolvedApiKey(): string {
+    return (this.apiKey ?? "").trim();
+  }
+
   configure(options: { provider: SupportedProvider; apiKey: string; model?: string; paperContext?: PaperContext | null }): boolean {
     let changed = false;
     const nextProvider = options.provider;
@@ -320,6 +362,10 @@ class RTManager extends EventEmitter {
     if (currentContext !== nextContext) {
       this.paperContext = normalizedContext;
       changed = true;
+    }
+
+    if (changed && this.isActive()) {
+      this.pushSessionUpdate();
     }
 
     return changed;
@@ -368,13 +414,35 @@ class RTManager extends EventEmitter {
         },
       });
 
+      const clearTimeoutIfNeeded = () => {
+        if (this.connectionTimeout) {
+          clearTimeout(this.connectionTimeout);
+          this.connectionTimeout = undefined;
+        }
+      };
+
+      this.connectionTimeout = setTimeout(() => {
+        ws.terminate();
+        reject(
+          new RealtimeSessionError(
+            "TIMEOUT",
+            "Timed out while establishing realtime connection",
+            { status: REALTIME_ERROR_STATUS.TIMEOUT },
+          ),
+        );
+      }, 10_000);
+
       ws.on("open", () => {
+        clearTimeoutIfNeeded();
         this.ws = ws;
+        this.registerMessageHandlers(ws);
+        this.pushSessionUpdate();
         this.emit("ready");
         resolve();
       });
 
       ws.on("error", (error: Error & { code?: number }) => {
+        clearTimeoutIfNeeded();
         reject(
           new RealtimeSessionError(
             "WEBSOCKET_ERROR",
@@ -385,6 +453,7 @@ class RTManager extends EventEmitter {
       });
 
       ws.on("close", () => {
+        clearTimeoutIfNeeded();
         this.ws = null;
         this.emit("close");
       });
@@ -402,6 +471,13 @@ class RTManager extends EventEmitter {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
+        input_audio_transcription: { model: "whisper-1" },
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 800,
+        },
         instructions: this.buildInstructions(),
       },
     };
@@ -431,12 +507,118 @@ class RTManager extends EventEmitter {
       : "You are assisting with a podcast conversation.";
   }
 
+  private registerMessageHandlers(ws: WebSocket) {
+    ws.on("message", (data: WebSocket.RawData) => {
+      try {
+        const text = typeof data === "string" ? data : data.toString();
+        const payload = JSON.parse(text) as Record<string, unknown>;
+        const type = typeof payload.type === "string" ? payload.type : "";
+        if (!type) {
+          return;
+        }
+
+        if (type === "session.created" || type === "session.updated") {
+          return;
+        }
+
+        if (type === "response.output_text.delta" || type === "response.text.delta") {
+          const delta =
+            typeof payload.delta === "string"
+              ? payload.delta
+              : typeof payload.text === "string"
+                ? payload.text
+                : "";
+          if (delta) {
+            this.emit("transcript", delta);
+          }
+          return;
+        }
+
+        if (type === "response.output_text.done" || type === "response.done" || type === "response.completed") {
+          this.emit("assistant_done");
+          return;
+        }
+
+        if (type === "response.audio.delta" || type === "response.output_audio.delta") {
+          const audioDelta =
+            typeof payload.delta === "string"
+              ? payload.delta
+              : typeof payload.delta === "object" && payload.delta !== null && typeof (payload.delta as { audio?: string }).audio === "string"
+                ? (payload.delta as { audio?: string }).audio ?? ""
+                : typeof payload.audio === "string"
+                  ? payload.audio
+                  : "";
+          if (audioDelta) {
+            const bytes = Buffer.from(audioDelta, "base64");
+            this.emit("audio", new Uint8Array(bytes));
+          }
+          return;
+        }
+
+        if (
+          type === "conversation.item.input_audio_transcription.delta" ||
+          type === "input_audio_buffer.transcription.delta"
+        ) {
+          const delta =
+            typeof payload.delta === "string"
+              ? payload.delta
+              : typeof payload.transcript === "string"
+                ? payload.transcript
+                : "";
+          if (delta) {
+            this.emit("user_transcript_delta", delta);
+          }
+          return;
+        }
+
+        if (
+          type === "conversation.item.input_audio_transcription.completed" ||
+          type === "input_audio_buffer.transcription.completed"
+        ) {
+          const transcript =
+            typeof payload.transcript === "string"
+              ? payload.transcript
+              : typeof payload.text === "string"
+                ? payload.text
+                : "";
+          if (transcript) {
+            this.emit("user_transcript", transcript);
+          }
+          return;
+        }
+
+        if (type === "input_audio_buffer.speech_started") {
+          this.emit("user_speech_started");
+          return;
+        }
+
+        if (type === "input_audio_buffer.speech_stopped") {
+          this.emit("user_speech_stopped");
+          return;
+        }
+
+        if (type === "response.error" || type === "error") {
+          const message =
+            typeof payload.error === "string"
+              ? payload.error
+              : typeof payload.message === "string"
+                ? payload.message
+                : "Realtime session error";
+          this.emit("error", new Error(message));
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to parse realtime event";
+        this.emit("error", new Error(message));
+      }
+    });
+  }
+
   async appendPcm16(chunk: Uint8Array) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("Session not ready - call start() first");
     }
 
-    const base64Audio = Buffer.from(chunk).toString('base64');
+    const base64Audio = Buffer.from(chunk).toString("base64");
     const event = {
       type: "input_audio_buffer.append",
       audio: base64Audio,
@@ -519,12 +701,16 @@ class RTManager extends EventEmitter {
 
 class RTSessionManager {
   private sessions = new Map<string, RTManager>();
-  
+
   getSession(sessionId: string): RTManager {
     if (!this.sessions.has(sessionId)) {
       this.sessions.set(sessionId, new RTManager(sessionId));
     }
     return this.sessions.get(sessionId)!;
+  }
+
+  getExistingSession(sessionId: string): RTManager | null {
+    return this.sessions.get(sessionId) ?? null;
   }
 
   removeSession(sessionId: string) {
