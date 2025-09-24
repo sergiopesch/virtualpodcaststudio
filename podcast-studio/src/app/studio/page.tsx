@@ -1296,7 +1296,7 @@ const StudioPage: React.FC = () => {
       setPhase("idle");
       setIsRecording(false);
     }
-  }, [activeApiKey, activeProvider, ensureRealtimeSession, handleDcMessage, phase, resetConversation, sendDataChannelSessionUpdate, startMicrophonePipeline]);
+  }, [activeApiKey, activeProvider, activeModel, ensureRealtimeSession, handleDcMessage, phase, resetConversation, sendDataChannelSessionUpdate, startMicrophonePipeline]);
 
   const stopSession = useCallback(async () => {
     if (phase === "idle" || phase === "stopping") {

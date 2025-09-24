@@ -1,13 +1,13 @@
-import { EventEmitter } from "node:events";
-import { providerSupportsRealtime, getProviderDefaultModel } from "./providerRegistry";
+import { providerSupportsRealtime, getProviderDefaultModel } from "./client";
 import type { SupportedProvider } from "./providerRegistry";
 import { ApiKeySecurity } from "@/lib/apiKeySecurity";
 import { SecureEnv } from "@/lib/secureEnv";
 import {
   interpretOpenAiHttpError,
   RealtimeSessionError,
-  type RealtimeSessionErrorCode,
   REALTIME_ERROR_STATUS,
+  isRealtimeSessionError,
+  resolveRealtimeHttpStatus,
 } from "@/lib/realtimeSession";
 
 export interface RealtimeAdapterOptions {

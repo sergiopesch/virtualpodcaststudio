@@ -260,3 +260,289 @@ export async function handleRealtimeSdpExchange(options: RealtimeSdpExchangeOpti
     model,
   };
 }
+
+interface PaperContext {
+  id?: string;
+  title?: string;
+  authors?: string;
+  primaryAuthor?: string;
+  hasAdditionalAuthors?: boolean;
+  formattedPublishedDate?: string;
+  abstract?: string;
+  arxivUrl?: string;
+}
+
+class RTManager extends EventEmitter {
+  private ws: WebSocket | null = null;
+  starting = false;
+  sessionId: string;
+  private startPromise?: Promise<void>;
+  private connectionTimeout?: NodeJS.Timeout;
+  private provider: SupportedProvider = "openai";
+  private apiKey: string | null = SecureEnv.get("OPENAI_API_KEY") || null;
+  private model: string = getProviderDefaultModel("openai");
+  private paperContext: PaperContext | null = null;
+
+  constructor(sessionId?: string) {
+    super();
+    this.sessionId = sessionId || "default";
+  }
+
+  getStatus(): "inactive" | "starting" | "active" {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) return "active";
+    if (this.starting || this.startPromise) return "starting";
+    return "inactive";
+  }
+
+  configure(options: { provider: SupportedProvider; apiKey: string; model?: string; paperContext?: PaperContext | null }): boolean {
+    let changed = false;
+    const nextProvider = options.provider;
+    if (nextProvider !== this.provider) {
+      this.provider = nextProvider;
+      changed = true;
+    }
+
+    const trimmedKey = options.apiKey.trim();
+    if (trimmedKey !== this.apiKey) {
+      this.apiKey = trimmedKey;
+      changed = true;
+    }
+
+    const nextModel = (options.model ?? getProviderDefaultModel(nextProvider)).trim();
+    if (nextModel !== this.model) {
+      this.model = nextModel;
+      changed = true;
+    }
+
+    const normalizedContext = options.paperContext ?? null;
+    const currentContext = this.paperContext ? JSON.stringify(this.paperContext) : null;
+    const nextContext = normalizedContext ? JSON.stringify(normalizedContext) : null;
+    if (currentContext !== nextContext) {
+      this.paperContext = normalizedContext;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  async start(): Promise<void> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      return;
+    }
+    if (this.startPromise) {
+      return this.startPromise;
+    }
+
+    this.startPromise = this.establishConnection();
+    return this.startPromise.finally(() => {
+      this.startPromise = undefined;
+    });
+  }
+
+  private async establishConnection(): Promise<void> {
+    const key = (this.apiKey || "").trim();
+    if (!key) {
+      throw new RealtimeSessionError(
+        "MISSING_API_KEY",
+        "Missing API key for realtime session",
+        { status: REALTIME_ERROR_STATUS.MISSING_API_KEY },
+      );
+    }
+
+    if (!providerSupportsRealtime(this.provider)) {
+      throw new RealtimeSessionError(
+        "UNSUPPORTED_PROVIDER",
+        "Realtime session unsupported for this provider",
+        { status: REALTIME_ERROR_STATUS.UNSUPPORTED_PROVIDER },
+      );
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      this.starting = true;
+
+      const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
+      const ws = new WebSocket(wsUrl, {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "OpenAI-Beta": "realtime=v1",
+        },
+      });
+
+      ws.on("open", () => {
+        this.ws = ws;
+        this.emit("ready");
+        resolve();
+      });
+
+      ws.on("error", (error: Error & { code?: number }) => {
+        reject(
+          new RealtimeSessionError(
+            "WEBSOCKET_ERROR",
+            `WebSocket connection error: ${error.message}`,
+            { status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR, cause: error },
+          ),
+        );
+      });
+
+      ws.on("close", () => {
+        this.ws = null;
+        this.emit("close");
+      });
+    });
+
+    this.starting = false;
+  }
+
+  private pushSessionUpdate() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const payload = {
+      type: "session.update",
+      session: {
+        modalities: ["text", "audio"],
+        instructions: this.buildInstructions(),
+      },
+    };
+
+    this.ws.send(JSON.stringify(payload));
+  }
+
+  private buildInstructions(): string {
+    if (!this.paperContext) {
+      return "You are assisting with a podcast conversation.";
+    }
+
+    const segments = [];
+    if (this.paperContext.title) segments.push(`Title: ${this.paperContext.title}`);
+    if (this.paperContext.primaryAuthor) {
+      segments.push(`Authors: ${this.paperContext.primaryAuthor}${this.paperContext.hasAdditionalAuthors ? " et al." : ""}`);
+    } else if (this.paperContext.authors) {
+      segments.push(`Authors: ${this.paperContext.authors}`);
+    }
+    if (this.paperContext.formattedPublishedDate) segments.push(`Published: ${this.paperContext.formattedPublishedDate}`);
+    if (this.paperContext.abstract) segments.push(`Summary: ${this.paperContext.abstract}`);
+    if (this.paperContext.arxivUrl) segments.push(`URL: ${this.paperContext.arxivUrl}`);
+
+    const context = segments.join("; ");
+    return context
+      ? `You are assisting with a podcast conversation. Context: ${context}`
+      : "You are assisting with a podcast conversation.";
+  }
+
+  async appendPcm16(chunk: Uint8Array) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("Session not ready - call start() first");
+    }
+
+    const base64Audio = Buffer.from(chunk).toString('base64');
+    const event = {
+      type: "input_audio_buffer.append",
+      audio: base64Audio,
+    };
+
+    this.ws.send(JSON.stringify(event));
+  }
+
+  async commitTurn() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("Session not ready - call start() first");
+    }
+
+    const events = [
+      { type: "input_audio_buffer.commit" },
+      { type: "response.create", response: { modalities: ["text", "audio"] } },
+    ];
+
+    for (const event of events) {
+      this.ws.send(JSON.stringify(event));
+    }
+  }
+
+  async sendText(text: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("Session not ready - call start() first");
+    }
+
+    const messageEvent = {
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text,
+          },
+        ],
+      },
+    };
+
+    const responseEvent = {
+      type: "response.create",
+      response: { modalities: ["text", "audio"] },
+    };
+
+    this.ws.send(JSON.stringify(messageEvent));
+    this.ws.send(JSON.stringify(responseEvent));
+  }
+
+  stop() {
+    if (!this.ws) {
+      return;
+    }
+    try { 
+      this.ws.close();
+    } catch {}
+    this.ws = null;
+    this.emit("close");
+  }
+
+  getConfiguration() {
+    return {
+      provider: this.provider,
+      hasApiKey: !!(this.apiKey && this.apiKey.length > 0),
+      model: this.model,
+      paperContext: this.paperContext,
+    };
+  }
+
+  isActive(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  isStarting(): boolean {
+    return this.starting || !!this.startPromise;
+  }
+}
+
+class RTSessionManager {
+  private sessions = new Map<string, RTManager>();
+  
+  getSession(sessionId: string): RTManager {
+    if (!this.sessions.has(sessionId)) {
+      this.sessions.set(sessionId, new RTManager(sessionId));
+    }
+    return this.sessions.get(sessionId)!;
+  }
+
+  removeSession(sessionId: string) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.stop();
+      this.sessions.delete(sessionId);
+    }
+  }
+
+  getActiveSessionCount(): number {
+    return this.sessions.size;
+  }
+}
+
+const globalManager = globalThis as typeof globalThis & { __rtManager?: RTSessionManager };
+if (!globalManager.__rtManager) {
+  globalManager.__rtManager = new RTSessionManager();
+}
+
+export const rtSessionManager = globalManager.__rtManager;
