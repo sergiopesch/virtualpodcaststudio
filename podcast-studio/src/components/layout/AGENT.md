@@ -38,6 +38,8 @@ src/components/layout/
   profile or workspace settings.
 - Reads and writes API configuration via `useApiConfig()`, trimming keys before persisting them with
   `setApiKey`. Keys remain in-memory only.
+- API keys are validated via `validateApiKey` before saving. Surface inline error messaging so users
+  can correct invalid keys without closing the sheet.
 - Maintains local `workspacePreferences` state (theme, autosave, analytics flags). Currently these
   are logged in `handleSave`—replace logging with real API calls if backend persistence is added.
 - Generates user initials from the display name for the avatar badge.

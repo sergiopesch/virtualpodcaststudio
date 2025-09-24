@@ -79,11 +79,16 @@ export function UserMenu() {
     apiKeys,
     setActiveProvider: persistActiveProvider,
     setApiKey: persistApiKey,
+    validateApiKey,
   } = useApiConfig();
   const [llmSettings, setLlmSettings] = useState<LlmSettingsState>({
     activeProvider: storedProvider,
     openaiKey: apiKeys.openai ?? "",
     googleKey: apiKeys.google ?? "",
+  });
+  const [keyErrors, setKeyErrors] = useState<Record<LlmProvider, string | null>>({
+    openai: null,
+    google: null,
   });
 
   useEffect(() => {
@@ -97,6 +102,12 @@ export function UserMenu() {
       googleKey: apiKeys.google ?? "",
     });
   }, [isSheetOpen, activeItem, storedProvider, apiKeys.openai, apiKeys.google]);
+
+  useEffect(() => {
+    if (!isSheetOpen) {
+      setKeyErrors({ openai: null, google: null });
+    }
+  }, [isSheetOpen]);
 
   const handleItemSelect = useCallback((item: UserMenuItem) => {
     setActiveItem(item);
@@ -123,6 +134,32 @@ export function UserMenu() {
         const trimmedOpenAiKey = llmSettings.openaiKey.trim();
         const trimmedGoogleKey = llmSettings.googleKey.trim();
 
+        const nextErrors: Record<LlmProvider, string | null> = {
+          openai: null,
+          google: null,
+        };
+
+        if (trimmedOpenAiKey) {
+          const validation = validateApiKey("openai", trimmedOpenAiKey);
+          if (!validation.isValid) {
+            nextErrors.openai = validation.message ?? "Invalid OpenAI API key.";
+          }
+        }
+
+        if (trimmedGoogleKey) {
+          const validation = validateApiKey("google", trimmedGoogleKey);
+          if (!validation.isValid) {
+            nextErrors.google = validation.message ?? "Invalid Google API key.";
+          }
+        }
+
+        if (nextErrors.openai || nextErrors.google) {
+          setKeyErrors(nextErrors);
+          return;
+        }
+
+        setKeyErrors({ openai: null, google: null });
+
         persistActiveProvider(llmSettings.activeProvider);
         persistApiKey("openai", trimmedOpenAiKey);
         persistApiKey("google", trimmedGoogleKey);
@@ -147,7 +184,15 @@ export function UserMenu() {
 
     setIsSheetOpen(false);
     setActiveItem(null);
-  }, [activeItem, llmSettings, persistActiveProvider, persistApiKey, profileSettings, workspacePreferences]);
+  }, [
+    activeItem,
+    llmSettings,
+    persistActiveProvider,
+    persistApiKey,
+    profileSettings,
+    validateApiKey,
+    workspacePreferences,
+  ]);
 
   const handleSignOut = useCallback(() => {
     console.info("User signed out");
@@ -400,35 +445,55 @@ export function UserMenu() {
                     type="password"
                     autoComplete="off"
                     value={llmSettings.openaiKey}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const { value } = event.target;
                       setLlmSettings((previous) => ({
                         ...previous,
-                        openaiKey: event.target.value,
-                      }))
-                    }
+                        openaiKey: value,
+                      }));
+                      if (keyErrors.openai) {
+                        setKeyErrors((previous) => ({
+                          ...previous,
+                          openai: null,
+                        }));
+                      }
+                    }}
                     placeholder="sk-0123456789…"
-                    className={`${baseFieldClass} flex-1`}
+                    className={`${baseFieldClass} flex-1 ${keyErrors.openai ? "border-red-400 focus-visible:border-red-500 focus-visible:ring-red-300" : ""}`}
+                    aria-invalid={keyErrors.openai ? true : undefined}
+                    aria-describedby={keyErrors.openai ? "openai-api-key-error" : undefined}
                   />
                   {llmSettings.openaiKey && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() =>
+                      onClick={() => {
                         setLlmSettings((previous) => ({
                           ...previous,
                           openaiKey: "",
-                        }))
-                      }
+                        }));
+                        if (keyErrors.openai) {
+                          setKeyErrors((previous) => ({
+                            ...previous,
+                            openai: null,
+                          }));
+                        }
+                      }}
                     >
                       Clear
                     </Button>
                   )}
                 </div>
-                <p className="text-xs text-gray-500">
-                  {openAiConfigured
-                    ? "Saved locally in this browser."
-                    : "Paste your OpenAI key (starts with \"sk-\")."}
+                <p
+                  id={keyErrors.openai ? "openai-api-key-error" : undefined}
+                  className={`text-xs ${keyErrors.openai ? "text-red-600" : "text-gray-500"}`}
+                >
+                  {keyErrors.openai
+                    ? keyErrors.openai
+                    : openAiConfigured
+                      ? "Saved locally in this browser."
+                      : "Paste your OpenAI key (starts with \"sk-\")."}
                 </p>
               </div>
               <div className="flex flex-col space-y-2">
@@ -444,35 +509,55 @@ export function UserMenu() {
                     type="password"
                     autoComplete="off"
                     value={llmSettings.googleKey}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const { value } = event.target;
                       setLlmSettings((previous) => ({
                         ...previous,
-                        googleKey: event.target.value,
-                      }))
-                    }
+                        googleKey: value,
+                      }));
+                      if (keyErrors.google) {
+                        setKeyErrors((previous) => ({
+                          ...previous,
+                          google: null,
+                        }));
+                      }
+                    }}
                     placeholder="AIzaSyExample…"
-                    className={`${baseFieldClass} flex-1`}
+                    className={`${baseFieldClass} flex-1 ${keyErrors.google ? "border-red-400 focus-visible:border-red-500 focus-visible:ring-red-300" : ""}`}
+                    aria-invalid={keyErrors.google ? true : undefined}
+                    aria-describedby={keyErrors.google ? "google-api-key-error" : undefined}
                   />
                   {llmSettings.googleKey && (
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() =>
+                      onClick={() => {
                         setLlmSettings((previous) => ({
                           ...previous,
                           googleKey: "",
-                        }))
-                      }
+                        }));
+                        if (keyErrors.google) {
+                          setKeyErrors((previous) => ({
+                            ...previous,
+                            google: null,
+                          }));
+                        }
+                      }}
                     >
                       Clear
                     </Button>
                   )}
                 </div>
-                <p className="text-xs text-gray-500">
-                  {googleConfigured
-                    ? "Saved locally in this browser."
-                    : "Use your Google AI Studio key (starts with \"AIza\")."}
+                <p
+                  id={keyErrors.google ? "google-api-key-error" : undefined}
+                  className={`text-xs ${keyErrors.google ? "text-red-600" : "text-gray-500"}`}
+                >
+                  {keyErrors.google
+                    ? keyErrors.google
+                    : googleConfigured
+                      ? "Saved locally in this browser."
+                      : "Use your Google AI Studio key (starts with \"AIza\")."}
                 </p>
               </div>
             </div>
