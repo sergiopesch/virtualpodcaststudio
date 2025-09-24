@@ -13,7 +13,7 @@ import { ApiKeySecurity } from "@/lib/apiKeySecurity";
 export type LlmProvider = "openai" | "google";
 
 const PROVIDER_DEFAULT_MODELS: Record<LlmProvider, string> = {
-  openai: process.env.NEXT_PUBLIC_OPENAI_REALTIME_MODEL ?? "gpt-4o-realtime-preview-2024-10-01",
+  openai: process.env.NEXT_PUBLIC_OPENAI_REALTIME_MODEL ?? "gpt-4o-realtime-preview-2024-12-17",
   google: process.env.NEXT_PUBLIC_GOOGLE_MODEL ?? "models/gemini-1.5-flash",
 };
 
