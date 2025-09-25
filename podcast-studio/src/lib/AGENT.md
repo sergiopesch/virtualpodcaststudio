@@ -13,8 +13,9 @@ src/lib/
 
 ## `realtimeSession.ts`
 - Exposes a hot-reload-safe singleton (`rtSessionManager`) that stores `RTManager` instances by
-  `sessionId`. Each manager maintains an OpenAI realtime WebSocket connection and emits events the
-  API routes forward to the browser.
+  `sessionId`. Each manager maintains an OpenAI realtime WebSocket connection, keeps track of when
+  a fresh `input_audio_buffer.create` must be issued, and emits events the API routes forward to the
+  browser.
 - `configure()` normalises provider (`openai`/`google`), resolves API keys (preferring user-provided
   keys, falling back to server env vars for OpenAI), stores optional model overrides, and sanitises
   paper context fields (title, authors, abstract, etc.). When context changes while connected,
@@ -25,8 +26,10 @@ src/lib/
 - Event handling: `_handleEvent` listens for OpenAI messages and emits on the internal
   `EventEmitter` (`audio`, `transcript`, `user_transcript`, `user_transcript_delta`, `assistant_done`,
   `ready`, `close`, `error`). SSE routes subscribe to these events.
-- Input helpers: `appendPcm16` queues audio frames, `commitTurn` triggers `response.create`, and
-  `sendText` submits text messages. `isActive()`/`isStarting()`/`getStatus()` report lifecycle state.
+- Input helpers: `appendPcm16` now ensures the first chunk in a user turn is preceded by
+  `input_audio_buffer.create`, queues audio frames, `commitTurn` triggers `response.create` and
+  resets the buffer flag, and `sendText` submits text messages. `isActive()`/`isStarting()`/
+  `getStatus()` report lifecycle state.
 - Session cleanup: `removeSession` stops the WebSocket, clears inactivity timers (30-minute idle
   timeout), and removes the manager from the singleton. `cleanup()` tears down all sessions—useful in
   tests.

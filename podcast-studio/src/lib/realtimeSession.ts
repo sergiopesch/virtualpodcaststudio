@@ -320,6 +320,7 @@ class RTManager extends EventEmitter {
   private apiKey: string | null = SecureEnv.get("OPENAI_API_KEY") || null;
   private model: string = getProviderDefaultModel("openai");
   private paperContext: PaperContext | null = null;
+  private needsNewAudioBuffer = true;
 
   constructor(sessionId?: string) {
     super();
@@ -437,6 +438,7 @@ class RTManager extends EventEmitter {
           this.ws = ws;
           this.registerMessageHandlers(ws);
           this.pushSessionUpdate();
+          this.needsNewAudioBuffer = true;
           this.emit("ready");
           resolve();
         });
@@ -625,6 +627,14 @@ class RTManager extends EventEmitter {
     }
 
     const base64Audio = Buffer.from(chunk).toString("base64");
+    if (this.needsNewAudioBuffer) {
+      try {
+        this.ws.send(JSON.stringify({ type: "input_audio_buffer.create" }));
+      } catch (error) {
+        throw new Error(`Failed to create audio buffer: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      this.needsNewAudioBuffer = false;
+    }
     const event = {
       type: "input_audio_buffer.append",
       audio: base64Audio,
@@ -646,6 +656,8 @@ class RTManager extends EventEmitter {
     for (const event of events) {
       this.ws.send(JSON.stringify(event));
     }
+
+    this.needsNewAudioBuffer = true;
   }
 
   async sendText(text: string) {
@@ -680,11 +692,12 @@ class RTManager extends EventEmitter {
     if (!this.ws) {
       return;
     }
-    try { 
+    try {
       this.ws.close();
     } catch {}
     this.ws = null;
     this.emit("close");
+    this.needsNewAudioBuffer = true;
   }
 
   getConfiguration() {
