@@ -1215,11 +1215,20 @@ const StudioPage: React.FC = () => {
     setIsAiSpeaking(false);
   }, [buildConversationPayload, phase, stopMicrophonePipeline, teardownRealtime, uploadMicChunks]);
 
+  const stopSessionRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    stopSessionRef.current = stopSession;
+  }, [stopSession]);
+
   useEffect(() => {
     return () => {
-      stopSession().catch(() => {});
+      const latestStop = stopSessionRef.current;
+      if (latestStop) {
+        latestStop().catch(() => {});
+      }
     };
-  }, [stopSession]);
+  }, []);
 
   const handleSendToVideoStudio = useCallback(async () => {
     try {
