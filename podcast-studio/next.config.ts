@@ -4,6 +4,10 @@ const nextConfig: NextConfig = {
   devIndicators: {
     position: 'bottom-right',
   },
+  // Explicitly set Turbopack root to silence workspace root warnings
+  turbopack: {
+    root: __dirname,
+  },
   async headers() {
     return [
       {
