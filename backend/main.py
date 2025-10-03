@@ -266,10 +266,15 @@ async def fetch_arxiv_papers(topics: List[str], max_results: int = 10) -> List[P
     """Fetch papers from arXiv API for given topics"""
     papers = []
     
+    if not topics:
+        logger.warning("No topics provided for arXiv query")
+        return papers
+    
     try:
         for topic in topics:
             sanitized_topic = sanitize_input(topic)
             if not sanitized_topic:
+                logger.warning(f"Skipping invalid topic: {topic}")
                 continue
                 
             # Build arXiv API query

@@ -243,6 +243,7 @@ const StudioPage: React.FC = () => {
   const isCommittingRef = useRef(false);
   const aiAudioChunksRef = useRef<Uint8Array[]>([]);
   const hostAudioChunksRef = useRef<Uint8Array[]>([]);
+  const MAX_AUDIO_CHUNKS = 10000; // Limit to prevent memory exhaustion (~240MB at 24kHz)
   const audioEventSourceRef = useRef<EventSource | null>(null);
   const aiTranscriptEventSourceRef = useRef<EventSource | null>(null);
   const userTranscriptEventSourceRef = useRef<EventSource | null>(null);
@@ -820,7 +821,14 @@ const StudioPage: React.FC = () => {
         }
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
         micChunkQueueRef.current.push(new Uint8Array(uint8Array));
-        hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
+        
+        // Prevent memory exhaustion by limiting chunk storage
+        if (hostAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+          hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
+        } else {
+          console.warn("[WARN] Maximum audio chunk limit reached. Oldest chunks will be dropped.");
+        }
+        
         if (!hasCapturedAudioRef.current) {
           hasCapturedAudioRef.current = true;
           setHasCapturedAudio(true);
@@ -1072,10 +1080,17 @@ const StudioPage: React.FC = () => {
         return;
       }
       try {
-        const bytes = base64ToUint8Array(base64);
-        aiAudioChunksRef.current.push(bytes);
-        void playAiAudioChunk(bytes);
-        setIsAiSpeaking(true);
+          const bytes = base64ToUint8Array(base64);
+          
+          // Prevent memory exhaustion by limiting AI audio chunk storage
+          if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+            aiAudioChunksRef.current.push(bytes);
+          } else {
+            console.warn("[WARN] Maximum AI audio chunk limit reached. Oldest chunks will be dropped.");
+          }
+          
+          void playAiAudioChunk(bytes);
+          setIsAiSpeaking(true);
       } catch (error) {
         console.error("[ERROR] Failed to process AI audio chunk", error);
       }
