@@ -513,7 +513,7 @@ const StudioPage: React.FC = () => {
       const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
       const activeRef = speaker === "host" ? hostActiveIdRef : aiActiveIdRef;
 
-      if (!activeRef.current && !pendingRef.current && (finalText == null || finalText === "")) {
+      if (!activeRef.current && !pendingRef.current && finalText == null) {
         if (speaker === "host") {
           setIsHostSpeaking(false);
         } else {

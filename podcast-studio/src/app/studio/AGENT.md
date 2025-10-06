@@ -66,7 +66,8 @@ The component is a client component rendered under `SidebarProvider` and `ApiCon
   whenever transcripts update.
 - Final transcript events replace the temporary streaming text for a segment rather than appending to
   the accumulated content. This prevents duplicated phrases when the realtime API sends a full
-  transcript after incremental deltas.
+  transcript after incremental deltas, and the segment is still marked complete even when the final
+  payload resolves to an empty string (e.g., silence or redacted audio).
 
 ## Conversation Storage & Exports
 - `buildConversationPayload` gathers the current conversation, merges AI/user audio recordings via
