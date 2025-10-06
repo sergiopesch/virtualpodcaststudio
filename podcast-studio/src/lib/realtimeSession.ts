@@ -403,6 +403,7 @@ class RTManager extends EventEmitter {
     await new Promise<void>((resolve, reject) => {
       const listeners: Array<[string, (...args: unknown[]) => void]> = [];
       let timer: NodeJS.Timeout | null = null;
+      let settled = false;
 
       const cleanup = () => {
         if (timer) {
@@ -415,12 +416,31 @@ class RTManager extends EventEmitter {
         listeners.length = 0;
       };
 
+      const resolveIfActive = () => {
+        if (settled) {
+          return;
+        }
+        if (this.isActive()) {
+          settled = true;
+          cleanup();
+          resolve();
+        }
+      };
+
       const handleReady = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         resolve();
       };
 
       const handleClose = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         reject(
           new RealtimeSessionError(
@@ -432,6 +452,10 @@ class RTManager extends EventEmitter {
       };
 
       const handleError = (error: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         cleanup();
         if (isRealtimeSessionError(error)) {
           reject(error);
@@ -453,8 +477,14 @@ class RTManager extends EventEmitter {
         this.on(event, handler);
       }
 
-      if (timeoutMs > 0) {
+      resolveIfActive();
+
+      if (!settled && timeoutMs > 0) {
         timer = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
           cleanup();
           reject(
             new RealtimeSessionError(
