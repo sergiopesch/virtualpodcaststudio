@@ -498,6 +498,7 @@ const StudioPage: React.FC = () => {
       if (!delta) {
         return;
       }
+      console.log(`[DEBUG] Appending to ${speaker} segment:`, delta.substring(0, 30));
       ensureSegment(speaker);
       const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
       pendingRef.current += delta;
@@ -615,9 +616,11 @@ const StudioPage: React.FC = () => {
         }
         context = new AudioContextConstructor({ sampleRate: 24000 });
         audioContextRef.current = context;
+        console.log("[INFO] Audio context created for AI playback");
       }
 
       if (context.state === "suspended") {
+        console.log("[INFO] Resuming suspended audio context");
         await context.resume().catch(() => undefined);
       }
 
@@ -642,6 +645,7 @@ const StudioPage: React.FC = () => {
       aiPlaybackSourcesRef.current.push(source);
       aiPlaybackTimeRef.current = startAt + audioBuffer.duration;
       setIsAudioPlaying(true);
+      console.log("[DEBUG] Playing AI audio chunk, duration:", audioBuffer.duration.toFixed(3), "s");
 
       source.onended = () => {
         aiPlaybackSourcesRef.current = aiPlaybackSourcesRef.current.filter((node) => node !== source);
@@ -706,11 +710,15 @@ const StudioPage: React.FC = () => {
 
   const commitAudioTurn = useCallback(async () => {
     if (phase !== "live") {
+      console.log("[DEBUG] Skipping commit - phase is not live:", phase);
       return;
     }
     if (isCommittingRef.current) {
+      console.log("[DEBUG] Skipping commit - already committing");
       return;
     }
+    
+    console.log("[INFO] Committing audio turn", { sessionId });
     isCommittingRef.current = true;
     try {
       const response = await fetch("/api/rt/audio-commit", {
@@ -724,6 +732,7 @@ const StudioPage: React.FC = () => {
         const message = await response.text();
         throw new Error(message || "Failed to commit audio turn");
       }
+      console.log("[INFO] Audio turn committed successfully");
     } catch (err) {
       console.error("[ERROR] Commit turn failed", err);
     } finally {
@@ -860,6 +869,7 @@ const StudioPage: React.FC = () => {
       };
 
       mediaRecorderRef.current = processor;
+      console.log("[INFO] Microphone pipeline started, beginning audio capture");
       micFlushIntervalRef.current = window.setInterval(() => {
         void uploadMicChunks();
       }, 200);
@@ -1033,15 +1043,20 @@ const StudioPage: React.FC = () => {
     transcriptSource.onmessage = (event) => {
       const text = event.data ?? "";
       if (text) {
+        console.log("[DEBUG] AI transcript delta received:", text.substring(0, 50));
         handleAiTranscriptDelta(text);
       }
     };
     transcriptSource.addEventListener("done", () => {
+      console.log("[INFO] AI response complete");
       finalizeSegment("ai");
       setIsAiSpeaking(false);
     });
-    transcriptSource.onerror = (event) => {
-      console.error("[ERROR] AI transcript stream error", event);
+    transcriptSource.onerror = () => {
+      // Only log errors if the stream is in a failed state
+      if (transcriptSource.readyState === EventSource.CLOSED) {
+        console.error("[ERROR] AI transcript stream closed unexpectedly");
+      }
     };
     aiTranscriptEventSourceRef.current = transcriptSource;
     hasAiTranscriptSseRef.current = true;
@@ -1050,25 +1065,32 @@ const StudioPage: React.FC = () => {
     userSource.addEventListener("delta", (event) => {
       const text = (event as MessageEvent).data ?? "";
       if (text) {
+        console.log("[DEBUG] User transcript delta:", text.substring(0, 50));
         handleUserTranscriptionDelta(text);
       }
     });
     userSource.addEventListener("complete", (event) => {
       const text = (event as MessageEvent).data ?? "";
+      console.log("[INFO] User transcript complete:", text);
       handleUserTranscriptionComplete(text);
     });
     userSource.addEventListener("speech-started", () => {
+      console.log("[INFO] User speech started");
       setIsHostSpeaking(true);
     });
     userSource.addEventListener("speech-stopped", () => {
+      console.log("[INFO] Speech stopped detected - uploading chunks and committing turn");
       setIsHostSpeaking(false);
       void (async () => {
         await uploadMicChunks();
         await commitAudioTurn();
       })();
     });
-    userSource.onerror = (event) => {
-      console.error("[ERROR] User transcript stream error", event);
+    userSource.onerror = () => {
+      // Only log errors if the stream is in a failed state
+      if (userSource.readyState === EventSource.CLOSED) {
+        console.error("[ERROR] User transcript stream closed unexpectedly");
+      }
     };
     userTranscriptEventSourceRef.current = userSource;
     hasUserTranscriptSseRef.current = true;
@@ -1080,6 +1102,7 @@ const StudioPage: React.FC = () => {
         return;
       }
       try {
+          console.log("[DEBUG] AI audio chunk received, size:", base64.length);
           const bytes = base64ToUint8Array(base64);
           
           // Prevent memory exhaustion by limiting AI audio chunk storage
@@ -1095,8 +1118,11 @@ const StudioPage: React.FC = () => {
         console.error("[ERROR] Failed to process AI audio chunk", error);
       }
     };
-    audioSource.onerror = (event) => {
-      console.error("[ERROR] AI audio stream error", event);
+    audioSource.onerror = () => {
+      // Only log errors if the stream is in a failed state
+      if (audioSource.readyState === EventSource.CLOSED) {
+        console.error("[ERROR] AI audio stream closed unexpectedly");
+      }
     };
     audioEventSourceRef.current = audioSource;
   }, [
@@ -1130,16 +1156,27 @@ const StudioPage: React.FC = () => {
     setIsAudioPlaying(false);
 
     try {
+      console.log("[INFO] Starting session...");
       await ensureRealtimeSession();
+      console.log("[INFO] Session started successfully");
+      
+      // Brief delay to ensure backend WebSocket is fully established
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      console.log("[INFO] Attaching realtime streams...");
       attachRealtimeStreams();
+      console.log("[INFO] Streams attached");
 
+      console.log("[INFO] Starting microphone pipeline...");
       const micStarted = await startMicrophonePipeline();
       if (!micStarted) {
         throw new Error("Microphone access required to record the conversation.");
       }
+      console.log("[INFO] Microphone started");
 
       setPhase("live");
       setStatusMessage("Live recording started.");
+      console.log("[INFO] Session is now LIVE");
     } catch (err) {
       console.error("[ERROR] Connection failed:", err);
       setStatusMessage(null);
