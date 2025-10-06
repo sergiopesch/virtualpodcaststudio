@@ -19,16 +19,29 @@ export async function POST(req: Request) {
     console.log(`[DEBUG] Sending text message`, { sessionId, textLength: text.length });
     
     const manager = rtSessionManager.getSession(sessionId);
-    const status = manager.getStatus();
-    
+    let status = manager.getStatus();
+
     // Check if session is ready
     if (status !== 'active') {
-      console.log(`[WARN] Session not ready for text message`, { sessionId, status });
-      return NextResponse.json({ 
-        error: 'Session not ready - start session first',
-        status,
-        sessionId 
-      }, { status: 503 });
+      if (status === 'starting') {
+        try {
+          await manager.waitUntilReady();
+          status = manager.getStatus();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Session failed to become ready';
+          console.error(`[ERROR] Session did not reach active state for text message`, { sessionId, error: message });
+          return NextResponse.json({ error: message, sessionId }, { status: 503 });
+        }
+      }
+
+      if (status !== 'active') {
+        console.log(`[WARN] Session not ready for text message`, { sessionId, status });
+        return NextResponse.json({
+          error: 'Session not ready - start session first',
+          status,
+          sessionId
+        }, { status: 503 });
+      }
     }
     
     await manager.sendText(text);
