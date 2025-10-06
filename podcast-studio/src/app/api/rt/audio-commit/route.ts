@@ -14,16 +14,29 @@ export async function POST(req: Request) {
     console.log(`[DEBUG] Committing audio turn`, { sessionId });
     
     const manager = rtSessionManager.getSession(sessionId);
-    const status = manager.getStatus();
-    
+    let status = manager.getStatus();
+
     // Check if session is ready
     if (status !== 'active') {
-      console.log(`[WARN] Session not ready for audio commit`, { sessionId, status });
-      return NextResponse.json({ 
-        error: 'Session not ready - start session first',
-        status,
-        sessionId 
-      }, { status: 503 });
+      if (status === 'starting') {
+        try {
+          await manager.waitUntilReady();
+          status = manager.getStatus();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Session failed to become ready';
+          console.error(`[ERROR] Session did not reach active state for audio commit`, { sessionId, error: message });
+          return NextResponse.json({ error: message, sessionId }, { status: 503 });
+        }
+      }
+
+      if (status !== 'active') {
+        console.log(`[WARN] Session not ready for audio commit`, { sessionId, status });
+        return NextResponse.json({
+          error: 'Session not ready - start session first',
+          status,
+          sessionId
+        }, { status: 503 });
+      }
     }
     
     await manager.commitTurn();

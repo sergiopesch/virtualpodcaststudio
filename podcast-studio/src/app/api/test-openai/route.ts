@@ -46,7 +46,7 @@ export async function GET() {
     const modelList = Array.isArray(models.data) ? models.data : [];
     console.log('[TEST] Found', modelList.length, 'models');
 
-    // Check if gpt-4o-realtime model is available
+    // Check if gpt-realtime-mini model is available
     const realtimeModels = modelList.filter((model) => typeof model.id === 'string' && model.id.includes('realtime'));
     console.log('[TEST] Realtime models found:', realtimeModels.map((model) => model.id));
     

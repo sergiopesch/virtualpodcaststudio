@@ -124,7 +124,7 @@ class RealtimeSession:
         
         try:
             self.openai_ws = await websockets.connect(
-                "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17",
+                "wss://api.openai.com/v1/realtime?model=gpt-realtime-mini",
                 extra_headers=headers
             )
             logger.info("Connected to OpenAI Realtime API")

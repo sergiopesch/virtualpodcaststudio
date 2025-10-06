@@ -386,6 +386,118 @@ class RTManager extends EventEmitter {
     });
   }
 
+  async waitUntilReady(timeoutMs = 5_000): Promise<void> {
+    if (this.isActive()) {
+      return;
+    }
+
+    const status = this.getStatus();
+    if (status === "inactive") {
+      throw new RealtimeSessionError(
+        "INVALID_REQUEST",
+        "Realtime session has not been started yet.",
+        { status: REALTIME_ERROR_STATUS.INVALID_REQUEST },
+      );
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const listeners: Array<[string, (...args: unknown[]) => void]> = [];
+      let timer: NodeJS.Timeout | null = null;
+      let settled = false;
+
+      const cleanup = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        for (const [event, handler] of listeners) {
+          this.off(event, handler);
+        }
+        listeners.length = 0;
+      };
+
+      const resolveIfActive = () => {
+        if (settled) {
+          return;
+        }
+        if (this.isActive()) {
+          settled = true;
+          cleanup();
+          resolve();
+        }
+      };
+
+      const handleReady = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const handleClose = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        reject(
+          new RealtimeSessionError(
+            "WEBSOCKET_ERROR",
+            "Realtime session closed before it became ready.",
+            { status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR },
+          ),
+        );
+      };
+
+      const handleError = (error: unknown) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        if (isRealtimeSessionError(error)) {
+          reject(error);
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Realtime session failed before becoming ready.";
+        reject(
+          new RealtimeSessionError(
+            "UPSTREAM_ERROR",
+            message,
+            { status: REALTIME_ERROR_STATUS.UPSTREAM_ERROR, cause: error },
+          ),
+        );
+      };
+
+      listeners.push(["ready", handleReady], ["close", handleClose], ["error", handleError]);
+      for (const [event, handler] of listeners) {
+        this.on(event, handler);
+      }
+
+      resolveIfActive();
+
+      if (!settled && timeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          reject(
+            new RealtimeSessionError(
+              "TIMEOUT",
+              "Timed out waiting for realtime session to become ready.",
+              { status: REALTIME_ERROR_STATUS.TIMEOUT },
+            ),
+          );
+        }, timeoutMs);
+      }
+    });
+  }
+
   private async establishConnection(): Promise<void> {
     const key = (this.apiKey || "").trim();
     if (!key) {

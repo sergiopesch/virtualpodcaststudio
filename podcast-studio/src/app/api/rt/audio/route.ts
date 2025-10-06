@@ -13,17 +13,33 @@ export async function GET(req: Request) {
     console.log(`[INFO] Starting audio stream`, { sessionId });
     
     const manager = rtSessionManager.getSession(sessionId);
-    
+
     // Don't start session here - it should already be started
-    const status = manager.getStatus();
+    let status = manager.getStatus();
     console.log(`[INFO] Session status for audio stream`, { sessionId, status });
-    
+
     if (status !== 'active') {
-      console.log(`[WARN] Session not active for audio stream`, { sessionId, status });
-      return new Response(`event: error\ndata: Session not active (status: ${status})\n\n`, {
-        status: 503,
-        headers: { "Content-Type": "text/event-stream" }
-      });
+      if (status === 'starting') {
+        try {
+          await manager.waitUntilReady();
+          status = manager.getStatus();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Session failed to become ready';
+          console.error(`[ERROR] Session did not reach active state for audio stream`, { sessionId, error: message });
+          return new Response(`event: error\ndata: ${message}\n\n`, {
+            status: 503,
+            headers: { "Content-Type": "text/event-stream" }
+          });
+        }
+      }
+
+      if (status !== 'active') {
+        console.log(`[WARN] Session not active for audio stream`, { sessionId, status });
+        return new Response(`event: error\ndata: Session not active (status: ${status})\n\n`, {
+          status: 503,
+          headers: { "Content-Type": "text/event-stream" }
+        });
+      }
     }
     
     let cleanup: (() => void) | undefined;
