@@ -512,7 +512,8 @@ const StudioPage: React.FC = () => {
     (speaker: Speaker, finalText?: string) => {
       const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
       const activeRef = speaker === "host" ? hostActiveIdRef : aiActiveIdRef;
-      if (!activeRef.current && !pendingRef.current && !finalText) {
+
+      if (!activeRef.current && !pendingRef.current && finalText == null) {
         if (speaker === "host") {
           setIsHostSpeaking(false);
         } else {
@@ -525,16 +526,23 @@ const StudioPage: React.FC = () => {
         ensureSegment(speaker);
       }
 
-      if (finalText) {
-        pendingRef.current += finalText;
-      }
-
-      drainPending(speaker, true);
-
       const activeId = activeRef.current;
-      if (activeId) {
-        markEntryFinal(activeId);
+      if (!activeId) {
+        pendingRef.current = "";
+        return;
       }
+
+      if (pendingRef.current) {
+        const chunk = pendingRef.current;
+        pendingRef.current = "";
+        updateEntryText(activeId, (value) => value + chunk);
+      }
+
+      if (typeof finalText === "string") {
+        updateEntryText(activeId, () => finalText);
+      }
+
+      markEntryFinal(activeId);
       activeRef.current = null;
       pendingRef.current = "";
       stopTypingInterval(speaker);
@@ -545,7 +553,7 @@ const StudioPage: React.FC = () => {
         setIsAiSpeaking(false);
       }
     },
-    [drainPending, ensureSegment, markEntryFinal, stopTypingInterval],
+    [ensureSegment, markEntryFinal, stopTypingInterval, updateEntryText],
   );
 
   const resetConversation = useCallback(() => {
