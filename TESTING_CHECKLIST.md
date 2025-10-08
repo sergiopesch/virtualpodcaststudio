@@ -53,19 +53,29 @@ Before testing, ensure:
 - [ ] **Expected**: No error messages appear
 - [ ] **Expected**: Microphone indicator shows "streaming in realtime"
 
-**Test**: Microphone Capture
+**Test**: Microphone Capture & Real-time Transcription
 - [ ] With session live, speak into microphone
 - [ ] Say something like "Hello, this is a test"
 - [ ] **Expected**: "Recording your voice…" indicator appears
-- [ ] **Expected**: User transcript appears in feed
+- [ ] **Expected**: User transcript appears in real-time as you speak (streaming effect)
+- [ ] **Expected**: Purple transcript bubble shows your speech
 - [ ] **Expected**: Host audio chunks are being captured (check console logs)
+- [ ] **Expected**: Console shows `[INFO] User speech started - creating transcript segment`
+- [ ] **Expected**: Console shows `[DEBUG] Received realtime event: input_audio_buffer.transcription.delta` and deltas with your words
+- [ ] Stop speaking and wait 1-2 seconds
+- [ ] **Expected**: Console shows `[INFO] Speech stopped detected`
+- [ ] **Expected**: Transcript is finalized and turn commits
 
-**Test**: AI Response
+**Test**: AI Response & Transcription
 - [ ] After speaking, wait for AI response
 - [ ] **Expected**: "Dr. Sarah is responding…" indicator appears
-- [ ] **Expected**: AI transcript appears with typing animation
-- [ ] **Expected**: AI audio plays through speakers
-- [ ] **Expected**: Transcript shows both host and AI messages
+- [ ] **Expected**: AI transcript appears with typing animation (word-by-word effect)
+- [ ] **Expected**: Blue transcript bubble shows AI response
+- [ ] **Expected**: AI audio plays through speakers synchronized with text
+- [ ] **Expected**: Console shows `[DEBUG] Received realtime event: response.text.delta` with response text
+- [ ] **Expected**: Console shows `[DEBUG] AI audio chunk received, size:` logs
+- [ ] **Expected**: Transcript feed shows both host (purple) and AI (blue) messages in order
+- [ ] **Expected**: Timestamps appear for each message
 
 **Test**: Session End
 - [ ] Click "End Session"
@@ -75,6 +85,18 @@ Before testing, ensure:
 - [ ] **Expected**: All resources are cleaned up (check console for cleanup logs)
 
 ### 3. Conversational Flow
+
+**Test**: Transcription Stream Connection
+- [ ] Start a session with browser console open
+- [ ] **Expected**: Console shows:
+  - `[INFO] AI transcript EventSource created, waiting for events...`
+  - `[INFO] AI transcript stream connected successfully`
+  - `[INFO] User transcript EventSource created, waiting for events...`
+  - `[INFO] User transcript stream connected successfully`
+  - `[INFO] AI audio EventSource created, waiting for events...`
+  - `[INFO] AI audio stream connected successfully`
+- [ ] **Expected**: All three EventSource streams are in `readyState: 1` (open) in Network tab
+- [ ] **Expected**: No errors about stream connection failures
 
 **Test**: Multi-Turn Conversation
 - [ ] Start a new session

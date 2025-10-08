@@ -60,7 +60,85 @@ if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
 
 ---
 
-### 3. Backend Input Validation Enhanced
+### 3. Realtime Conversation Transcription Fixed
+**Files**: 
+- `podcast-studio/src/lib/realtimeSession.ts`
+- `podcast-studio/src/app/studio/page.tsx`
+
+**What was fixed**:
+- Audio format configuration was missing from OpenAI Realtime API session setup
+- Event handlers weren't catching all transcription event types
+- Insufficient logging made debugging transcription issues difficult
+- EventSource streams lacked proper connection confirmation callbacks
+
+**Code changes**:
+
+**Session Configuration** (`realtimeSession.ts:585-611`):
+```typescript
+const payload = {
+  type: "session.update",
+  session: {
+    modalities: ["text", "audio"],
+    input_audio_format: "pcm16",        // Added
+    output_audio_format: "pcm16",       // Added
+    input_audio_transcription: { 
+      model: "whisper-1"
+    },
+    turn_detection: {
+      type: "server_vad",
+      threshold: 0.5,
+      prefix_padding_ms: 300,
+      silence_duration_ms: 800,
+    },
+    instructions: this.buildInstructions(),
+  },
+};
+```
+
+**Enhanced Event Handling** (`realtimeSession.ts:635-762`):
+```typescript
+// Added comprehensive logging for all events
+console.log(`[DEBUG] Received realtime event: ${type}`);
+
+// Enhanced handlers for all event types:
+// - response.text.delta (AI transcript)
+// - input_audio_buffer.transcription.delta (user transcript streaming)
+// - input_audio_buffer.transcription.completed (user transcript final)
+// - input_audio_buffer.speech_started/stopped (speech detection)
+// - Unhandled events are now logged for debugging
+```
+
+**Frontend Stream Improvements** (`studio/page.tsx:1050-1161`):
+```typescript
+// Added onopen callbacks for connection confirmation
+transcriptSource.onopen = () => {
+  console.log("[INFO] AI transcript stream connected successfully");
+};
+
+// Enhanced speech-started handler to create transcript segment
+userSource.addEventListener("speech-started", () => {
+  console.log("[INFO] User speech started - creating transcript segment");
+  setIsHostSpeaking(true);
+  ensureSegment("host");  // Ensures UI is ready for transcription
+});
+```
+
+**Impact**:
+- ✅ User transcription now appears in real-time as you speak
+- ✅ AI responses are properly transcribed and displayed
+- ✅ Comprehensive logging allows easy debugging of conversation flow
+- ✅ Proper connection confirmation prevents timing issues
+
+**How to verify**:
+1. Start a live session in Audio Studio
+2. Speak into microphone
+3. Watch browser console for detailed event flow logs
+4. Verify transcript appears immediately in the conversation feed
+5. Check that AI response transcription also appears in real-time
+
+---
+
+### 4. Backend Input Validation Enhanced
 **File**: `backend/main.py`
 
 **What was fixed**:

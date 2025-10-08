@@ -7,8 +7,10 @@ that guides creators from discovery through post-production.
 ## ✨ Key Capabilities
 - **Research Hub** – Accessible topic toggles, deduplicated arXiv results, and a handoff flow that
   persists the selected paper to the Audio Studio.
-- **Audio Studio** – WebRTC microphone capture, realtime responses from OpenAI via custom API routes,
-  live transcripts/audio streams, and export options (transcript download, WAV/ZIP bundle).
+- **Audio Studio** – WebRTC microphone capture with real-time speech-to-text transcription (server VAD), 
+  AI responses from OpenAI Realtime API via custom Server-Sent Events streams, live transcript display
+  with typing animations, synchronized audio playback, and export options (transcript download, 
+  WAV/ZIP bundle with separate host/AI tracks).
 - **Post-production dashboards** – Video Studio timeline editor, Library, Publisher, and Analytics
   pages that consume saved conversations for mock editing/publishing workflows.
 - **Workspace settings** – Sidebar collapse state and API provider/credential management stored via
@@ -128,7 +130,15 @@ list models.
 - **Realtime session errors** – Confirm `/api/rt/start` returns `{ ok: true }` in the network tab and
   that your API key has access to OpenAI Realtime. Missing keys surface as HTTP 400/503 responses.
 - **No audio or transcript** – Check browser microphone permissions and verify SSE endpoints (audio,
-  transcripts, user transcripts) are open in the network inspector.
+  transcripts, user transcripts) are open in the network inspector. Look for EventSource connections
+  in the Network tab with `readyState: 1` (open). Check console logs for
+  `Received realtime event: input_audio_buffer.transcription.delta` while speaking and
+  `response.text.delta` while the AI responds.
+- **Transcription not appearing** – Open browser console and verify you see:
+  - `[INFO] User speech started - creating transcript segment` when you speak
+  - `[DEBUG] User transcript delta received:` with your words as you talk
+  - `[DEBUG] AI transcript delta received:` when AI responds
+  - If these logs are missing, check that the realtime session is active and streams are connected.
 - **Workspace settings not persisting** – Only provider + model selections persist via localStorage.
   API keys intentionally reset on refresh for security.
 

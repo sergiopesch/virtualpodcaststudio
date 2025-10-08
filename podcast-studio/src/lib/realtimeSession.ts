@@ -321,6 +321,7 @@ class RTManager extends EventEmitter {
   private model: string = getProviderDefaultModel("openai");
   private paperContext: PaperContext | null = null;
   private needsNewAudioBuffer = true;
+  private currentTurnPcmChunks: Uint8Array[] = [];
 
   constructor(sessionId?: string) {
     super();
@@ -584,6 +585,10 @@ class RTManager extends EventEmitter {
 
   private pushSessionUpdate() {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("[WARN] Cannot push session update - WebSocket not ready", {
+        hasWs: !!this.ws,
+        readyState: this.ws?.readyState
+      });
       return;
     }
 
@@ -591,7 +596,13 @@ class RTManager extends EventEmitter {
       type: "session.update",
       session: {
         modalities: ["text", "audio"],
-        input_audio_transcription: { model: "whisper-1" },
+        input_audio_format: { type: "pcm16", sample_rate: 24000 },
+        output_audio_format: { type: "pcm16", sample_rate: 24000 },
+        input_audio_transcription: {
+          // Prefer modern realtime-capable transcription model
+          model: "gpt-4o-mini-transcribe",
+        },
+        voice: "alloy",
         turn_detection: {
           type: "server_vad",
           threshold: 0.5,
@@ -602,6 +613,8 @@ class RTManager extends EventEmitter {
       },
     };
 
+    console.log("[INFO] Pushing session update with transcription and VAD enabled");
+    console.log("[DEBUG] Session update payload:", JSON.stringify(payload, null, 2));
     this.ws.send(JSON.stringify(payload));
   }
 
@@ -637,86 +650,162 @@ class RTManager extends EventEmitter {
           return;
         }
 
+        // Log all events for debugging with full payload
+        console.log(`[DEBUG] Received realtime event: ${type}`, JSON.stringify(payload, null, 2));
+
         if (type === "session.created" || type === "session.updated") {
+          console.log("[INFO] Session ready:", type);
           return;
         }
 
-        if (type === "response.output_text.delta" || type === "response.text.delta") {
+        // Handle AI transcript (text response) - check common event types
+        if (
+          type === "response.text.delta" ||
+          type === "response.output_text.delta" ||
+          type === "response.audio_transcript.delta"
+        ) {
           const delta =
             typeof payload.delta === "string"
               ? payload.delta
-              : typeof payload.text === "string"
-                ? payload.text
-                : "";
+              : typeof (payload as { transcript?: string }).transcript === "string"
+                ? (payload as { transcript?: string }).transcript
+                : typeof (payload as { text?: string }).text === "string"
+                  ? (payload as { text?: string }).text
+                  : "";
           if (delta) {
+            console.log(`[DEBUG] AI transcript delta received (${type}): "${delta}"`);
             this.emit("transcript", delta);
           }
           return;
         }
 
-        if (type === "response.output_text.done" || type === "response.done" || type === "response.completed") {
+        if (
+          type === "response.text.done" ||
+          type === "response.output_text.done" ||
+          type === "response.done" ||
+          type === "response.completed" ||
+          type === "response.audio_transcript.done"
+        ) {
+          console.log("[INFO] AI response completed event:", type);
           this.emit("assistant_done");
           return;
         }
 
-        if (type === "response.audio.delta" || type === "response.output_audio.delta") {
+        // Handle AI audio (support common event types)
+        if (
+          type === "response.audio.delta" ||
+          type === "response.output_audio.delta"
+        ) {
           const audioDelta =
-            typeof payload.delta === "string"
-              ? payload.delta
-              : typeof payload.delta === "object" && payload.delta !== null && typeof (payload.delta as { audio?: string }).audio === "string"
-                ? (payload.delta as { audio?: string }).audio ?? ""
-                : typeof payload.audio === "string"
-                  ? payload.audio
-                  : "";
+            typeof (payload as { delta?: string }).delta === "string"
+              ? (payload as { delta?: string }).delta
+              : typeof (payload as { audio?: string }).audio === "string"
+                ? (payload as { audio?: string }).audio
+                : "";
           if (audioDelta) {
-            const bytes = Buffer.from(audioDelta, "base64");
-            this.emit("audio", new Uint8Array(bytes));
+            try {
+              const bytes = Buffer.from(audioDelta, "base64");
+              console.log(`[DEBUG] AI audio delta received (${type}): ${bytes.length} bytes`);
+              this.emit("audio", new Uint8Array(bytes));
+            } catch (error) {
+              console.error(`[ERROR] Failed to decode audio delta:`, error);
+            }
           }
           return;
         }
 
+        // Handle user transcription delta (streaming)
         if (
           type === "conversation.item.input_audio_transcription.delta" ||
-          type === "input_audio_buffer.transcription.delta"
+          type === "conversation.item.input_audio_transcript.delta" ||
+          type === "input_audio_buffer.transcription.delta" ||
+          type === "input_audio_buffer.transcript.delta"
         ) {
           const delta =
-            typeof payload.delta === "string"
-              ? payload.delta
-              : typeof payload.transcript === "string"
-                ? payload.transcript
-                : "";
+            typeof (payload as { delta?: string }).delta === "string"
+              ? (payload as { delta?: string }).delta
+              : typeof (payload as { transcript?: string }).transcript === "string"
+                ? (payload as { transcript?: string }).transcript
+                : typeof (payload as { text?: string }).text === "string"
+                  ? (payload as { text?: string }).text
+                  : "";
           if (delta) {
+            console.log(`[DEBUG] User transcript delta: "${delta}"`);
             this.emit("user_transcript_delta", delta);
           }
           return;
         }
 
+        // Handle user transcription complete
         if (
           type === "conversation.item.input_audio_transcription.completed" ||
-          type === "input_audio_buffer.transcription.completed"
+          type === "conversation.item.input_audio_transcript.completed" ||
+          type === "input_audio_buffer.transcription.completed" ||
+          type === "input_audio_buffer.transcript.completed"
         ) {
           const transcript =
-            typeof payload.transcript === "string"
-              ? payload.transcript
-              : typeof payload.text === "string"
-                ? payload.text
-                : "";
+            typeof (payload as { transcript?: string }).transcript === "string"
+              ? (payload as { transcript?: string }).transcript
+              : typeof (payload as { text?: string }).text === "string"
+                ? (payload as { text?: string }).text
+                : typeof (payload as { content?: string }).content === "string"
+                  ? (payload as { content?: string }).content
+                  : "";
           if (transcript) {
+            console.log(`[INFO] User transcript completed: "${transcript}"`);
             this.emit("user_transcript", transcript);
           }
           return;
         }
 
+        // Fallback: output item payloads may contain text/audio in different shape
+        if (type === "response.output_item.added") {
+          try {
+            const item = (payload as { item?: unknown }).item as Record<string, unknown> | undefined;
+            const rawContent = (item && (item as Record<string, unknown>)["content"]) as unknown;
+            const content = Array.isArray(rawContent) ? (rawContent as Array<Record<string, unknown>>) : [];
+            for (const part of content) {
+              const partType = part?.["type"];
+              if (partType === "output_text") {
+                const text = typeof part?.["text"] === "string" ? (part["text"] as string) : "";
+                if (text) {
+                  console.log(`[DEBUG] AI transcript (output_item.added): "${text}"`);
+                  this.emit("transcript", text);
+                }
+              }
+              if (partType === "output_audio") {
+                const audioB64 = typeof part?.["audio"] === "string" ? (part["audio"] as string) : "";
+                if (audioB64) {
+                  try {
+                    const bytes = Buffer.from(audioB64, "base64");
+                    console.log(`[DEBUG] AI audio (output_item.added): ${bytes.length} bytes`);
+                    this.emit("audio", new Uint8Array(bytes));
+                  } catch (e) {
+                    console.error("[ERROR] Failed to decode output_item audio", e);
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("[WARN] Unable to parse response.output_item.added", e);
+          }
+          return;
+        }
+
+        // Handle speech detection
         if (type === "input_audio_buffer.speech_started") {
+          console.log("[INFO] User speech started");
           this.emit("user_speech_started");
           return;
         }
 
         if (type === "input_audio_buffer.speech_stopped") {
+          console.log("[INFO] User speech stopped");
           this.emit("user_speech_stopped");
           return;
         }
 
+        // Handle errors
         if (type === "response.error" || type === "error") {
           const message =
             typeof payload.error === "string"
@@ -724,10 +813,16 @@ class RTManager extends EventEmitter {
               : typeof payload.message === "string"
                 ? payload.message
                 : "Realtime session error";
+          console.error(`[ERROR] Realtime error: ${message}`);
           this.emit("error", new Error(message));
+          return;
         }
+
+        // Log unhandled events for debugging
+        console.log(`[DEBUG] Unhandled event type: ${type}`, payload);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to parse realtime event";
+        console.error(`[ERROR] Message handler error: ${message}`);
         this.emit("error", new Error(message));
       }
     });
@@ -735,41 +830,87 @@ class RTManager extends EventEmitter {
 
   async appendPcm16(chunk: Uint8Array) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("Session not ready - call start() first");
+      const state = this.ws ? this.ws.readyState : "no websocket";
+      throw new Error(`Session not ready - WebSocket state: ${state}`);
     }
 
     const base64Audio = Buffer.from(chunk).toString("base64");
+    // Accumulate raw PCM chunks locally so we can create a message explicitly on commit
+    // This ensures the model receives the user audio even if buffer semantics change upstream
+    this.currentTurnPcmChunks.push(new Uint8Array(chunk));
+    
     if (this.needsNewAudioBuffer) {
       try {
-        this.ws.send(JSON.stringify({ type: "input_audio_buffer.create" }));
+        console.log("[INFO] Creating new input audio buffer");
+        this.ws.send(JSON.stringify({ type: "input_audio_buffer.clear" }));
+        this.needsNewAudioBuffer = false;
       } catch (error) {
-        throw new Error(`Failed to create audio buffer: ${error instanceof Error ? error.message : String(error)}`);
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`[ERROR] Failed to clear audio buffer: ${msg}`);
+        throw new Error(`Failed to clear audio buffer: ${msg}`);
       }
-      this.needsNewAudioBuffer = false;
     }
+    
     const event = {
       type: "input_audio_buffer.append",
       audio: base64Audio,
     };
 
+    console.log(`[DEBUG] Appending ${chunk.length} bytes (${this.currentTurnPcmChunks.length} chunks accumulated)`);
     this.ws.send(JSON.stringify(event));
   }
 
   async commitTurn() {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("Session not ready - call start() first");
+      const state = this.ws ? this.ws.readyState : "no websocket";
+      throw new Error(`Session not ready - WebSocket state: ${state}`);
     }
 
-    const events = [
-      { type: "input_audio_buffer.commit" },
-      { type: "response.create", response: { modalities: ["text", "audio"] } },
-    ];
-
-    for (const event of events) {
-      this.ws.send(JSON.stringify(event));
+    const chunkCount = this.currentTurnPcmChunks.length;
+    const totalBytes = this.currentTurnPcmChunks.reduce((acc, u8) => acc + u8.length, 0);
+    
+    console.log("[INFO] Committing audio turn", {
+      chunkCount,
+      totalBytes,
+      durationEstimate: `~${(totalBytes / 48000).toFixed(2)}s`
+    });
+    
+    if (chunkCount === 0) {
+      console.warn("[WARN] No audio chunks to commit - skipping turn");
+      return;
     }
-
+    
+    // Commit the audio buffer - this triggers transcription and adds to conversation
+    this.ws.send(JSON.stringify({ 
+      type: "input_audio_buffer.commit" 
+    }));
+    console.log("[DEBUG] Sent input_audio_buffer.commit");
+    
+    // Reset accumulation for next turn
+    this.currentTurnPcmChunks = [];
     this.needsNewAudioBuffer = true;
+    
+    // Small delay to let the commit process before requesting response
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Request AI response with both text and audio
+    const responsePayload = { 
+      type: "response.create",
+      response: { 
+        modalities: ["text", "audio"],
+        instructions: this.buildInstructions(),
+        temperature: 0.8,
+        max_output_tokens: null,
+        audio: {
+          voice: "alloy",
+          format: "pcm16",
+          sample_rate: 24000
+        }
+      }
+    };
+    
+    console.log("[INFO] Requesting AI response", responsePayload);
+    this.ws.send(JSON.stringify(responsePayload));
   }
 
   async sendText(text: string) {

@@ -223,6 +223,7 @@ const StudioPage: React.FC = () => {
 
   const [sessionId] = useState(() => `session_${Date.now()}`);
   const [phase, setPhase] = useState<ConnectionPhase>("idle");
+  const phaseRef = useRef<ConnectionPhase>("idle");
   const [isRecording, setIsRecording] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -253,6 +254,10 @@ const StudioPage: React.FC = () => {
   const latestConversationRef = useRef<StoredConversation | null>(null);
   const aiPlaybackTimeRef = useRef(0);
   const aiPlaybackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const localVadSpeakingRef = useRef(false);
+  const lastVoiceActivityAtRef = useRef<number | null>(null);
+  const VAD_THRESHOLD = 0.02; // simple RMS proxy threshold for voice activity
+  const VAD_SILENCE_MS = 900; // commit after ~0.9s of silence
 
   const entrySequenceRef = useRef(0);
   const hostActiveIdRef = useRef<string | null>(null);
@@ -320,6 +325,10 @@ const StudioPage: React.FC = () => {
         window.clearInterval(interval);
       }
     };
+  }, [phase]);
+
+  useEffect(() => {
+    phaseRef.current = phase;
   }, [phase]);
 
   const scrollToLatest = useCallback(() => {
@@ -677,6 +686,14 @@ const StudioPage: React.FC = () => {
       );
     }
 
+    console.log("[INFO] Starting realtime session with config", {
+      sessionId,
+      provider: activeProvider,
+      model: activeModel,
+      hasPaper: !!currentPaper,
+      paperTitle: currentPaper?.title
+    });
+
     const payload = {
       sessionId,
       provider: activeProvider,
@@ -706,6 +723,7 @@ const StudioPage: React.FC = () => {
       } catch {
         message = await response.text();
       }
+      console.error("[ERROR] Failed to start realtime session", { message, code, status: response.status });
       const error = new Error(message || "Failed to start realtime session.");
       if (code) {
         (error as { code?: string }).code = code;
@@ -713,20 +731,22 @@ const StudioPage: React.FC = () => {
       throw error;
     }
 
-    return response.json().catch(() => ({}));
+    const result = await response.json().catch(() => ({}));
+    console.log("[INFO] Realtime session started successfully", result);
+    return result;
   }, [activeApiKey, activeModel, activeProvider, currentPaper, sessionId, supportsRealtime]);
 
   const commitAudioTurn = useCallback(async () => {
-    if (phase !== "live") {
-      console.log("[DEBUG] Skipping commit - phase is not live:", phase);
-      return;
-    }
     if (isCommittingRef.current) {
       console.log("[DEBUG] Skipping commit - already committing");
       return;
     }
     
-    console.log("[INFO] Committing audio turn", { sessionId });
+    console.log("[INFO] Committing audio turn", { 
+      sessionId,
+      micChunksQueued: micChunkQueueRef.current.length,
+      hostAudioChunks: hostAudioChunksRef.current.length
+    });
     isCommittingRef.current = true;
     try {
       const response = await fetch("/api/rt/audio-commit", {
@@ -738,15 +758,17 @@ const StudioPage: React.FC = () => {
 
       if (!response.ok) {
         const message = await response.text();
+        console.error("[ERROR] Commit failed with status", response.status, message);
         throw new Error(message || "Failed to commit audio turn");
       }
-      console.log("[INFO] Audio turn committed successfully");
+      const result = await response.json();
+      console.log("[INFO] Audio turn committed successfully", result);
     } catch (err) {
       console.error("[ERROR] Commit turn failed", err);
     } finally {
       isCommittingRef.current = false;
     }
-  }, [phase, sessionId]);
+  }, [sessionId]);
 
   const uploadMicChunks = useCallback(async () => {
     if (micChunkQueueRef.current.length === 0 || isUploadingRef.current) {
@@ -831,6 +853,21 @@ const StudioPage: React.FC = () => {
       // Capture mic locally for saving the conversation (no uploads)
       scriptProcessor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
+        // Track simple voice activity using peak magnitude
+        let maxAbs = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          const abs = Math.abs(inputData[i]);
+          if (abs > maxAbs) maxAbs = abs;
+        }
+        if (maxAbs > VAD_THRESHOLD) {
+          localVadSpeakingRef.current = true;
+          lastVoiceActivityAtRef.current = Date.now();
+          setIsHostSpeaking(true);
+          // Ensure we have a segment ready while speaking
+          try {
+            ensureSegment("host");
+          } catch {}
+        }
         const pcm16Buffer = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           const sample = Math.max(-1, Math.min(1, inputData[i]));
@@ -879,7 +916,27 @@ const StudioPage: React.FC = () => {
       mediaRecorderRef.current = processor;
       console.log("[INFO] Microphone pipeline started, beginning audio capture");
       micFlushIntervalRef.current = window.setInterval(() => {
-        void uploadMicChunks();
+        void (async () => {
+          await uploadMicChunks();
+          // Fallback commit if server-side VAD events don't arrive
+          const now = Date.now();
+          if (
+            localVadSpeakingRef.current &&
+            hasCapturedAudioRef.current &&
+            lastVoiceActivityAtRef.current != null &&
+            now - lastVoiceActivityAtRef.current > VAD_SILENCE_MS &&
+            !isCommittingRef.current
+          ) {
+            try {
+              localVadSpeakingRef.current = false;
+              setIsHostSpeaking(false);
+              await uploadMicChunks();
+              await commitAudioTurn();
+            } catch (e) {
+              console.error("[ERROR] Fallback commit failed", e);
+            }
+          }
+        })();
       }, 200);
       setIsRecording(true);
       return true;
@@ -889,7 +946,7 @@ const StudioPage: React.FC = () => {
       setError("Failed to access microphone. Please check permissions.");
       return false;
     }
-  }, [uploadMicChunks]);
+  }, [uploadMicChunks, ensureSegment, commitAudioTurn]);
 
   const teardownRealtime = useCallback(async () => {
     stopMicrophonePipeline();
@@ -1048,6 +1105,12 @@ const StudioPage: React.FC = () => {
     }
 
     const transcriptSource = new EventSource(`/api/rt/transcripts?${params.toString()}`);
+    console.log("[INFO] AI transcript EventSource created, waiting for events...");
+    
+    transcriptSource.onopen = () => {
+      console.log("[INFO] AI transcript stream connected successfully");
+    };
+    
     transcriptSource.onmessage = (event) => {
       const text = event.data ?? "";
       if (text) {
@@ -1056,24 +1119,32 @@ const StudioPage: React.FC = () => {
       }
     };
     transcriptSource.addEventListener("done", () => {
-      console.log("[INFO] AI response complete");
+      console.log("[INFO] AI response complete - finalizing segment");
       finalizeSegment("ai");
       setIsAiSpeaking(false);
     });
-    transcriptSource.onerror = () => {
+    transcriptSource.onerror = (error) => {
       // Only log errors if the stream is in a failed state
       if (transcriptSource.readyState === EventSource.CLOSED) {
-        console.error("[ERROR] AI transcript stream closed unexpectedly");
+        console.error("[ERROR] AI transcript stream closed unexpectedly", error);
+      } else if (transcriptSource.readyState === EventSource.CONNECTING) {
+        console.log("[INFO] AI transcript stream reconnecting...");
       }
     };
     aiTranscriptEventSourceRef.current = transcriptSource;
     hasAiTranscriptSseRef.current = true;
 
     const userSource = new EventSource(`/api/rt/user-transcripts?${params.toString()}`);
+    console.log("[INFO] User transcript EventSource created, waiting for events...");
+    
+    userSource.onopen = () => {
+      console.log("[INFO] User transcript stream connected successfully");
+    };
+    
     userSource.addEventListener("delta", (event) => {
       const text = (event as MessageEvent).data ?? "";
       if (text) {
-        console.log("[DEBUG] User transcript delta:", text.substring(0, 50));
+        console.log("[DEBUG] User transcript delta received:", text.substring(0, 50));
         handleUserTranscriptionDelta(text);
       }
     });
@@ -1083,8 +1154,10 @@ const StudioPage: React.FC = () => {
       handleUserTranscriptionComplete(text);
     });
     userSource.addEventListener("speech-started", () => {
-      console.log("[INFO] User speech started");
+      console.log("[INFO] User speech started - creating transcript segment");
       setIsHostSpeaking(true);
+      // Ensure a segment is ready when user starts speaking
+      ensureSegment("host");
     });
     userSource.addEventListener("speech-stopped", () => {
       console.log("[INFO] Speech stopped detected - uploading chunks and committing turn");
@@ -1094,16 +1167,24 @@ const StudioPage: React.FC = () => {
         await commitAudioTurn();
       })();
     });
-    userSource.onerror = () => {
+    userSource.onerror = (error) => {
       // Only log errors if the stream is in a failed state
       if (userSource.readyState === EventSource.CLOSED) {
-        console.error("[ERROR] User transcript stream closed unexpectedly");
+        console.error("[ERROR] User transcript stream closed unexpectedly", error);
+      } else if (userSource.readyState === EventSource.CONNECTING) {
+        console.log("[INFO] User transcript stream reconnecting...");
       }
     };
     userTranscriptEventSourceRef.current = userSource;
     hasUserTranscriptSseRef.current = true;
 
     const audioSource = new EventSource(`/api/rt/audio?${params.toString()}`);
+    console.log("[INFO] AI audio EventSource created, waiting for events...");
+    
+    audioSource.onopen = () => {
+      console.log("[INFO] AI audio stream connected successfully");
+    };
+    
     audioSource.onmessage = (event) => {
       const base64 = event.data ?? "";
       if (!base64) {
@@ -1126,16 +1207,19 @@ const StudioPage: React.FC = () => {
         console.error("[ERROR] Failed to process AI audio chunk", error);
       }
     };
-    audioSource.onerror = () => {
+    audioSource.onerror = (error) => {
       // Only log errors if the stream is in a failed state
       if (audioSource.readyState === EventSource.CLOSED) {
-        console.error("[ERROR] AI audio stream closed unexpectedly");
+        console.error("[ERROR] AI audio stream closed unexpectedly", error);
+      } else if (audioSource.readyState === EventSource.CONNECTING) {
+        console.log("[INFO] AI audio stream reconnecting...");
       }
     };
     audioEventSourceRef.current = audioSource;
   }, [
     base64ToUint8Array,
     commitAudioTurn,
+    ensureSegment,
     finalizeSegment,
     handleAiTranscriptDelta,
     handleUserTranscriptionComplete,
