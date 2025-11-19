@@ -12,12 +12,13 @@ import {
   Play,
   FileText,
   Clock,
-  Download,
-  MoreHorizontal,
+  Edit,
   Calendar,
   Users,
-  Edit,
   Star,
+  Filter,
+  Plus,
+  MoreVertical
 } from "lucide-react";
 import { defaultSeasons, type Season } from "@/data/library";
 
@@ -26,6 +27,7 @@ export default function Library() {
   const [selectedSeason, setSelectedSeason] = useState<string>("1");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [tab, setTab] = useState<"episodes" | "shows">("episodes");
+  const [activeTab, setActiveTab] = useState<"episodes" | "shows">("episodes");
 
   const [seasons] = useState<Season[]>(defaultSeasons);
 
@@ -41,285 +43,130 @@ export default function Library() {
     }));
   }, [seasons]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "published": return "text-green-600 bg-green-100";
-      case "processing": return "text-yellow-600 bg-yellow-100";
-      case "draft": return "text-gray-600 bg-gray-100";
-      default: return "text-gray-600 bg-gray-100";
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "published": return <Play className="w-3 h-3" />;
-      case "processing": return <Clock className="w-3 h-3" />;
-      case "draft": return <Edit className="w-3 h-3" />;
-      default: return <FileText className="w-3 h-3" />;
-    }
-  };
+  const tabs = [
+    { id: 'episodes', label: 'Episodes', icon: Play },
+    { id: 'shows', label: 'Shows', icon: BookOpen },
+  ] as const;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
+    <div className="min-h-screen bg-background">
       <div className="flex">
-        <Sidebar 
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapsed}
-        />
-        
-        {/* Main Content */}
-        <div className="flex-1">
+        <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
+        <div className="flex flex-1 flex-col min-w-0">
           <Header
             title="Your Library"
-            description="All your shows and episodes, beautifully organized"
-            actions={
-              <div className="bg-gray-100 p-1 rounded-xl flex">
-                <button
-                  className={`px-3 py-1.5 text-sm rounded-lg transition-all ${tab === 'episodes' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
-                  onClick={() => setTab('episodes')}
-                >
-                  Episodes
-                </button>
-                <button
-                  className={`px-3 py-1.5 text-sm rounded-lg transition-all ${tab === 'shows' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
-                  onClick={() => setTab('shows')}
-                >
-                  Shows
-                </button>
-              </div>
-            }
+            description="Manage your generated episodes, research papers, and assets"
           />
-
-          <main id="main-content" tabIndex={-1} className="p-6 space-y-6">
-            {/* Hero Section */}
-            <div className="rounded-2xl p-6 bg-gradient-to-r from-purple-600 via-fuchsia-500 to-pink-500 text-white shadow-xl">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold">Welcome back, Creator</h2>
-                  <p className="text-white/90 text-sm mt-1">Pick up where you left off or explore your catalog.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="secondary" className="bg-white text-gray-900 hover:bg-white/90">New Episode</Button>
-                  <Button size="sm" variant="ghost" className="text-white hover:bg-white/10 border-white/20">Import</Button>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* Season Sidebar */}
-              <div className="lg:col-span-1">
-                <Card className="h-fit">
-                  <CardHeader>
-                    <CardTitle className="flex items-center space-x-2">
-                      <Calendar className="w-5 h-5 text-purple-600" />
-                      <span>Seasons</span>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {seasons.map((season) => (
-                      <div
-                        key={season.id}
-                        className={`p-3 rounded-lg border-2 cursor-pointer transition-all ${
-                          selectedSeason === season.id
-                            ? 'border-purple-300 bg-purple-50'
-                            : 'border-gray-200 hover:border-gray-300 bg-white'
-                        }`}
-                        onClick={() => setSelectedSeason(season.id)}
-                      >
-                        <div className="flex items-start justify-between mb-2">
-                          <h3 className="font-semibold text-sm text-gray-900 line-clamp-2 leading-tight">
-                            {season.title}
-                          </h3>
-                          <div className={`px-2 py-1 rounded-full text-xs ${
-                            season.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                          }`}>
-                            {season.status}
-                          </div>
-                        </div>
-                        <p className="text-xs text-gray-600 line-clamp-2 mb-2">
-                          {season.description}
-                        </p>
-                        <div className="flex items-center justify-between text-xs text-gray-500">
-                          <span>{season.episodeCount} episodes</span>
-                          <span>
-                            Launched {new Date(season.startDate).toLocaleDateString(undefined, { month: "short", year: "numeric" })}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    <Button size="sm" variant="ghost" className="w-full mt-2">
-                      <Calendar className="w-3 h-3 mr-2" />
-                      New Season
+          <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6 lg:p-8 overflow-y-auto flex-1">
+            <div className="max-w-7xl mx-auto space-y-8">
+              {/* Header Section */}
+              <div className="relative overflow-hidden rounded-2xl bg-card border border-border/50 text-foreground p-8 lg:p-10 shadow-apple-card glass-panel">
+                <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                  <div>
+                    <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-2">
+                      Your Library
+                    </h1>
+                    <p className="text-muted-foreground text-lg max-w-xl">
+                      Manage your generated episodes, research papers, and assets.
+                    </p>
+                  </div>
+                  <div className="flex gap-3">
+                    <Button variant="outline" className="border-border/50 shadow-sm">
+                      <Filter className="size-4 mr-2" />
+                      Filter
                     </Button>
-                  </CardContent>
-                </Card>
-
+                    <Button className="shadow-md font-semibold">
+                      <Plus className="size-4 mr-2" />
+                      New Project
+                    </Button>
+                  </div>
+                </div>
               </div>
 
-              {/* Episodes/Shows Area */}
-              <div className="lg:col-span-3">
-                <Card className="h-fit">
-                  <CardHeader className="border-b border-gray-200">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center space-x-2">
-                        <BookOpen className="w-5 h-5 text-blue-600" />
-                        <span>{tab === 'episodes' ? (currentSeason?.title || 'Episodes') : 'Your Shows'}</span>
-                      </CardTitle>
-                      <div className="flex items-center space-x-2">
-                        {tab === 'episodes' && (
-                          <Button size="sm" variant="ghost" onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}>
-                            {viewMode === 'grid' ? <Users className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                    {tab === 'episodes' && currentSeason && (
-                      <p className="text-sm text-gray-600 mt-1">{currentSeason.description}</p>
-                    )}
-                  </CardHeader>
-                  
-                  <CardContent className="p-6">
-                    {tab === 'episodes' && currentSeason && (
-                      <ScrollArea className="h-[600px]">
-                        {viewMode === 'grid' ? (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {currentSeason.episodes.map((episode) => (
-                              <Card key={episode.id} className="border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all">
-                                <CardContent className="p-4">
-                                  <div className="flex items-start space-x-3">
-                                    <div className="flex-shrink-0">
-                                      {episode.featured && <Star className="w-4 h-4 text-yellow-500 mb-1" />}
-                                      <div className="w-12 h-12 bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg flex items-center justify-center">
-                                        <BookOpen className="w-6 h-6 text-purple-600" />
-                                      </div>
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-start justify-between mb-2">
-                                        <h3 className="font-semibold text-sm text-gray-900 line-clamp-2 leading-tight">
-                                          {episode.title}
-                                        </h3>
-                                        <div className={`px-2 py-1 rounded-full text-xs flex items-center space-x-1 ${getStatusColor(episode.status)}`}>
-                                          {getStatusIcon(episode.status)}
-                                          <span>{episode.status}</span>
-                                        </div>
-                                      </div>
-                                      <p className="text-xs text-gray-600 line-clamp-2 mb-3">
-                                        {episode.description}
-                                      </p>
-                                      <div className="flex items-center justify-between text-xs text-gray-500 mb-3">
-                                        <span>{episode.duration}</span>
-                                        <span>{new Date(episode.publishDate).toLocaleDateString()}</span>
-                                      </div>
-                                      <div className="flex items-center space-x-2">
-                                        {episode.status === 'published' && (
-                                          <>
-                                            <Button size="sm" variant="ghost" className="text-xs px-2 py-1">
-                                              <Play className="w-3 h-3 mr-1" />
-                                              Play
-                                            </Button>
-                                            <Button size="sm" variant="ghost" className="text-xs px-2 py-1">
-                                              <Download className="w-3 h-3 mr-1" />
-                                              Download
-                                            </Button>
-                                          </>
-                                        )}
-                                        {episode.status === 'draft' && (
-                                          <Button size="sm" variant="ghost" className="text-xs px-2 py-1">
-                                            <Edit className="w-3 h-3 mr-1" />
-                                            Edit
-                                          </Button>
-                                        )}
-                                        <Button size="sm" variant="ghost" className="text-xs px-2 py-1">
-                                          <MoreHorizontal className="w-3 h-3" />
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            ))}
+              {/* Tabs */}
+              <div className="flex border-b border-border/50">
+                {tabs.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setActiveTab(t.id)}
+                    className={`
+                      flex items-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-all
+                      ${activeTab === t.id
+                        ? 'border-accent text-accent'
+                        : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+                      }
+                    `}
+                  >
+                    <t.icon className={`size-4 ${activeTab === t.id ? 'text-accent' : 'text-muted-foreground'}`} />
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Content Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {/* Example Cards */}
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div
+                    key={i}
+                    className="group glass-panel rounded-2xl border border-border/50 shadow-apple-card hover:shadow-apple-floating transition-all duration-300 overflow-hidden cursor-pointer hover:border-primary/40"
+                  >
+                    <div className="aspect-video bg-secondary/30 relative overflow-hidden">
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        {activeTab === 'episodes' ? (
+                          <div className="size-12 bg-background rounded-full flex items-center justify-center shadow-lg group-hover:scale-110 group-hover:bg-primary group-hover:text-white transition-all">
+                            <Play className="size-5 ml-0.5" />
                           </div>
                         ) : (
-                          <div className="space-y-3">
-                            {currentSeason.episodes.map((episode) => (
-                              <div key={episode.id} className="flex items-center space-x-4 p-3 border border-gray-200 rounded-lg hover:border-gray-300 hover:shadow-sm transition-all">
-                                <div className="flex-shrink-0">
-                                  <div className="w-10 h-10 bg-gradient-to-br from-purple-100 to-pink-100 rounded-lg flex items-center justify-center">
-                                    <BookOpen className="w-5 h-5 text-purple-600" />
-                                  </div>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center space-x-2 mb-1">
-                                    {episode.featured && <Star className="w-3 h-3 text-yellow-500" />}
-                                    <h3 className="font-semibold text-sm text-gray-900 truncate">
-                                      {episode.title}
-                                    </h3>
-                                    <div className={`px-2 py-1 rounded-full text-xs flex items-center space-x-1 ${getStatusColor(episode.status)}`}>
-                                      {getStatusIcon(episode.status)}
-                                      <span>{episode.status}</span>
-                                    </div>
-                                  </div>
-                                  <p className="text-xs text-gray-600 line-clamp-1">
-                                    {episode.description}
-                                  </p>
-                                </div>
-                                <div className="flex items-center space-x-4 text-xs text-gray-500">
-                                  <span>{episode.duration}</span>
-                                  <span>{new Date(episode.publishDate).toLocaleDateString()}</span>
-                                </div>
-                                <div className="flex items-center space-x-1">
-                                  {episode.status === 'published' && (
-                                    <Button size="sm" variant="ghost" className="px-2 py-1">
-                                      <Play className="w-3 h-3" />
-                                    </Button>
-                                  )}
-                                  <Button size="sm" variant="ghost" className="px-2 py-1">
-                                    <MoreHorizontal className="w-3 h-3" />
-                                  </Button>
-                                </div>
-                              </div>
-                            ))}
+                          <div className="size-12 bg-secondary rounded-lg flex items-center justify-center">
+                            <BookOpen className="size-6 text-muted-foreground" />
                           </div>
                         )}
-                      </ScrollArea>
-                    )}
+                      </div>
+                      <div className="absolute top-3 right-3 bg-background/80 backdrop-blur-sm text-foreground text-xs px-2 py-1 rounded-md border border-border/50">
+                        {activeTab === 'episodes' ? '24:12' : 'PDF'}
+                      </div>
+                    </div>
 
-                    {tab === 'shows' && (
-                      <ScrollArea className="h-[600px]">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                          {shows.map((show) => (
-                            <Card key={show.id} className="group border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all overflow-hidden">
-                              <CardContent className="p-0">
-                                <div className="aspect-square w-full bg-gradient-to-br from-purple-200 to-pink-200" />
-                                <div className="p-4">
-                                  <div className="flex items-start justify-between">
-                                    <div>
-                                      <h3 className="font-semibold text-sm text-gray-900 line-clamp-2 leading-tight group-hover:text-purple-700 transition-colors">
-                                        {show.title}
-                                      </h3>
-                                      <p className="text-xs text-gray-600 line-clamp-2 mt-1">{show.description}</p>
-                                    </div>
-                                    <div className={`px-2 py-1 rounded-full text-xs ${show.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                                      {show.status}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center justify-between text-xs text-gray-500 mt-3">
-                                    <span>{show.episodeCount} episodes</span>
-                                    <span>{show.status === "active" ? "New episodes in production" : "Season archived"}</span>
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
+                    <div className="p-5">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                          {activeTab === 'episodes' ? 'Episode' : 'Research'}
+                        </span>
+                        <button className="text-muted-foreground hover:text-foreground transition-colors">
+                          <MoreVertical className="size-4" />
+                        </button>
+                      </div>
+
+                      <h3 className="font-bold text-foreground mb-2 line-clamp-1 group-hover:text-accent transition-colors">
+                        {activeTab === 'episodes'
+                          ? "The Future of Generative AI in 2025"
+                          : "Attention Is All You Need (Vaswani et al.)"}
+                      </h3>
+
+                      <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
+                        An in-depth exploration of how transformer models are revolutionizing the landscape of artificial intelligence...
+                      </p>
+
+                      <div className="flex items-center justify-between pt-4 border-t border-border/50">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Calendar className="size-3" />
+                          <span>2 days ago</span>
+                        </div>
+                        <div className="flex -space-x-2">
+                          {[1, 2].map((u) => (
+                            <div key={u} className="size-6 rounded-full bg-secondary border-2 border-background flex items-center justify-center text-[10px] font-bold text-muted-foreground">
+                              {u === 1 ? 'AI' : 'U'}
+                            </div>
                           ))}
                         </div>
-                      </ScrollArea>
-                    )}
-                  </CardContent>
-                </Card>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
-              </div>
-            </main>
+            </div>
+          </main>
         </div>
       </div>
     </div>

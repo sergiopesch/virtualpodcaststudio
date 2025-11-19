@@ -5,18 +5,13 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { useSidebar } from "@/contexts/sidebar-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   BookOpen,
-  Brain,
   Clock,
-  LineChart,
   Mic,
   Sparkles,
-  TrendingUp,
   Users,
-  BarChart3,
-  ArrowUpRight,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { defaultSeasons, type Episode, type Season } from "@/data/library";
@@ -28,13 +23,6 @@ type OverviewCard = {
   icon: LucideIcon;
   iconBg: string;
   iconColor: string;
-};
-
-type TopicMomentum = {
-  topic: string;
-  sentiment: string;
-  progress: number;
-  delta: string;
 };
 
 type EpisodeHighlight = {
@@ -50,59 +38,32 @@ const overviewCards: OverviewCard[] = [
     value: "1,247",
     change: "+12% vs last week",
     icon: BookOpen,
-    iconBg: "bg-purple-100",
-    iconColor: "text-purple-600",
+    iconBg: "bg-gray-100",
+    iconColor: "text-gray-900",
   },
   {
     label: "Episodes Created",
     value: "89",
     change: "+6 new this month",
     icon: Mic,
-    iconBg: "bg-blue-100",
-    iconColor: "text-blue-600",
+    iconBg: "bg-gray-100",
+    iconColor: "text-gray-900",
   },
   {
     label: "Audience Reach",
     value: "45.2K",
     change: "+3.1% vs last season",
     icon: Users,
-    iconBg: "bg-emerald-100",
-    iconColor: "text-emerald-600",
+    iconBg: "bg-gray-100",
+    iconColor: "text-gray-900",
   },
   {
     label: "Research Hours Saved",
     value: "156",
     change: "Automations saved 42 hrs",
     icon: Clock,
-    iconBg: "bg-amber-100",
-    iconColor: "text-amber-600",
-  },
-];
-
-const topicMomentum: TopicMomentum[] = [
-  {
-    topic: "Artificial Intelligence",
-    sentiment: "High engagement",
-    progress: 86,
-    delta: "+8.2%",
-  },
-  {
-    topic: "Machine Learning",
-    sentiment: "Consistent growth",
-    progress: 78,
-    delta: "+5.4%",
-  },
-  {
-    topic: "Computer Vision",
-    sentiment: "Emerging interest",
-    progress: 64,
-    delta: "+3.7%",
-  },
-  {
-    topic: "Robotics",
-    sentiment: "Steady research",
-    progress: 58,
-    delta: "+2.1%",
+    iconBg: "bg-gray-100",
+    iconColor: "text-gray-900",
   },
 ];
 
@@ -120,8 +81,6 @@ export default function AnalyticsPage() {
   const {
     totalEpisodes,
     publishedEpisodes,
-    processingEpisodes,
-    draftEpisodes,
     totalViews,
     averageViews,
     topEpisodes,
@@ -189,276 +148,269 @@ export default function AnalyticsPage() {
     });
   }, [seasons]);
 
+  const audienceData = engagementTimeline;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
+    <div className="min-h-screen bg-background">
       <div className="flex">
         <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
-
-        <div className="flex-1">
+        <div className="flex flex-1 flex-col min-w-0">
           <Header
             title="Analytics"
-            description="Real-time performance insights across research and production"
-            status={{ label: "Updated 2m ago", color: "green", active: true }}
-            actions={
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" className="text-gray-600">
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  Generate report
-                </Button>
-                <Button variant="gradient" size="sm">
-                  <LineChart className="w-4 h-4 mr-2" />
-                  View trends
-                </Button>
-              </div>
-            }
+            description="Track performance and audience engagement"
           />
-
-          <main id="main-content" tabIndex={-1} className="p-6 space-y-6">
-            <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-              {overviewCards.map((card) => {
-                const Icon = card.icon;
-                return (
-                  <Card key={card.label} className="relative overflow-hidden">
-                    <div className="absolute inset-0 bg-gradient-to-br from-white via-white to-purple-50/40" />
-                    <CardContent className="p-6 relative">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-500">{card.label}</p>
-                          <p className="text-3xl font-semibold text-gray-900 mt-2">{card.value}</p>
-                          <p className="text-xs text-emerald-600 mt-2">{card.change}</p>
+          <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6 lg:p-8 overflow-y-auto flex-1">
+            <div className="max-w-7xl mx-auto space-y-8">
+              {/* Overview Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {overviewCards.map((card) => (
+                  <Card key={card.label} className="glass-panel border-border/50 shadow-apple-card">
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="p-2.5 rounded-lg bg-secondary">
+                          <card.icon className="size-5 text-foreground" />
                         </div>
-                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-inner ${card.iconBg}`}>
-                          <Icon className={`w-6 h-6 ${card.iconColor}`} />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </section>
-
-            <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              <Card className="xl:col-span-2">
-                <CardHeader className="border-b border-gray-200">
-                  <CardTitle className="flex items-center gap-2">
-                    <TrendingUp className="w-5 h-5 text-purple-600" />
-                    Topic momentum
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">Tracking interest growth across your core research themes</p>
-                </CardHeader>
-                <CardContent className="p-6 space-y-5">
-                  {topicMomentum.map((topic) => (
-                    <div key={topic.topic} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900">{topic.topic}</p>
-                          <p className="text-xs text-gray-500">{topic.sentiment}</p>
-                        </div>
-                        <span className="text-xs font-medium text-emerald-600">{topic.delta}</span>
-                      </div>
-                      <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-purple-500 to-pink-500"
-                          style={{ width: `${topic.progress}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="border-b border-gray-200">
-                  <CardTitle className="flex items-center gap-2">
-                    <Brain className="w-5 h-5 text-blue-600" />
-                    Research efficiency
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">Workflow improvements driven by automation</p>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  <div className="rounded-lg border border-gray-200 p-4">
-                    <p className="text-xs uppercase tracking-wide text-gray-500">Active topics</p>
-                    <p className="text-2xl font-semibold text-gray-900 mt-1">24</p>
-                    <p className="text-xs text-emerald-600 mt-1">+5 topics activated this quarter</p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 p-4">
-                    <p className="text-xs uppercase tracking-wide text-gray-500">Average research time</p>
-                    <p className="text-2xl font-semibold text-gray-900 mt-1">38 min</p>
-                    <p className="text-xs text-gray-500 mt-1">↓ 14 minutes compared to manual review</p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 p-4 bg-gradient-to-br from-indigo-50 to-purple-50">
-                    <p className="text-xs uppercase tracking-wide text-purple-600">Automation impact</p>
-                    <p className="text-2xl font-semibold text-purple-700 mt-1">62%</p>
-                    <p className="text-xs text-purple-600 mt-1">Of episodes created directly from AI-assisted research</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </section>
-
-            <section className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-              <Card>
-                <CardHeader className="border-b border-gray-200">
-                  <CardTitle className="flex items-center gap-2">
-                    <BarChart3 className="w-5 h-5 text-emerald-600" />
-                    Production pipeline
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">Snapshot of episode progress across the studio</p>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  <div className="flex items-center justify-between text-sm text-gray-600">
-                    <span>Published episodes</span>
-                    <span className="font-semibold text-gray-900">{publishedEpisodes}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-gray-600">
-                    <span>In production</span>
-                    <span className="font-semibold text-gray-900">{processingEpisodes}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-gray-600">
-                    <span>Draft scripts</span>
-                    <span className="font-semibold text-gray-900">{draftEpisodes}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-gray-600">
-                    <span>Total catalog</span>
-                    <span className="font-semibold text-gray-900">{totalEpisodes}</span>
-                  </div>
-                  <div className="rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 text-white p-4 mt-4">
-                    <p className="text-xs uppercase tracking-wide text-white/80">Conversion rate</p>
-                    <p className="text-2xl font-semibold mt-1">
-                      {totalEpisodes > 0 ? Math.round((publishedEpisodes / totalEpisodes) * 100) : 0}%
-                    </p>
-                    <p className="text-xs text-white/80 mt-1">of researched topics become published episodes</p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="xl:col-span-2">
-                <CardHeader className="border-b border-gray-200">
-                  <CardTitle className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" />
-                    Audience insights
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">Engagement signals aggregated from published content</p>
-                </CardHeader>
-                <CardContent className="p-6">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-xs uppercase tracking-wide text-gray-500">Total views</p>
-                      <p className="text-2xl font-semibold text-gray-900 mt-1">{totalViews.toLocaleString()}</p>
-                      <p className="text-xs text-emerald-600 mt-1">+18.4% audience lift this quarter</p>
-                    </div>
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-xs uppercase tracking-wide text-gray-500">Avg views per episode</p>
-                      <p className="text-2xl font-semibold text-gray-900 mt-1">{averageViews.toLocaleString()}</p>
-                      <p className="text-xs text-gray-500 mt-1">Benchmark: 9.4K per AI-focused episode</p>
-                    </div>
-                    <div className="rounded-lg border border-gray-200 p-4">
-                      <p className="text-xs uppercase tracking-wide text-gray-500">Top performing series</p>
-                      <p className="text-2xl font-semibold text-gray-900 mt-1">Season 1</p>
-                      <p className="text-xs text-gray-500 mt-1">Transformer deep dives keep outperforming</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900 mb-3">Weekly engagement</h3>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {engagementTimeline.map((entry) => (
-                        <div key={entry.week} className="rounded-lg border border-gray-200 p-4">
-                          <p className="text-xs uppercase tracking-wide text-gray-500">{entry.week}</p>
-                          <p className="text-lg font-semibold text-gray-900 mt-1">{entry.audience}</p>
-                          <p className="text-xs text-emerald-600 mt-1">{entry.change}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900 mb-3">Top performing episodes</h3>
-                    <div className="space-y-3">
-                      {topEpisodes.map((episode) => (
-                        <div key={episode.id} className="flex items-center justify-between rounded-lg border border-gray-200 p-4">
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{episode.title}</p>
-                            <p className="text-xs text-gray-500">{episode.seasonTitle}</p>
-                          </div>
-                          <div className="flex items-center text-sm font-semibold text-gray-900">
-                            {episode.views.toLocaleString()} views
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </section>
-
-            <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader className="border-b border-gray-200">
-                  <CardTitle className="flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-purple-600" />
-                    Season health
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">Track completion velocity across your production roadmap</p>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  {activeSeasons.map((season) => (
-                    <div key={season.id} className="rounded-lg border border-gray-200 p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900">{season.title}</p>
-                          <p className="text-xs text-gray-500">{season.description}</p>
-                        </div>
-                        <span className={`text-xs font-medium ${season.status === "active" ? "text-emerald-600" : "text-gray-500"}`}>
-                          {season.status}
+                        <span className="text-xs font-medium text-muted-foreground bg-secondary/50 px-2.5 py-1 rounded-full border border-border/50">
+                          {card.change}
                         </span>
                       </div>
-                      <div className="h-2 rounded-full bg-gray-100 overflow-hidden mt-3">
-                        <div
-                          className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
-                          style={{ width: `${season.completion}%` }}
-                        />
+                      <p className="text-sm text-muted-foreground font-medium uppercase tracking-wide">{card.label}</p>
+                      <h3 className="text-2xl font-bold text-foreground mt-1">{card.value}</h3>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                {/* Audience Insights */}
+                <Card className="xl:col-span-2 glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="border-b border-border/50 bg-background/50 pb-4">
+                    <CardTitle className="flex items-center gap-2 text-foreground text-lg font-semibold">
+                      <Users className="size-5 text-foreground" />
+                      Audience Insights
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground mt-1">Engagement signals from published content</p>
+                  </CardHeader>
+                  <CardContent className="p-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="rounded-lg border border-border/50 p-4 bg-secondary/20">
+                        <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Total Views</p>
+                        <p className="text-2xl font-bold text-foreground mt-2">{totalViews.toLocaleString()}</p>
+                        <p className="text-xs text-accent mt-1 font-medium">+18.4% this quarter</p>
                       </div>
-                      <p className="text-xs text-gray-500 mt-2">
-                        {season.completion}% of planned episodes published · Launched {new Date(season.startDate).toLocaleDateString(undefined, { month: "short", year: "numeric" })}
-                      </p>
+                      <div className="rounded-lg border border-border/50 p-4 bg-secondary/20">
+                        <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Avg Views / EP</p>
+                        <p className="text-2xl font-bold text-foreground mt-2">{averageViews.toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mt-1 font-medium">Top 10% of category</p>
+                      </div>
+                      <div className="rounded-lg border border-border/50 p-4 bg-secondary/20">
+                        <p className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Engagement</p>
+                        <p className="text-2xl font-bold text-foreground mt-2">72%</p>
+                        <p className="text-xs text-accent mt-1 font-medium">+5.2% vs last month</p>
+                      </div>
                     </div>
-                  ))}
+
+                    <div className="mt-6 space-y-3">
+                      <h4 className="text-sm font-semibold text-foreground">Growth Over Time</h4>
+                      <div className="space-y-2">
+                        {audienceData.map((week) => (
+                          <div key={week.week} className="flex items-center justify-between p-3 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
+                            <div className="flex-1">
+                              <p className="text-sm font-medium text-foreground">{week.week}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">Weekly audience</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-bold text-foreground">{week.audience}</span>
+                              <span className="text-xs font-medium text-accent bg-accent/10 px-2 py-1 rounded-md">
+                                {week.change}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Top Episodes */}
+                <Card className="glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="border-b border-border/50 bg-background/50 pb-4">
+                    <CardTitle className="flex items-center gap-2 text-foreground text-base font-semibold">
+                      <Sparkles className="size-4 text-foreground" />
+                      Top Episodes
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <ScrollArea className="h-[400px]">
+                      <div className="p-4 space-y-2">
+                        {topEpisodes.length === 0 ? (
+                          <div className="text-center py-8 text-sm text-muted-foreground">
+                            No published episodes yet
+                          </div>
+                        ) : (
+                          topEpisodes.map((episode, index) => (
+                            <div
+                              key={episode.id}
+                              className="flex items-center gap-3 p-3 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors"
+                            >
+                              <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-bold text-foreground">
+                                {index + 1}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">
+                                  {episode.title}
+                                </p>
+                                <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                  {episode.seasonTitle}
+                                </p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-bold text-foreground">
+                                  {episode.views.toLocaleString()}
+                                </p>
+                                <p className="text-xs text-muted-foreground">views</p>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Active Seasons */}
+              <Card className="glass-panel border-border/50 shadow-apple-card">
+                <CardHeader className="border-b border-border/50 bg-background/50 pb-4">
+                  <CardTitle className="flex items-center gap-2 text-foreground text-lg font-semibold">
+                    <BookOpen className="size-5 text-foreground" />
+                    Active Seasons
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">Production progress and scheduling</p>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {activeSeasons.map((season) => (
+                      <div
+                        key={season.id}
+                        className="rounded-lg border border-border/50 p-4 bg-background hover:bg-secondary/20 transition-colors"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-semibold text-foreground truncate">
+                              {season.title}
+                            </h4>
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                              {season.description}
+                            </p>
+                          </div>
+                          <span className={`ml-2 shrink-0 px-2 py-1 rounded-md text-xs font-medium ${season.status === "active"
+                              ? "bg-accent/10 text-accent"
+                              : season.status === "completed"
+                                ? "bg-secondary text-muted-foreground"
+                                : "bg-secondary/50 text-muted-foreground"
+                            }`}>
+                            {season.status.charAt(0).toUpperCase() + season.status.slice(1)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                          <Clock className="size-3" />
+                          <span>Started {season.startDate}</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-medium text-muted-foreground">Progress</span>
+                            <span className="font-bold text-foreground">{season.completion}%</span>
+                          </div>
+                          <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary rounded-full transition-all duration-500"
+                              style={{ width: `${season.completion}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader className="border-b border-gray-200">
-                  <CardTitle className="flex items-center gap-2">
-                    <ArrowUpRight className="w-5 h-5 text-rose-500" />
-                    Next best actions
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">AI-powered recommendations to sustain growth</p>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  <div className="rounded-lg border border-gray-200 p-4">
-                    <p className="text-sm font-semibold text-gray-900">Double down on transformer content</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Transformer-focused episodes drive 32% more engagement than the catalog average.
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 p-4">
-                    <p className="text-sm font-semibold text-gray-900">Launch interactive research recaps</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Add short recap videos to boost completion rates on long-form discussions.
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 p-4">
-                    <p className="text-sm font-semibold text-gray-900">Schedule robotics spotlight</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Robotics interest is climbing; line up a dedicated mini-series next month.
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </section>
+              {/* Production Stats */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <Card className="glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-foreground text-base font-semibold">
+                      <Clock className="size-4 text-foreground" />
+                      Production Time
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center justify-between py-2 border-b border-border/50">
+                      <span className="text-sm text-muted-foreground">Avg per episode</span>
+                      <span className="text-sm font-bold text-foreground">2.4 hrs</span>
+                    </div>
+                    <div className="flex items-center justify-between py-2 border-b border-border/50">
+                      <span className="text-sm text-muted-foreground">Fastest episode</span>
+                      <span className="text-sm font-bold text-foreground">1.1 hrs</span>
+                    </div>
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-sm text-muted-foreground">Total time</span>
+                      <span className="text-sm font-bold text-foreground">156 hrs</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-foreground text-base font-semibold">
+                      <Mic className="size-4 text-foreground" />
+                      Content Quality
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center justify-between py-2 border-b border-border/50">
+                      <span className="text-sm text-muted-foreground">Avg quality score</span>
+                      <span className="text-sm font-bold text-foreground">94%</span>
+                    </div>
+                    <div className="flex items-center justify-between py-2 border-b border-border/50">
+                      <span className="text-sm text-muted-foreground">Re-recording rate</span>
+                      <span className="text-sm font-bold text-foreground">8%</span>
+                    </div>
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-sm text-muted-foreground">Success rate</span>
+                      <span className="text-sm font-bold text-accent">92%</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-foreground text-base font-semibold">
+                      <Sparkles className="size-4 text-foreground" />
+                      AI Usage
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center justify-between py-2 border-b border-border/50">
+                      <span className="text-sm text-muted-foreground">Papers processed</span>
+                      <span className="text-sm font-bold text-foreground">1,247</span>
+                    </div>
+                    <div className="flex items-center justify-between py-2 border-b border-border/50">
+                      <span className="text-sm text-muted-foreground">Avg tokens/ep</span>
+                      <span className="text-sm font-bold text-foreground">42.3K</span>
+                    </div>
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-sm text-muted-foreground">Model efficiency</span>
+                      <span className="text-sm font-bold text-accent">96%</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
           </main>
         </div>
       </div>
     </div>
   );
 }
+

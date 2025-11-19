@@ -599,8 +599,8 @@ class RTManager extends EventEmitter {
         input_audio_format: { type: "pcm16", sample_rate: 24000 },
         output_audio_format: { type: "pcm16", sample_rate: 24000 },
         input_audio_transcription: {
-          // Prefer modern realtime-capable transcription model
-          model: "gpt-4o-mini-transcribe",
+          // Use whisper-1 for reliable realtime transcription
+          model: "whisper-1",
         },
         voice: "alloy",
         turn_detection: {

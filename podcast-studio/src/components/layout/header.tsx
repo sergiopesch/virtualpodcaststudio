@@ -27,91 +27,80 @@ interface HeaderProps {
   };
 }
 
-export function Header({ 
-  title, 
-  description, 
-  status, 
-  timer, 
-  progress, 
+export function Header({
+  title,
+  description,
+  status,
+  timer,
+  progress,
   actions,
-  search 
+  search
 }: HeaderProps) {
   const getStatusColor = (color: string, active: boolean) => {
     const colors = {
-      green: active ? 'bg-green-500' : 'bg-gray-300',
-      red: active ? 'bg-red-500' : 'bg-gray-300', 
-      yellow: active ? 'bg-yellow-500' : 'bg-gray-300',
-      blue: active ? 'bg-blue-500' : 'bg-gray-300',
-      gray: 'bg-gray-300'
+      green: active ? 'bg-green-500' : 'bg-muted',
+      red: active ? 'bg-red-500' : 'bg-muted',
+      yellow: active ? 'bg-yellow-500' : 'bg-muted',
+      blue: active ? 'bg-blue-500' : 'bg-muted',
+      gray: 'bg-muted'
     };
-    return colors[color as keyof typeof colors] || 'bg-gray-300';
-  };
-
-  const getStatusTextColor = (color: string, active: boolean) => {
-    const colors = {
-      green: active ? 'text-green-600' : 'text-gray-500',
-      red: active ? 'text-red-600' : 'text-gray-500',
-      yellow: active ? 'text-yellow-600' : 'text-gray-500', 
-      blue: active ? 'text-blue-600' : 'text-gray-500',
-      gray: 'text-gray-500'
-    };
-    return colors[color as keyof typeof colors] || 'text-gray-500';
+    return colors[color as keyof typeof colors] || 'bg-muted';
   };
 
   const searchInputId = React.useId();
 
   return (
-    <header className="bg-white/80 backdrop-blur-sm border-b border-gray-200/60 px-6 py-5 sticky top-0 z-10">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-6">
+    <header className="glass-panel border-b border-border/50 px-8 py-4 sticky top-0 z-10">
+      <div className="flex items-center justify-between max-w-7xl mx-auto">
+        <div className="flex items-center gap-8">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-1">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {title}
             </h1>
-            <p className="text-gray-600 text-sm">
+            <p className="text-sm text-muted-foreground mt-0.5">
               {description}
             </p>
           </div>
-          
+
           {status && (
-            <div className="flex items-center space-x-2">
-              <div className={`w-3 h-3 rounded-full ${getStatusColor(status.color, status.active)} animate-pulse`}></div>
-              <span className={`text-sm font-medium ${getStatusTextColor(status.color, status.active)}`}>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary/50 border border-border/50">
+              <div className={`size-2 rounded-full ${getStatusColor(status.color, status.active)} ${status.active ? 'animate-pulse' : ''}`} />
+              <span className="text-xs font-medium text-foreground">
                 {status.label}
               </span>
             </div>
           )}
         </div>
-        
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-4">
           {timer && (
-            <div className="flex items-center space-x-2 text-sm font-mono bg-gray-50 px-3 py-2 rounded-lg">
-              <Clock className="w-4 h-4 text-gray-400" />
-              <span className="text-gray-600">{timer.format(timer.duration)}</span>
+            <div className="flex items-center gap-2 text-sm font-mono bg-secondary px-3 py-1.5 rounded-md border border-border/50">
+              <Clock className="size-3.5 text-muted-foreground" />
+              <span className="text-foreground font-medium">{timer.format(timer.duration)}</span>
             </div>
           )}
-          
+
           {progress && (
-            <div className="flex items-center space-x-3">
-              <div className="w-32 bg-gray-200 rounded-full h-2">
+            <div className="flex items-center gap-3 min-w-[140px]">
+              <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                 <div
-                  className="gradient-primary h-2 rounded-full transition-all duration-500 ease-out"
+                  className="h-full bg-primary rounded-full transition-all duration-500 ease-apple"
                   style={{ width: `${progress.value}%` }}
-                ></div>
+                />
               </div>
-              <span className="text-xs text-gray-500 font-medium">
+              <span className="text-xs text-muted-foreground font-medium w-8 text-right">
                 {progress.label || `${Math.round(progress.value)}%`}
               </span>
             </div>
           )}
-          
+
           {search && (
-            <div className="relative">
+            <div className="relative group">
               <label htmlFor={searchInputId} className="sr-only">
                 {search.placeholder}
               </label>
               <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground group-focus-within:text-foreground transition-colors"
                 aria-hidden="true"
               />
               <input
@@ -119,14 +108,19 @@ export function Header({
                 type="search"
                 inputMode="search"
                 placeholder={search.placeholder}
-                className="w-48 rounded-lg border border-gray-300 bg-white/60 pl-10 pr-4 py-2 text-base text-gray-900 shadow-sm transition focus-visible:border-transparent focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none sm:w-64"
+                className="w-64 rounded-lg border border-border/50 bg-secondary/50 pl-10 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground transition-all focus:bg-background focus:border-primary/20 focus:ring-2 focus:ring-primary/10 outline-none"
                 onChange={(e) => search.onSearch?.(e.target.value)}
               />
             </div>
           )}
 
-          {actions}
-          <UserMenu />
+          <div className="flex items-center gap-2">
+            {actions}
+          </div>
+
+          <div className="pl-4 border-l border-border/50">
+            <UserMenu />
+          </div>
         </div>
       </div>
     </header>

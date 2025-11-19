@@ -171,7 +171,24 @@ export function saveConversationToSession(conversation: StoredConversation) {
   if (!isBrowser) {
     return;
   }
-  sessionStorage.setItem(CONVERSATION_STORAGE_KEY, JSON.stringify(conversation));
+  try {
+    sessionStorage.setItem(CONVERSATION_STORAGE_KEY, JSON.stringify(conversation));
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "QuotaExceededError") {
+      console.warn("[WARN] Session storage quota exceeded. Attempting to save without audio.");
+      try {
+        const fallback: StoredConversation = {
+          ...conversation,
+          audio: { host: null, ai: null },
+        };
+        sessionStorage.setItem(CONVERSATION_STORAGE_KEY, JSON.stringify(fallback));
+      } catch (retryError) {
+        console.error("[ERROR] Failed to save conversation even without audio", retryError);
+      }
+    } else {
+      console.error("[ERROR] Failed to save conversation to session storage", error);
+    }
+  }
 }
 
 export function loadConversationFromSession(): StoredConversation | null {

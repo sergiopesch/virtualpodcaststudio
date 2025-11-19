@@ -32,6 +32,7 @@ import {
   Video,
   Volume2,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface SelectedPaper {
   id: string;
@@ -224,6 +225,7 @@ const StudioPage: React.FC = () => {
   const [sessionId] = useState(() => `session_${Date.now()}`);
   const [phase, setPhase] = useState<ConnectionPhase>("idle");
   const phaseRef = useRef<ConnectionPhase>("idle");
+  const isSessionActiveRef = useRef(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -412,10 +414,10 @@ const StudioPage: React.FC = () => {
       prev.map((entry) =>
         entry.id === id
           ? {
-              ...entry,
-              text: updater(entry.text),
-              updatedAt,
-            }
+            ...entry,
+            text: updater(entry.text),
+            updatedAt,
+          }
           : entry,
       ),
     );
@@ -427,10 +429,10 @@ const StudioPage: React.FC = () => {
       prev.map((entry) =>
         entry.id === id
           ? {
-              ...entry,
-              status: "final",
-              completedAt,
-            }
+            ...entry,
+            status: "final",
+            completedAt,
+          }
           : entry,
       ),
     );
@@ -733,6 +735,7 @@ const StudioPage: React.FC = () => {
 
     const result = await response.json().catch(() => ({}));
     console.log("[INFO] Realtime session started successfully", result);
+    isSessionActiveRef.current = true;
     return result;
   }, [activeApiKey, activeModel, activeProvider, currentPaper, sessionId, supportsRealtime]);
 
@@ -741,8 +744,8 @@ const StudioPage: React.FC = () => {
       console.log("[DEBUG] Skipping commit - already committing");
       return;
     }
-    
-    console.log("[INFO] Committing audio turn", { 
+
+    console.log("[INFO] Committing audio turn", {
       sessionId,
       micChunksQueued: micChunkQueueRef.current.length,
       hostAudioChunks: hostAudioChunksRef.current.length
@@ -771,7 +774,7 @@ const StudioPage: React.FC = () => {
   }, [sessionId]);
 
   const uploadMicChunks = useCallback(async () => {
-    if (micChunkQueueRef.current.length === 0 || isUploadingRef.current) {
+    if (micChunkQueueRef.current.length === 0 || isUploadingRef.current || !isSessionActiveRef.current) {
       return;
     }
 
@@ -796,6 +799,12 @@ const StudioPage: React.FC = () => {
       if (!response.ok) {
         const data = await response.json().catch(async () => ({ error: await response.text() }));
         const message = typeof data.error === "string" && data.error.trim() ? data.error : "Failed to upload audio";
+
+        if (message.includes("Session not ready")) {
+          console.warn("[WARN] Session not ready for audio upload, dropping chunk.");
+          return;
+        }
+
         throw new Error(message);
       }
     } catch (error) {
@@ -866,7 +875,7 @@ const StudioPage: React.FC = () => {
           // Ensure we have a segment ready while speaking
           try {
             ensureSegment("host");
-          } catch {}
+          } catch { }
         }
         const pcm16Buffer = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
@@ -875,14 +884,14 @@ const StudioPage: React.FC = () => {
         }
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
         micChunkQueueRef.current.push(new Uint8Array(uint8Array));
-        
+
         // Prevent memory exhaustion by limiting chunk storage
         if (hostAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
           hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
         } else {
           console.warn("[WARN] Maximum audio chunk limit reached. Oldest chunks will be dropped.");
         }
-        
+
         if (!hasCapturedAudioRef.current) {
           hasCapturedAudioRef.current = true;
           setHasCapturedAudio(true);
@@ -897,13 +906,13 @@ const StudioPage: React.FC = () => {
         stop: () => {
           try {
             source.disconnect();
-          } catch {}
+          } catch { }
           try {
             scriptProcessor.disconnect();
-          } catch {}
+          } catch { }
           try {
             silentGain.disconnect();
-          } catch {}
+          } catch { }
           stream.getTracks().forEach((track) => track.stop());
           if (micFlushIntervalRef.current != null) {
             window.clearInterval(micFlushIntervalRef.current);
@@ -971,14 +980,14 @@ const StudioPage: React.FC = () => {
     aiPlaybackSourcesRef.current.forEach((source) => {
       try {
         source.stop();
-      } catch {}
+      } catch { }
     });
     aiPlaybackSourcesRef.current = [];
     aiPlaybackTimeRef.current = 0;
     setIsAudioPlaying(false);
 
     if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current.close().catch(() => { });
       audioContextRef.current = null;
     }
 
@@ -987,6 +996,7 @@ const StudioPage: React.FC = () => {
     aiAudioChunksRef.current = [];
     isUploadingRef.current = false;
     hasCapturedAudioRef.current = false;
+    isSessionActiveRef.current = false;
     try {
       await fetch("/api/rt/stop", {
         method: "POST",
@@ -1040,21 +1050,21 @@ const StudioPage: React.FC = () => {
       audio: {
         host: hostAudio
           ? {
-              format: "wav",
-              sampleRate,
-              channels: 1,
-              base64: hostAudio.base64,
-              durationSeconds: hostAudio.durationSeconds,
-            }
+            format: "wav",
+            sampleRate,
+            channels: 1,
+            base64: hostAudio.base64,
+            durationSeconds: hostAudio.durationSeconds,
+          }
           : null,
         ai: aiAudio
           ? {
-              format: "wav",
-              sampleRate: 24000,
-              channels: 1,
-              base64: aiAudio.base64,
-              durationSeconds: aiAudio.durationSeconds,
-            }
+            format: "wav",
+            sampleRate: 24000,
+            channels: 1,
+            base64: aiAudio.base64,
+            durationSeconds: aiAudio.durationSeconds,
+          }
           : null,
       },
       durationSeconds,
@@ -1106,15 +1116,15 @@ const StudioPage: React.FC = () => {
 
     const transcriptSource = new EventSource(`/api/rt/transcripts?${params.toString()}`);
     console.log("[INFO] AI transcript EventSource created, waiting for events...");
-    
+
     transcriptSource.onopen = () => {
       console.log("[INFO] AI transcript stream connected successfully");
     };
-    
+
     transcriptSource.onmessage = (event) => {
       const text = event.data ?? "";
       if (text) {
-        console.log("[DEBUG] AI transcript delta received:", text.substring(0, 50));
+        // console.log("[DEBUG] AI transcript delta received:", text.substring(0, 50));
         handleAiTranscriptDelta(text);
       }
     };
@@ -1136,15 +1146,15 @@ const StudioPage: React.FC = () => {
 
     const userSource = new EventSource(`/api/rt/user-transcripts?${params.toString()}`);
     console.log("[INFO] User transcript EventSource created, waiting for events...");
-    
+
     userSource.onopen = () => {
       console.log("[INFO] User transcript stream connected successfully");
     };
-    
+
     userSource.addEventListener("delta", (event) => {
       const text = (event as MessageEvent).data ?? "";
       if (text) {
-        console.log("[DEBUG] User transcript delta received:", text.substring(0, 50));
+        // console.log("[DEBUG] User transcript delta received:", text.substring(0, 50));
         handleUserTranscriptionDelta(text);
       }
     });
@@ -1180,29 +1190,29 @@ const StudioPage: React.FC = () => {
 
     const audioSource = new EventSource(`/api/rt/audio?${params.toString()}`);
     console.log("[INFO] AI audio EventSource created, waiting for events...");
-    
+
     audioSource.onopen = () => {
       console.log("[INFO] AI audio stream connected successfully");
     };
-    
+
     audioSource.onmessage = (event) => {
       const base64 = event.data ?? "";
       if (!base64) {
         return;
       }
       try {
-          console.log("[DEBUG] AI audio chunk received, size:", base64.length);
-          const bytes = base64ToUint8Array(base64);
-          
-          // Prevent memory exhaustion by limiting AI audio chunk storage
-          if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
-            aiAudioChunksRef.current.push(bytes);
-          } else {
-            console.warn("[WARN] Maximum AI audio chunk limit reached. Oldest chunks will be dropped.");
-          }
-          
-          void playAiAudioChunk(bytes);
-          setIsAiSpeaking(true);
+        console.log("[DEBUG] AI audio chunk received, size:", base64.length);
+        const bytes = base64ToUint8Array(base64);
+
+        // Prevent memory exhaustion by limiting AI audio chunk storage
+        if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+          aiAudioChunksRef.current.push(bytes);
+        } else {
+          console.warn("[WARN] Maximum AI audio chunk limit reached. Oldest chunks will be dropped.");
+        }
+
+        void playAiAudioChunk(bytes);
+        setIsAiSpeaking(true);
       } catch (error) {
         console.error("[ERROR] Failed to process AI audio chunk", error);
       }
@@ -1251,10 +1261,10 @@ const StudioPage: React.FC = () => {
       console.log("[INFO] Starting session...");
       await ensureRealtimeSession();
       console.log("[INFO] Session started successfully");
-      
+
       // Brief delay to ensure backend WebSocket is fully established
       await new Promise(resolve => setTimeout(resolve, 300));
-      
+
       console.log("[INFO] Attaching realtime streams...");
       attachRealtimeStreams();
       console.log("[INFO] Streams attached");
@@ -1369,7 +1379,7 @@ const StudioPage: React.FC = () => {
     return () => {
       const latestStop = stopSessionRef.current;
       if (latestStop) {
-        latestStop().catch(() => {});
+        latestStop().catch(() => { });
       }
     };
   }, []);
@@ -1518,7 +1528,7 @@ const StudioPage: React.FC = () => {
   }, [phase]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-purple-50/40">
+    <div className="min-h-screen bg-background">
       <div className="flex">
         <Sidebar
           collapsed={collapsed}
@@ -1526,7 +1536,7 @@ const StudioPage: React.FC = () => {
           isLiveRecording={phase === "live"}
         />
 
-        <div className="flex-1">
+        <div className="flex-1 flex flex-col min-w-0">
           <Header
             title="Audio Studio"
             description="Capture a realtime podcast between you and an AI expert."
@@ -1534,190 +1544,221 @@ const StudioPage: React.FC = () => {
             timer={{ duration: sessionDuration, format: formatTime }}
           />
 
-          <main id="main-content" tabIndex={-1} className="p-6 space-y-6">
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-              <div className="space-y-6">
-                <Card className="shadow-sm border border-slate-200/70 backdrop-blur-sm bg-white/80">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-slate-800">
-                      <FileText className="w-5 h-5 text-purple-500" />
+          <main id="main-content" tabIndex={-1} className="flex-1 p-6 lg:p-8 overflow-y-auto">
+            <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-8 h-full">
+              <div className="space-y-8">
+                {/* Current Paper Card */}
+                <Card className="glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="pb-4 border-b border-border/50">
+                    <CardTitle className="flex items-center gap-3 text-foreground">
+                      <div className="size-8 rounded-full bg-secondary flex items-center justify-center">
+                        <FileText className="size-4 text-foreground" />
+                      </div>
                       Current Paper
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4 text-sm text-slate-600">
+                  <CardContent className="pt-6 space-y-6">
                     {paperLoadError ? (
-                      <div className="rounded-lg border border-red-200 bg-red-50/80 p-3 text-red-600">
+                      <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-destructive text-sm font-medium">
                         {paperLoadError}
                       </div>
                     ) : currentPaper ? (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <h3 className="font-semibold text-slate-900 leading-tight">
+                      <div className="space-y-6">
+                        <div className="space-y-3">
+                          <h3 className="font-semibold text-lg text-foreground leading-tight">
                             {currentPaper.title}
                           </h3>
-                          <p className="text-xs uppercase tracking-wide text-slate-500">
-                            Published {currentPaper.formattedPublishedDate ?? "(date unavailable)"}
-                          </p>
-                          <p className="text-sm text-slate-600">
+                          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                            <span className="bg-secondary px-2 py-1 rounded-md">
+                              Published {currentPaper.formattedPublishedDate ?? "Unknown"}
+                            </span>
+                          </div>
+                          <p className="text-sm text-muted-foreground font-medium">
                             {currentPaper.primaryAuthor
                               ? `${currentPaper.primaryAuthor}${currentPaper.hasAdditionalAuthors ? " et al." : ""}`
                               : currentPaper.authors}
                           </p>
                         </div>
-                        <p className="leading-relaxed text-slate-600/90">
+                        <p className="text-sm leading-relaxed text-muted-foreground/90 line-clamp-4">
                           {currentPaper.abstract}
                         </p>
-                        <div className="flex flex-col gap-2">
+                        <div>
                           {currentPaper.arxiv_url ? (
-                            <Button asChild variant="outline" className="w-full">
+                            <Button asChild variant="outline" className="w-full justify-center h-10 rounded-xl border-border/50 hover:bg-secondary hover:text-foreground transition-all">
                               <a
                                 href={currentPaper.arxiv_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >
-                                <FileText className="mr-2 h-4 w-4" />
+                                <FileText className="mr-2 size-4" />
                                 View on arXiv
                               </a>
                             </Button>
                           ) : (
-                            <Button variant="outline" className="w-full" disabled>
-                              <FileText className="mr-2 h-4 w-4" />
+                            <Button variant="outline" className="w-full justify-center h-10 rounded-xl" disabled>
+                              <FileText className="mr-2 size-4" />
                               View on arXiv
                             </Button>
                           )}
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-2 text-slate-600">
-                        <p className="font-medium text-slate-800">
-                          Select a paper from the Research Hub to pre-load conversation context.
-                        </p>
-                        <p className="text-sm text-slate-500">
-                          Paper details populate automatically when you start the studio from a selected card.
-                        </p>
+                      <div className="space-y-3 text-center py-6">
+                        <div className="size-12 rounded-full bg-secondary mx-auto flex items-center justify-center">
+                          <FileText className="size-6 text-muted-foreground" />
+                        </div>
+                        <div className="space-y-1">
+                          <p className="font-medium text-foreground">No paper selected</p>
+                          <p className="text-sm text-muted-foreground">
+                            Select a paper from the Research Hub to start.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </CardContent>
                 </Card>
 
-                <Card className="shadow-sm border border-slate-200/70 backdrop-blur-sm bg-white/80">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2 text-slate-800">
-                      <Mic className="w-5 h-5 text-red-500" />
+                {/* Session Controls Card */}
+                <Card className="glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="pb-4 border-b border-border/50">
+                    <CardTitle className="flex items-center gap-3 text-foreground">
+                      <div className="size-8 rounded-full bg-secondary flex items-center justify-center">
+                        <Mic className="size-4 text-foreground" />
+                      </div>
                       Session Controls
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="pt-6 space-y-6">
                     {error && (
-                      <div className="rounded-lg border border-red-200 bg-red-50/80 p-3 text-sm text-red-600">
+                      <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive font-medium">
                         {error}
                       </div>
                     )}
                     {!error && statusMessage && (
-                      <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 p-3 text-sm text-emerald-600">
+                      <div className="rounded-xl border border-accent/20 bg-accent/5 p-4 text-sm text-accent font-medium">
                         {statusMessage}
                       </div>
                     )}
 
-                    <div className="flex flex-col gap-2">
+                    <div className="space-y-3">
                       <Button
                         onClick={startSession}
                         disabled={phase === "preparing" || phase === "live"}
                         size="lg"
-                        className="w-full justify-center"
+                        className={cn(
+                          "w-full justify-center h-12 rounded-xl text-base font-semibold shadow-lg transition-all duration-300",
+                          phase === "live" ? "opacity-50 cursor-not-allowed" : "hover:scale-[1.02]"
+                        )}
                       >
-                        <Mic className="mr-2 h-4 w-4" />
-                        {phase === "preparing" ? "Connecting…" : "Start Live Session"}
+                        <Mic className="mr-2 size-5" />
+                        {phase === "preparing" ? "Connecting..." : "Start Live Session"}
                       </Button>
                       <Button
                         onClick={stopSession}
                         disabled={phase !== "live"}
-                        variant="outline"
+                        variant="destructive"
                         size="lg"
-                        className="w-full justify-center"
+                        className="w-full justify-center h-12 rounded-xl text-base font-semibold shadow-sm hover:bg-destructive/90 transition-all"
                       >
-                        <MicOff className="mr-2 h-4 w-4" />
+                        <MicOff className="mr-2 size-5" />
                         End Session
                       </Button>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2">
-                      <Button variant="ghost" className="justify-start" onClick={handleExportTranscript}>
-                        <FileText className="mr-2 h-4 w-4" />
+                    <div className="space-y-2 pt-2">
+                      <Button variant="ghost" className="w-full justify-start h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary" onClick={handleExportTranscript}>
+                        <FileText className="mr-2 size-4" />
                         Export Transcript
                       </Button>
-                      <Button variant="ghost" className="justify-start" onClick={handleDownloadAudio} disabled={!hasCapturedAudio}>
-                        <Download className="mr-2 h-4 w-4" />
+                      <Button variant="ghost" className="w-full justify-start h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary" onClick={handleDownloadAudio} disabled={!hasCapturedAudio}>
+                        <Download className="mr-2 size-4" />
                         Download Audio Bundle
                       </Button>
-                      <Button variant="ghost" className="justify-start" onClick={handleSendToVideoStudio}>
-                        <Video className="mr-2 h-4 w-4" />
+                      <Button variant="ghost" className="w-full justify-start h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary" onClick={handleSendToVideoStudio}>
+                        <Video className="mr-2 size-4" />
                         Send to Video Studio
                       </Button>
                     </div>
 
-                    <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-xs text-slate-500 space-y-1">
-                      <p className="flex items-center gap-2 font-medium text-slate-700">
-                        <Radio className="h-3.5 w-3.5 text-emerald-500" />
-                        Live session tips
+                    <div className="rounded-xl border border-border/50 bg-secondary/30 p-4 space-y-2">
+                      <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                        <Radio className="size-4 text-primary" />
+                        Live Session Tips
                       </p>
-                      <ul className="list-disc pl-5 space-y-1">
-                        <li>Speak naturally and pause briefly when finished—turn detection is automatic.</li>
-                        <li>The feed scrolls to the latest utterance so you never lose the live moment.</li>
-                        <li>Download or hand off the conversation after ending the session.</li>
+                      <ul className="space-y-1.5">
+                        <li className="text-xs text-muted-foreground flex items-start gap-2">
+                          <span className="block size-1 rounded-full bg-muted-foreground mt-1.5" />
+                          Speak naturally and pause briefly when finished.
+                        </li>
+                        <li className="text-xs text-muted-foreground flex items-start gap-2">
+                          <span className="block size-1 rounded-full bg-muted-foreground mt-1.5" />
+                          The feed scrolls automatically to the latest message.
+                        </li>
+                        <li className="text-xs text-muted-foreground flex items-start gap-2">
+                          <span className="block size-1 rounded-full bg-muted-foreground mt-1.5" />
+                          Download or hand off the conversation after ending.
+                        </li>
                       </ul>
                     </div>
                   </CardContent>
                 </Card>
               </div>
 
-              <div className="xl:col-span-2">
-                <Card className="h-[640px] flex flex-col overflow-hidden shadow-lg border border-slate-200/70 backdrop-blur bg-white/70">
-                  <CardHeader className="border-b border-slate-200/60 bg-white/70">
+              <div className="xl:col-span-2 h-full min-h-[600px]">
+                <Card className="h-full flex flex-col overflow-hidden glass-panel border-border/50 shadow-apple-card">
+                  <CardHeader className="border-b border-border/50 bg-white/50 backdrop-blur-md py-4">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-2 text-slate-800">
-                        <Sparkles className="h-5 w-5 text-indigo-500" />
+                      <CardTitle className="flex items-center gap-3 text-foreground">
+                        <div className="size-8 rounded-full bg-secondary flex items-center justify-center">
+                          <Sparkles className="size-4 text-foreground" />
+                        </div>
                         Live Conversation Feed
                       </CardTitle>
-                      <div className="flex items-center gap-4 text-xs text-slate-500">
-                        <div className="flex items-center gap-1">
-                          <span className="inline-flex h-2 w-2 rounded-full bg-purple-500" /> Host
+                      <div className="flex items-center gap-4 text-xs font-medium text-muted-foreground bg-secondary/50 px-3 py-1.5 rounded-full border border-border/50">
+                        <div className="flex items-center gap-1.5">
+                          <span className="size-2 rounded-full bg-foreground" /> Host
                         </div>
-                        <div className="flex items-center gap-1">
-                          <span className="inline-flex h-2 w-2 rounded-full bg-blue-500" /> Dr. Sarah
+                        <div className="flex items-center gap-1.5">
+                          <span className="size-2 rounded-full bg-primary" /> Dr. Sarah
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Volume2 className="h-3 w-3" />
+                        <div className="w-px h-3 bg-border" />
+                        <div className="flex items-center gap-1.5">
+                          <Volume2 className="size-3.5" />
                           {phase === "live"
                             ? isAudioPlaying
-                              ? "AI audio streaming"
-                              : "Waiting for response"
-                            : "Session idle"}
+                              ? <span className="text-accent animate-pulse">AI Speaking</span>
+                              : "Waiting..."
+                            : "Idle"}
                         </div>
                       </div>
                     </div>
                   </CardHeader>
 
-                  <CardContent className="flex-1 flex flex-col p-0">
-                    <ScrollArea ref={transcriptScrollRef} className="flex-1 px-6 py-4">
-                      <div className="space-y-4">
+                  <CardContent className="flex-1 flex flex-col p-0 relative bg-gradient-to-b from-transparent to-secondary/10">
+                    <ScrollArea ref={transcriptScrollRef} className="flex-1 px-8 py-6">
+                      <div className="space-y-6 max-w-4xl mx-auto">
                         {entries.length === 0 && phase !== "live" && (
-                          <div className="text-center text-slate-500 py-16 space-y-3">
-                            <Brain className="mx-auto h-12 w-12 opacity-50" />
-                            <p className="font-medium text-slate-700">Ready to capture your next conversation.</p>
-                            <p className="text-sm text-slate-500">Start the session and speak naturally—the transcript will appear instantly.</p>
+                          <div className="text-center py-32 space-y-6">
+                            <div className="size-24 rounded-full bg-secondary mx-auto flex items-center justify-center shadow-inner">
+                              <Brain className="size-12 text-muted-foreground/50" />
+                            </div>
+                            <div className="space-y-2">
+                              <h3 className="text-xl font-semibold text-foreground">Ready to capture</h3>
+                              <p className="text-muted-foreground max-w-sm mx-auto">
+                                Start the session and speak naturally. The transcript will appear here instantly.
+                              </p>
+                            </div>
                           </div>
                         )}
 
                         {entries.map((entry) => {
                           const isHost = entry.speaker === "host";
                           const bubbleClass = isHost
-                            ? "bg-gradient-to-r from-purple-50 to-purple-100/60 border border-purple-200/70"
-                            : "bg-gradient-to-r from-blue-50 to-blue-100/60 border border-blue-200/70";
-                          const avatarClass = isHost
-                            ? "bg-purple-100 text-purple-600 border border-purple-200"
-                            : "bg-blue-100 text-blue-600 border border-blue-200";
-                          const speakerLabel = isHost ? "Host (You)" : "Dr. Sarah";
+                            ? "bg-foreground text-background rounded-tr-sm shadow-md"
+                            : "bg-white border border-border/50 text-foreground rounded-tl-sm shadow-sm";
+
+                          const containerClass = isHost ? "flex-row-reverse" : "flex-row";
+
                           const timestamp = new Date(entry.startedAt).toLocaleTimeString("en-US", {
                             hour: "2-digit",
                             minute: "2-digit",
@@ -1726,21 +1767,32 @@ const StudioPage: React.FC = () => {
                           });
 
                           return (
-                            <div key={entry.id} className="flex items-start gap-3">
-                              <div className={`flex h-11 w-11 items-center justify-center rounded-xl shadow-sm ${avatarClass}`}>
-                                {isHost ? <Headphones className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
+                            <div key={entry.id} className={cn("flex items-end gap-3 group", containerClass)}>
+                              <div className={cn(
+                                "size-8 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1",
+                                isHost ? "bg-foreground text-background" : "bg-primary text-primary-foreground"
+                              )}>
+                                {isHost ? <Headphones className="size-4" /> : <Sparkles className="size-4" />}
                               </div>
-                              <div className="flex-1 min-w-0 space-y-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-semibold text-slate-800">{speakerLabel}</span>
-                                  <span className="text-xs font-mono text-slate-500 bg-white/70 border border-slate-200 px-2 py-0.5 rounded-md">
+
+                              <div className={cn("flex flex-col max-w-[80%]", isHost ? "items-end" : "items-start")}>
+                                <div className="flex items-center gap-2 mb-1 px-1">
+                                  <span className="text-xs font-semibold text-muted-foreground">
+                                    {isHost ? "You" : "Dr. Sarah"}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground/70 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
                                     {timestamp}
                                   </span>
                                 </div>
-                                <div className={`rounded-2xl px-4 py-3 text-sm text-slate-800 shadow-sm ${bubbleClass}`}>
-                                  <span>{entry.text || (entry.status === "streaming" ? "…" : "")}</span>
+
+                                <div className={cn("px-5 py-3.5 text-sm leading-relaxed rounded-2xl transition-all duration-200", bubbleClass)}>
+                                  <span>{entry.text || (entry.status === "streaming" ? "" : "")}</span>
                                   {entry.status === "streaming" && (
-                                    <span className="ml-1 inline-block h-3 w-1.5 animate-pulse rounded bg-slate-500/70 align-middle" />
+                                    <span className="inline-flex gap-1 ml-1 items-center">
+                                      <span className="size-1 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                      <span className="size-1 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                      <span className="size-1 bg-current rounded-full animate-bounce" />
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -1749,30 +1801,35 @@ const StudioPage: React.FC = () => {
                         })}
 
                         {phase === "live" && (
-                          <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-700 shadow-sm">
-                            <Radio className="h-4 w-4" />
-                            <span>
-                              {isHostSpeaking
-                                ? "Recording your voice…"
-                                : isAiSpeaking
-                                  ? "Dr. Sarah is responding…"
-                                  : "Session is listening for the next speaker."}
-                            </span>
+                          <div className="flex justify-center py-4 sticky bottom-0 z-10">
+                            <div className="flex items-center gap-3 rounded-full border border-border/50 bg-white/90 backdrop-blur-md px-5 py-2.5 text-sm font-medium text-foreground shadow-lg animate-in slide-in-from-bottom-4 fade-in duration-300">
+                              <div className="relative flex size-3">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full size-3 bg-red-500"></span>
+                              </div>
+                              <span>
+                                {isHostSpeaking
+                                  ? "Listening..."
+                                  : isAiSpeaking
+                                    ? "Dr. Sarah is speaking..."
+                                    : "Listening..."}
+                              </span>
+                            </div>
                           </div>
                         )}
                       </div>
                     </ScrollArea>
 
-                    <div className="border-t border-slate-200/70 bg-white/70 px-6 py-4 flex items-center justify-between text-xs text-slate-500">
+                    <div className="border-t border-border/50 bg-white/50 backdrop-blur-md px-6 py-3 flex items-center justify-between text-xs font-medium text-muted-foreground">
                       <div className="flex items-center gap-2">
-                        <Volume2 className="h-4 w-4" />
+                        <div className={cn("size-2 rounded-full", isRecording ? "bg-red-500 animate-pulse" : "bg-muted-foreground")} />
                         {phase === "live"
                           ? isRecording
-                            ? "Microphone streaming in realtime"
-                            : "Microphone idle"
-                          : "Session idle"}
+                            ? "Microphone Active"
+                            : "Microphone Idle"
+                          : "Session Idle"}
                       </div>
-                      <div className="font-mono text-sm text-slate-600">
+                      <div className="font-mono bg-secondary/50 px-2 py-1 rounded-md border border-border/50">
                         {formatTime(sessionDuration)}
                       </div>
                     </div>
@@ -1788,4 +1845,5 @@ const StudioPage: React.FC = () => {
 };
 
 export default StudioPage;
+
 

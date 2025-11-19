@@ -40,6 +40,7 @@ const STORAGE_KEY = "vps:llmConfig";
 interface StoredPreferences {
   activeProvider: LlmProvider;
   models?: Partial<Record<LlmProvider, string>>;
+  apiKeys?: Partial<Record<LlmProvider, string>>;
 }
 
 const defaultPreferences: StoredPreferences = {
@@ -76,6 +77,12 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
           activeProvider: normalizeProvider(parsed.activeProvider),
           models: parsed.models ?? {},
         });
+        if (parsed.apiKeys) {
+          setApiKeys((prev) => ({
+            ...prev,
+            ...parsed.apiKeys,
+          }));
+        }
       }
     } catch (error) {
       console.error("Failed to hydrate API configuration", error);
@@ -90,7 +97,10 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     }
 
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        ...preferences,
+        apiKeys,
+      }));
     } catch (error) {
       console.error("Failed to persist API configuration", error);
     }

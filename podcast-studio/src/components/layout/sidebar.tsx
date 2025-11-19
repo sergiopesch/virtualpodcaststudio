@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface SidebarProps {
   collapsed?: boolean;
@@ -83,31 +84,32 @@ export function Sidebar({
   const pathname = usePathname();
 
   const getBadgeColor = (badge: string) => {
-    if (badge === "LIVE") return "bg-red-500 text-white";
-    if (badge === "12") return "bg-blue-500 text-white";
-    return "bg-gray-500 text-white";
+    if (badge === "LIVE") return "bg-destructive text-destructive-foreground";
+    if (badge === "12") return "bg-primary text-primary-foreground";
+    return "bg-muted-foreground/20 text-muted-foreground";
   };
 
   return (
     <div
-      className={`${collapsed ? "w-16" : "w-72 md:w-64 lg:w-72"} bg-white border-r border-gray-200/60 min-h-screen flex-shrink-0 relative transition-all duration-300 ease-in-out flex flex-col`}
+      className={cn(
+        "glass-sidebar h-screen sticky top-0 flex flex-col transition-all duration-300 ease-apple z-20",
+        collapsed ? "w-20" : "w-72"
+      )}
     >
-      <div className="absolute inset-0 bg-gradient-to-b from-purple-50/30 via-transparent to-blue-50/20 pointer-events-none" />
-
-      <div className={`${collapsed ? "p-2" : "p-4"} border-b border-gray-200/60 flex-shrink-0 relative z-10`}>
-        <div className={`flex items-center ${collapsed ? "flex-col space-y-2" : "justify-between"}`}>
+      <div className={cn("p-6 flex-shrink-0", collapsed ? "px-4" : "")}>
+        <div className={cn("flex items-center", collapsed ? "flex-col gap-4" : "justify-between")}>
           {!collapsed && (
-            <Link href="/" className="group cursor-pointer touch-manipulation">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center shadow-glow group-hover:shadow-glow-lg transition-all duration-300">
-                  <Headphones className="w-6 h-6 text-white" />
+            <Link href="/" className="group cursor-pointer focus-visible:ring-2 focus-visible:ring-ring rounded-lg">
+              <div className="flex items-center gap-3">
+                <div className="size-10 bg-primary rounded-xl flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform duration-300">
+                  <Headphones className="size-5 text-primary-foreground" />
                 </div>
                 <div>
-                  <h1 className="text-lg font-bold text-gray-900 group-hover:text-purple-700 transition-colors">
+                  <h1 className="text-lg font-semibold tracking-tight text-foreground">
                     Podcast Studio
                   </h1>
-                  <p className="text-xs text-gray-500 group-hover:text-purple-500 transition-colors">
-                    AI-Powered Research
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Research Hub
                   </p>
                 </div>
               </div>
@@ -115,24 +117,24 @@ export function Sidebar({
           )}
 
           {collapsed && (
-            <div className="w-10 h-10 gradient-primary rounded-xl flex items-center justify-center shadow-glow">
-              <Headphones className="w-6 h-6 text-white" />
+            <div className="size-10 bg-primary rounded-xl flex items-center justify-center shadow-lg">
+              <Headphones className="size-5 text-primary-foreground" />
             </div>
           )}
 
           <Button
             variant="ghost"
-            size="sm"
+            size="icon"
             onClick={onToggleCollapse}
-            className="text-gray-500 hover:text-purple-600 hover:bg-purple-50"
+            className="text-muted-foreground hover:text-foreground"
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {collapsed ? <Menu className="w-4 h-4" /> : <X className="w-4 h-4" />}
+            {collapsed ? <Menu className="size-5" /> : <X className="size-5" />}
           </Button>
         </div>
       </div>
 
-      <nav className={`flex-1 ${collapsed ? "p-2" : "p-4"} space-y-1 overflow-y-auto relative z-10`}>
+      <nav className="flex-1 px-4 space-y-1 overflow-y-auto py-2">
         {navigation.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href;
@@ -143,50 +145,51 @@ export function Sidebar({
               key={item.href}
               href={item.href}
               title={collapsed ? item.name : undefined}
-              className={`group flex items-center touch-manipulation ${collapsed ? "justify-center px-2 py-3" : "space-x-3 px-3 py-2.5"} rounded-lg transition-all duration-200 relative ${
+              className={cn(
+                "group flex items-center rounded-xl transition-all duration-200 ease-apple relative",
+                collapsed ? "justify-center p-3" : "px-4 py-3 gap-3",
                 isActive
-                  ? "bg-gradient-to-r from-purple-600 to-purple-700 text-white shadow-lg border border-purple-500/30"
-                  : "text-gray-700 hover:bg-gray-50 hover:text-purple-700"
-              }`}
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
             >
-              <div className="relative">
-                <Icon
-                  className={`w-5 h-5 ${isActive ? "text-white drop-shadow-sm" : "text-gray-500 group-hover:text-purple-600"}`}
-                />
-                {isActive && <div className="absolute -top-1 -right-1 w-2 h-2 bg-white rounded-full animate-pulse" />}
-              </div>
+              <Icon
+                className={cn(
+                  "size-5 transition-colors",
+                  isActive ? "text-primary-foreground" : "text-muted-foreground group-hover:text-foreground"
+                )}
+              />
 
               {!collapsed && (
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className={`text-sm font-medium block truncate ${isActive ? "drop-shadow-sm" : ""}`}>
-                      {item.name}
-                    </span>
-                    <div className="flex items-center space-x-2">
-                      {badge && (
-                        <span className={`px-1.5 py-0.5 text-xs rounded-full font-medium ${getBadgeColor(badge)}`}>
-                          {badge}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <span
-                    className={`text-xs block truncate ${
-                      isActive ? "text-white/90" : "text-gray-500 group-hover:text-purple-500"
-                    }`}
-                  >
-                    {item.description}
+                <div className="flex-1 min-w-0 flex items-center justify-between">
+                  <span className="text-sm font-medium truncate">
+                    {item.name}
                   </span>
+                  {badge && (
+                    <span className={cn("px-2 py-0.5 text-[10px] rounded-full font-bold", getBadgeColor(badge))}>
+                      {badge}
+                    </span>
+                  )}
                 </div>
-              )}
-
-              {isActive && !collapsed && (
-                <div className="absolute left-0 top-1/2 transform -translate-y-1/2 w-1 h-6 bg-white rounded-r-full" />
               )}
             </Link>
           );
         })}
       </nav>
+
+      <div className="p-4 border-t border-border/50">
+        <div className={cn("flex items-center gap-3", collapsed ? "justify-center" : "")}>
+          <div className="size-8 rounded-full bg-secondary flex items-center justify-center">
+            <span className="text-xs font-medium">SP</span>
+          </div>
+          {!collapsed && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">Sergio Peschiera</p>
+              <p className="text-xs text-muted-foreground truncate">Pro Plan</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

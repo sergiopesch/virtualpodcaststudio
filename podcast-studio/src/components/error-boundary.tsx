@@ -61,24 +61,24 @@ export class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-red-50/40 flex items-center justify-center p-6">
-          <Card className="max-w-2xl w-full shadow-lg border border-red-200/70">
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+          <Card className="max-w-2xl w-full shadow-lg border border-gray-200">
             <CardHeader>
-              <CardTitle className="flex items-center gap-3 text-red-600">
+              <CardTitle className="flex items-center gap-3 text-gray-900">
                 <AlertCircle className="h-6 w-6" />
                 Something Went Wrong
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-3">
-                <p className="text-slate-700">
+                <p className="text-gray-700">
                   The application encountered an unexpected error and cannot
                   continue. Please try one of the options below.
                 </p>
 
                 {this.state.error && (
-                  <div className="rounded-lg border border-red-200 bg-red-50/80 p-4">
-                    <p className="text-sm font-mono text-red-700 break-all">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                    <p className="text-sm font-mono text-gray-700 break-all">
                       {this.state.error.message}
                     </p>
                   </div>

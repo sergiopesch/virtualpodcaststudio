@@ -19,45 +19,36 @@ import {
   FileText,
   Sparkles,
   Clock,
-  Users
+  Users,
+  Plus,
+  MoreVertical,
+  Filter
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 const topics = [
-  { 
-    id: "cs.AI", 
-    label: "Artificial Intelligence", 
-    icon: Brain, 
-    color: "text-purple-600", 
-    bgColor: "bg-purple-50",
-    borderColor: "border-purple-200",
+  {
+    id: "cs.AI",
+    label: "Artificial Intelligence",
+    icon: Brain,
     description: "Latest AI breakthroughs and research"
   },
-  { 
-    id: "cs.LG", 
-    label: "Machine Learning", 
-    icon: Cpu, 
-    color: "text-blue-600", 
-    bgColor: "bg-blue-50",
-    borderColor: "border-blue-200",
+  {
+    id: "cs.LG",
+    label: "Machine Learning",
+    icon: Cpu,
     description: "ML algorithms and applications"
   },
-  { 
-    id: "cs.CV", 
-    label: "Computer Vision", 
-    icon: Eye, 
-    color: "text-green-600", 
-    bgColor: "bg-green-50",
-    borderColor: "border-green-200",
+  {
+    id: "cs.CV",
+    label: "Computer Vision",
+    icon: Eye,
     description: "Image recognition and processing"
   },
-  { 
-    id: "cs.RO", 
-    label: "Robotics", 
-    icon: Settings, 
-    color: "text-orange-600", 
-    bgColor: "bg-orange-50",
-    borderColor: "border-orange-200",
+  {
+    id: "cs.RO",
+    label: "Robotics",
+    icon: Settings,
     description: "Robotic systems and automation"
   },
 ];
@@ -98,15 +89,22 @@ const transformPapers = (papers: PaperApi[] = []): PaperCardData[] => {
       .map((author) => author.trim())
       .filter(Boolean);
 
-    const publishedDate = new Date(paper.published);
-    const formattedPublishedDate = Number.isNaN(publishedDate.getTime())
-      ? paper.published
-      : publishedDate.toLocaleDateString();
+    const primaryAuthor = authors[0] || "Unknown Author";
+    const hasAdditionalAuthors = authors.length > 1;
+
+    const dateObj = new Date(paper.published);
+    const formattedPublishedDate = isNaN(dateObj.getTime())
+      ? "Unknown Date"
+      : dateObj.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
 
     parsed.push({
       ...paper,
-      primaryAuthor: authors[0] ?? "Unknown author",
-      hasAdditionalAuthors: authors.length > 1,
+      primaryAuthor,
+      hasAdditionalAuthors,
       formattedPublishedDate,
     });
   }
@@ -115,357 +113,326 @@ const transformPapers = (papers: PaperApi[] = []): PaperCardData[] => {
 };
 
 export default function Home() {
+  const { collapsed, toggleCollapsed } = useSidebar();
   const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
   const [papers, setPapers] = useState<PaperCardData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { collapsed, toggleCollapsed } = useSidebar();
   const router = useRouter();
 
-  const abortControllerRef = useRef<AbortController | null>(null);
-
-  const selectedTopicSet = useMemo(() => new Set(selectedTopics), [selectedTopics]);
-  const selectedTopicCount = selectedTopics.length;
-  const hasSelectedTopics = selectedTopicCount > 0;
-  const hasPapers = papers.length > 0;
-
-  const handleTopicToggle = useCallback((topicId: string) => {
-    setSelectedTopics((previous) => {
-      const next = new Set(previous);
-
-      if (next.has(topicId)) {
-        next.delete(topicId);
-      } else {
-        next.add(topicId);
+  // Load saved state on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedTopics = sessionStorage.getItem("vps:selectedTopics");
+      if (savedTopics) {
+        try {
+          setSelectedTopics(JSON.parse(savedTopics));
+        } catch (e) {
+          console.error("Failed to parse saved topics", e);
+        }
       }
 
-      return topics
-        .filter((topic) => next.has(topic.id))
-        .map((topic) => topic.id);
-    });
+      const savedPapers = sessionStorage.getItem("vps:papers");
+      if (savedPapers) {
+        try {
+          setPapers(JSON.parse(savedPapers));
+        } catch (e) {
+          console.error("Failed to parse saved papers", e);
+        }
+      }
+    }
   }, []);
 
-  const handleFetchPapers = useCallback(async () => {
-    const topicsPayload = [...selectedTopics];
+  const handleTopicToggle = (topicId: string) => {
+    setSelectedTopics((prev) => {
+      const next = prev.includes(topicId)
+        ? prev.filter((id) => id !== topicId)
+        : [...prev, topicId];
+      sessionStorage.setItem("vps:selectedTopics", JSON.stringify(next));
+      return next;
+    });
+  };
 
-    if (topicsPayload.length === 0) {
-      return;
-    }
+  const handleClearSelection = () => {
+    setSelectedTopics([]);
+    setPapers([]);
+    sessionStorage.removeItem("vps:selectedTopics");
+    sessionStorage.removeItem("vps:papers");
+  };
+
+  const handleFetchPapers = async () => {
+    if (selectedTopics.length === 0) return;
 
     setLoading(true);
     setError(null);
-
-    abortControllerRef.current?.abort();
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
+    setPapers([]);
 
     try {
-      const response = await fetch("/api/papers", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ topics: topicsPayload }),
-        cache: "no-store",
-        signal: controller.signal,
-      });
-
-      const result = (await response.json()) as PaperApiResponse;
-
+      const query = selectedTopics.join("+OR+");
+      const response = await fetch(`/api/papers?query=${query}&max_results=10`);
       if (!response.ok) {
-        throw new Error(result.error ?? "Failed to fetch papers");
+        throw new Error("Failed to fetch papers");
       }
 
-      setPapers(transformPapers(result.papers));
+      const data = (await response.json()) as PaperApiResponse;
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const transformed = transformPapers(data.papers);
+      setPapers(transformed);
+      sessionStorage.setItem("vps:papers", JSON.stringify(transformed));
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        return;
-      }
-
-      const message = err instanceof Error ? err.message : "An unexpected error occurred";
-      setError(message);
-      console.error("Error fetching papers:", err);
+      console.error(err);
+      setError("Failed to load papers. Please try again.");
     } finally {
-      if (abortControllerRef.current === controller) {
-        abortControllerRef.current = null;
-        setLoading(false);
-      }
+      setLoading(false);
     }
-  }, [selectedTopics]);
+  };
 
-  const handleClearSelection = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    setSelectedTopics([]);
-    setPapers([]);
-    setError(null);
-    setLoading(false);
-  }, []);
+  const handleSelectPaper = (paper: PaperCardData) => {
+    sessionStorage.setItem("vps:selectedPaper", JSON.stringify(paper));
+    router.push("/studio");
+  };
 
-  const handleStartAudioStudio = useCallback(
-    (paper: PaperCardData) => {
-      try {
-        if (typeof window !== "undefined") {
-          const payload = {
-            id: paper.id,
-            title: paper.title,
-            authors: paper.authors,
-            abstract: paper.abstract,
-            arxiv_url: paper.arxiv_url,
-            primaryAuthor: paper.primaryAuthor,
-            hasAdditionalAuthors: paper.hasAdditionalAuthors,
-            formattedPublishedDate: paper.formattedPublishedDate,
-            storedAt: Date.now(),
-          };
-          sessionStorage.setItem("vps:selectedPaper", JSON.stringify(payload));
-        }
-      } catch (storageError) {
-        console.error("Failed to persist selected paper:", storageError);
-      }
-
-      router.push("/studio");
-    },
-    [router],
-  );
-
-  useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort();
-    };
-  }, []);
+  const hasSelectedTopics = selectedTopics.length > 0;
+  const hasPapers = papers.length > 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
+    <div className="min-h-screen bg-background">
       <div className="flex">
-        <Sidebar
-          collapsed={collapsed}
-          onToggleCollapse={toggleCollapsed}
-        />
-        
-        {/* Main Content */}
-        <div className="flex-1">
+        <Sidebar />
+        <div className="flex-1 flex flex-col min-w-0">
           <Header
             title="Research Hub"
-            description="Discover and analyze research papers to fuel AI-powered podcast conversations"
-            search={{
-              placeholder: "Search papers…",
-              onSearch: (query) => console.log("Search:", query),
-            }}
+            description="Discover and curate research papers for your podcast."
           />
+          <main className="flex-1 p-6 lg:p-8 overflow-y-auto">
+            <div className="max-w-7xl mx-auto space-y-10">
+              {/* Hero Section */}
+              <div className="relative overflow-hidden rounded-3xl bg-black text-white p-10 shadow-apple-floating">
+                <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-black opacity-50" />
+                <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
+                  <div className="max-w-2xl">
+                    <h1 className="text-4xl md:text-5xl font-semibold tracking-tight mb-4 text-white">
+                      Research Hub
+                    </h1>
+                    <p className="text-gray-300 text-lg leading-relaxed">
+                      Select topics to discover the latest research papers for your next episode.
+                      Our AI curates the most relevant content for your audience.
+                    </p>
+                  </div>
+                </div>
 
-          <main id="main-content" tabIndex={-1} className="p-6 space-y-8">
-            {/* Topic Selection */}
-            <section className="animate-slide-up">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Sparkles className="w-5 h-5 text-purple-600" />
-                    <span>Research Topics</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {topics.map((topic) => {
-                      const IconComponent = topic.icon;
-                      const isSelected = selectedTopicSet.has(topic.id);
+                {/* Decorative elements */}
+                <div className="absolute top-0 right-0 -mt-20 -mr-20 w-96 h-96 bg-white/5 rounded-full blur-3xl" />
+                <div className="absolute bottom-0 left-0 -mb-20 -ml-20 w-80 h-80 bg-white/5 rounded-full blur-3xl" />
+              </div>
 
-                      return (
-                        <button
-                          key={topic.id}
-                          type="button"
-                          onClick={() => handleTopicToggle(topic.id)}
-                          aria-pressed={isSelected}
-                          className={cn(
-                            "group flex w-full items-center space-x-4 rounded-xl border-2 p-4 text-left transition-all duration-200 hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-200 touch-manipulation",
-                            isSelected
-                              ? `${topic.bgColor} ${topic.borderColor} border-opacity-60 shadow-md`
-                              : "bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm"
-                          )}
-                        >
+              {/* Topic Selection */}
+              <section className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-3">
+                    <BookOpen className="size-6" />
+                    Select Topics
+                  </h2>
+                  {hasSelectedTopics && (
+                    <span className="text-sm font-medium text-muted-foreground bg-secondary px-3 py-1 rounded-full">
+                      {selectedTopics.length} selected
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {topics.map((topic) => {
+                    const isSelected = selectedTopics.includes(topic.id);
+                    return (
+                      <button
+                        key={topic.id}
+                        onClick={() => handleTopicToggle(topic.id)}
+                        className={cn(
+                          "group relative flex flex-col items-start p-6 rounded-2xl transition-all duration-300 ease-apple text-left w-full border",
+                          isSelected
+                            ? "bg-black border-black shadow-apple-card transform scale-[1.02]"
+                            : "bg-card border-border/50 hover:border-border hover:shadow-subtle hover:bg-secondary/50"
+                        )}
+                      >
+                        <div className="flex items-center justify-between w-full mb-4">
                           <div
                             className={cn(
-                              "flex size-10 items-center justify-center rounded-lg transition-colors",
-                              isSelected ? topic.bgColor : "bg-gray-50"
+                              "p-3 rounded-xl transition-colors duration-300",
+                              isSelected
+                                ? "bg-white/20 text-white"
+                                : "bg-secondary text-foreground group-hover:bg-white"
                             )}
                           >
-                            <IconComponent className={cn("size-5", topic.color)} />
+                            <topic.icon className="size-6" />
                           </div>
-                          <div className="flex-1">
-                            <div className="mb-1 flex items-center space-x-3">
-                              <div
-                                className={cn(
-                                  "flex size-4 items-center justify-center rounded border-2 transition-colors",
-                                  isSelected
-                                    ? "border-purple-600 bg-purple-600"
-                                    : "border-gray-300 bg-white group-hover:border-gray-400"
-                                )}
-                              >
-                                {isSelected && (
-                                  <svg className="size-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                    <path
-                                      fillRule="evenodd"
-                                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                                      clipRule="evenodd"
-                                    />
-                                  </svg>
-                                )}
-                              </div>
-                              <span className="font-medium text-gray-900">{topic.label}</span>
-                            </div>
-                            <p className="ml-7 text-xs text-gray-600">{topic.description}</p>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-            </section>
-
-            {/* Action Buttons */}
-            <section className="flex justify-center animate-scale-in">
-              <Card className="w-full max-w-md">
-                <CardContent className="p-6">
-                  <div className="flex gap-3 mb-4">
-                    <Button
-                      variant="gradient"
-                      size="lg"
-                      className="flex-1"
-                      onClick={handleFetchPapers}
-                      disabled={!hasSelectedTopics || loading}
-                      aria-busy={loading}
-                    >
-                      <span className="flex w-full items-center justify-center gap-2">
-                        {loading ? (
-                          <span
-                            className="size-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <Search className="h-4 w-4" aria-hidden="true" />
-                        )}
-                        <span className="font-semibold tracking-tight">Find Papers</span>
-                      </span>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="lg"
-                      onClick={handleClearSelection}
-                      disabled={!hasSelectedTopics && !hasPapers}
-                    >
-                      Clear
-                    </Button>
-                  </div>
-
-                  {(hasSelectedTopics || hasPapers) && (
-                    <div className="pt-4 border-t border-gray-200">
-                      <div className="flex justify-between items-center text-sm">
-                        {hasSelectedTopics && (
-                          <span className="text-gray-600">
-                            {selectedTopicCount} topic{selectedTopicCount !== 1 ? "s" : ""} selected
-                          </span>
-                        )}
-                        {hasPapers && (
-                          <span className="text-green-600 font-medium">
-                            {papers.length} paper{papers.length !== 1 ? "s" : ""} found
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </section>
-
-            {/* Paper Preview */}
-            <section className="animate-fade-in">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <BookOpen className="w-5 h-5 text-blue-600" />
-                    <span>Research Papers</span>
-                  </CardTitle>
-                  <p className="text-sm text-gray-600">Latest papers from your selected topics</p>
-                </CardHeader>
-                
-                <CardContent className="p-0">
-                  <ScrollArea className="h-96" aria-live="polite">
-                    {error ? (
-                      <div className="py-12 text-center" role="alert">
-                        <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                          <FileText className="w-6 h-6 text-red-600" aria-hidden="true" />
-                        </div>
-                        <p className="text-red-600 font-medium mb-2">Error loading papers</p>
-                        <p className="text-gray-500 text-sm">{error}</p>
-                      </div>
-                    ) : hasPapers ? (
-                      <div className="p-6 space-y-4">
-                        {papers.map((paper) => (
-                          <Card
-                            key={paper.id}
-                            className="border border-gray-200 hover:border-purple-300 hover:shadow-lg transition-all duration-300 interactive"
+                          <div
+                            className={cn(
+                              "size-6 rounded-full border-2 flex items-center justify-center transition-all duration-300",
+                              isSelected
+                                ? "border-white bg-white"
+                                : "border-border bg-transparent group-hover:border-foreground/20"
+                            )}
                           >
-                            <CardContent className="p-6">
-                              <div className="flex items-start space-x-4">
-                                <div className="w-12 h-12 gradient-primary rounded-xl flex items-center justify-center flex-shrink-0 shadow-glow">
-                                  <BookOpen className="w-6 h-6 text-white" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <h3 className="font-semibold text-gray-900 line-clamp-2 mb-2 text-base">
-                                    {paper.title}
-                                  </h3>
-                                  <div className="flex items-center space-x-4 text-sm text-gray-600 mb-3">
-                                    <span className="flex items-center">
-                                      <Users className="w-3 h-3 mr-1" />
-                                      {paper.primaryAuthor}
-                                      {paper.hasAdditionalAuthors && " et al."}
-                                    </span>
-                                    <span className="flex items-center">
-                                      <Clock className="w-3 h-3 mr-1" />
-                                      {paper.formattedPublishedDate}
-                                    </span>
-                                  </div>
-                                  <p className="text-gray-700 text-sm line-clamp-3 mb-4 leading-relaxed">
-                                    {paper.abstract}
-                                  </p>
-                                  <div className="flex items-center space-x-3">
-                                    <Button
-                                      type="button"
-                                      variant="gradient"
-                                      size="sm"
-                                      onClick={() => handleStartAudioStudio(paper)}
-                                    >
-                                      <Play className="w-4 h-4 mr-2" />
-                                      Start Audio Studio
-                                    </Button>
-                                    <Button asChild variant="outline" size="sm">
-                                      <a href={paper.arxiv_url} target="_blank" rel="noopener noreferrer">
-                                        <FileText className="w-4 h-4 mr-2" />
-                                        Read Paper
-                                      </a>
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-center py-12">
-                        <div className="w-16 h-16 gradient-primary rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-glow">
-                          <Search className="w-8 h-8 text-white" />
+                            {isSelected && (
+                              <div className="size-2.5 rounded-full bg-black" />
+                            )}
+                          </div>
                         </div>
-                        <p className="text-gray-600 font-medium mb-2">No papers yet</p>
-                        <p className="text-gray-500 text-sm">
-                          Select research topics and click &quot;Find Papers&quot; to discover content
+                        <h3
+                          className={cn(
+                            "text-lg font-semibold mb-2 transition-colors",
+                            isSelected ? "text-white" : "text-foreground"
+                          )}
+                        >
+                          {topic.label}
+                        </h3>
+                        <p
+                          className={cn(
+                            "text-sm leading-relaxed transition-colors",
+                            isSelected ? "text-gray-400" : "text-muted-foreground"
+                          )}
+                        >
+                          {topic.description}
                         </p>
-                      </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {/* Action Buttons */}
+              <section className="flex justify-center pb-4">
+                <div className="flex gap-4 bg-white/80 backdrop-blur-xl p-2 rounded-2xl shadow-apple-card border border-white/20">
+                  <Button
+                    size="lg"
+                    onClick={handleFetchPapers}
+                    disabled={!hasSelectedTopics || loading}
+                    className={cn(
+                      "min-w-[180px] font-semibold text-base h-12 rounded-xl transition-all duration-300 shadow-none",
+                      hasSelectedTopics
+                        ? "bg-black text-white hover:bg-gray-800 hover:scale-105"
+                        : "bg-secondary text-muted-foreground"
                     )}
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            </section>
+                  >
+                    {loading ? (
+                      <>
+                        <span className="size-5 mr-2 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
+                        Searching...
+                      </>
+                    ) : (
+                      <>
+                        <Search className="size-5 mr-2" />
+                        Find Papers
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="lg"
+                    onClick={handleClearSelection}
+                    disabled={!hasSelectedTopics && !hasPapers}
+                    className="h-12 px-6 rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary"
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </section>
+
+              {/* Results Section */}
+              {hasPapers && (
+                <section className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700 ease-apple">
+                  <div className="flex items-center justify-between border-b border-border/50 pb-4">
+                    <h2 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-3">
+                      <FileText className="size-6" />
+                      Research Papers
+                    </h2>
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {papers.length} results found
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {papers.map((paper) => (
+                      <Card
+                        key={paper.id}
+                        className="group overflow-hidden border-border/50 hover:border-border hover:shadow-apple-card transition-all duration-300 ease-apple bg-card/50 backdrop-blur-sm"
+                      >
+                        <CardContent className="p-8">
+                          <div className="flex justify-between items-start gap-6 mb-6">
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3 text-xs font-medium text-muted-foreground mb-3">
+                                <span className="px-2.5 py-1 rounded-md bg-secondary text-foreground">
+                                  arXiv
+                                </span>
+                                <span>{paper.formattedPublishedDate}</span>
+                              </div>
+                              <h3 className="text-xl font-bold text-foreground leading-tight group-hover:text-accent transition-colors">
+                                {paper.title}
+                              </h3>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="shrink-0 rounded-full size-10 bg-transparent border-border/50 hover:bg-secondary hover:border-border"
+                              onClick={() => window.open(paper.arxiv_url, "_blank")}
+                            >
+                              <FileText className="size-5" />
+                            </Button>
+                          </div>
+
+                          <p className="text-base text-muted-foreground line-clamp-3 mb-8 leading-relaxed">
+                            {paper.abstract}
+                          </p>
+
+                          <div className="flex items-center justify-between pt-6 border-t border-border/50">
+                            <div className="flex items-center gap-3">
+                              <div className="size-10 rounded-full bg-secondary flex items-center justify-center text-sm font-bold text-foreground">
+                                {paper.primaryAuthor.charAt(0)}
+                              </div>
+                              <div className="text-sm">
+                                <p className="font-semibold text-foreground">
+                                  {paper.primaryAuthor}
+                                </p>
+                                {paper.hasAdditionalAuthors && (
+                                  <p className="text-muted-foreground text-xs">et al.</p>
+                                )}
+                              </div>
+                            </div>
+
+                            <Button
+                              onClick={() => handleSelectPaper(paper)}
+                              className="bg-black text-white hover:bg-gray-800 rounded-full px-6 shadow-sm group-hover:shadow-md transition-all duration-300"
+                            >
+                              <Sparkles className="size-4 mr-2" />
+                              Create Episode
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Empty State / Instructions */}
+              {!hasPapers && !loading && (
+                <div className="text-center py-20">
+                  <div className="inline-flex items-center justify-center size-20 rounded-full bg-secondary mb-6 shadow-subtle">
+                    <Search className="size-10 text-muted-foreground" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-foreground mb-3">
+                    Start your research
+                  </h3>
+                  <p className="text-muted-foreground max-w-md mx-auto text-lg">
+                    Select one or more topics above and click "Find Papers" to discover content for your podcast.
+                  </p>
+                </div>
+              )}
+            </div>
           </main>
         </div>
       </div>

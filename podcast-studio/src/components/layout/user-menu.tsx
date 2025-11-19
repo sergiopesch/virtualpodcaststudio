@@ -582,9 +582,9 @@ export function UserMenu() {
           <Button
             type="button"
             variant="glass"
-            className="flex items-center gap-3 rounded-full border border-gray-200/70 px-2 py-1.5 pr-3 text-sm font-medium text-gray-700 hover:border-purple-200"
+            className="flex items-center gap-3 rounded-full border border-gray-200/70 px-2 py-1.5 pr-3 text-sm font-medium text-gray-700 hover:border-gray-400"
           >
-            <span className="flex size-9 items-center justify-center rounded-full gradient-primary text-sm font-semibold text-white shadow-glow">
+            <span className="flex size-9 items-center justify-center rounded-full bg-black text-sm font-semibold text-white shadow-md">
               {initials}
             </span>
             <span className="hidden sm:flex flex-col text-left leading-tight">
@@ -599,8 +599,8 @@ export function UserMenu() {
           className="w-64 rounded-2xl glass p-2 shadow-xl"
         >
           <DropdownMenuLabel className="px-2 py-1">
-            <div className="flex items-center gap-3 rounded-xl bg-gradient-to-r from-purple-50 to-pink-50 p-3 shadow-inner">
-              <span className="flex size-10 items-center justify-center rounded-full gradient-primary text-sm font-semibold text-white shadow-glow">
+            <div className="flex items-center gap-3 rounded-xl bg-gray-50 p-3 shadow-inner">
+              <span className="flex size-10 items-center justify-center rounded-full bg-black text-sm font-semibold text-white shadow-md">
                 {initials}
               </span>
               <div className="min-w-0">
@@ -615,13 +615,13 @@ export function UserMenu() {
             return (
               <DropdownMenuItem
                 key={item.key}
-                className="flex touch-manipulation items-center gap-3 rounded-xl px-3 py-2 text-sm text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-200 data-[highlighted]:bg-purple-50/80 data-[highlighted]:text-gray-900"
+                className="flex touch-manipulation items-center gap-3 rounded-xl px-3 py-2 text-sm text-gray-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 data-[highlighted]:bg-gray-100 data-[highlighted]:text-gray-900"
                 onSelect={(event) => {
                   event.preventDefault();
                   handleItemSelect(item);
                 }}
               >
-                <span className="flex size-9 items-center justify-center rounded-xl bg-purple-50 text-purple-600 shadow-inner">
+                <span className="flex size-9 items-center justify-center rounded-xl bg-gray-100 text-gray-900 shadow-inner">
                   <Icon className="size-4" aria-hidden="true" />
                 </span>
                 <div className="flex-1 min-w-0">

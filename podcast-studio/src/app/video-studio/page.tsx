@@ -135,12 +135,12 @@ interface VideoClip {
   speaker?: "Host" | "Expert";
   content?: string;
   visualStyle?:
-    | "talking-head"
-    | "paper-visual"
-    | "diagram"
-    | "transition"
-    | "overlay"
-    | "background";
+  | "talking-head"
+  | "paper-visual"
+  | "diagram"
+  | "transition"
+  | "overlay"
+  | "background";
   thumbnailUrl?: string;
   volume?: number;
   fadeInSec?: number;
@@ -178,23 +178,23 @@ interface MediaAsset {
   source: "library" | "imported";
 }
 
-function getClipTypeIcon(type: ClipType, size = "w-4 h-4") {
+function getClipTypeIcon(type: ClipType, size = "size-4") {
   const iconClass = `${size} flex-shrink-0`;
   switch (type) {
     case "video":
-      return <Video className={`${iconClass} text-blue-600`} />;
+      return <Video className={`${iconClass} text-foreground`} />;
     case "audio":
-      return <Volume2 className={`${iconClass} text-green-600`} />;
+      return <Volume2 className={`${iconClass} text-foreground`} />;
     case "image":
-      return <ImageIcon className={`${iconClass} text-purple-600`} />;
+      return <ImageIcon className={`${iconClass} text-foreground`} />;
     case "text":
-      return <Type className={`${iconClass} text-orange-600`} />;
+      return <Type className={`${iconClass} text-foreground`} />;
     case "effect":
-      return <Wand2 className={`${iconClass} text-pink-600`} />;
+      return <Wand2 className={`${iconClass} text-foreground`} />;
     case "transition":
-      return <Sparkles className={`${iconClass} text-indigo-600`} />;
+      return <Sparkles className={`${iconClass} text-foreground`} />;
     default:
-      return <FileText className={`${iconClass} text-gray-600`} />;
+      return <FileText className={`${iconClass} text-muted-foreground`} />;
   }
 }
 
@@ -236,9 +236,9 @@ const cloneClip = (clip: VideoClip): VideoClip => ({
   filters: clip.filters ? { ...clip.filters } : undefined,
   keyframes: clip.keyframes
     ? clip.keyframes.map((keyframe) => ({
-        time: keyframe.time,
-        properties: { ...keyframe.properties },
-      }))
+      time: keyframe.time,
+      properties: { ...keyframe.properties },
+    }))
     : undefined,
   waveform: clip.waveform ? [...clip.waveform] : undefined,
 });
@@ -862,11 +862,11 @@ export default function VideoStudio() {
         previous.map((clip) =>
           clip.id === dragData.clipId
             ? {
-                ...clip,
-                startTime: sanitizedStart,
-                duration: sanitizedDuration,
-                track: nextTrack,
-              }
+              ...clip,
+              startTime: sanitizedStart,
+              duration: sanitizedDuration,
+              track: nextTrack,
+            }
             : clip,
         ),
       );
@@ -1133,8 +1133,8 @@ export default function VideoStudio() {
       asset.type === "audio"
         ? "#22c55e"
         : asset.type === "image"
-        ? "#f97316"
-        : "#6366f1";
+          ? "#f97316"
+          : "#6366f1";
     const baseClip: VideoClip = {
       id: newId,
       type: asset.type,
@@ -1153,14 +1153,14 @@ export default function VideoStudio() {
         asset.type === "image"
           ? undefined
           : generateWaveform(
-              newId,
-              Math.max(
-                30,
-                Math.floor(defaultDuration * (asset.type === "audio" ? 10 : 6)),
-              ),
-              asset.type === "audio" ? 0.6 : 0.4,
-              0.05,
+            newId,
+            Math.max(
+              30,
+              Math.floor(defaultDuration * (asset.type === "audio" ? 10 : 6)),
             ),
+            asset.type === "audio" ? 0.6 : 0.4,
+            0.05,
+          ),
     };
     setVideoClips((previous) => [...previous, baseClip]);
     setSelectedClips([newId]);
@@ -1181,7 +1181,7 @@ export default function VideoStudio() {
           if (updates.startTime !== undefined) {
             const startValue =
               typeof updates.startTime === "number" &&
-              Number.isFinite(updates.startTime)
+                Number.isFinite(updates.startTime)
                 ? Math.max(0, updates.startTime)
                 : clip.startTime;
             next.startTime = Number(startValue.toFixed(3));
@@ -1189,7 +1189,7 @@ export default function VideoStudio() {
           if (updates.duration !== undefined) {
             const durationValue =
               typeof updates.duration === "number" &&
-              Number.isFinite(updates.duration)
+                Number.isFinite(updates.duration)
                 ? Math.max(MIN_CLIP_DURATION, updates.duration)
                 : clip.duration;
             next.duration = Number(durationValue.toFixed(3));
@@ -1216,8 +1216,8 @@ export default function VideoStudio() {
       const type = file.type.startsWith("audio")
         ? "audio"
         : file.type.startsWith("image")
-        ? "image"
-        : "video";
+          ? "image"
+          : "video";
       const baseName = file.name.replace(/\.[^/.]+$/, "");
       return {
         id: createId(),
@@ -1255,19 +1255,19 @@ export default function VideoStudio() {
   const playheadTransform = playheadIsNearStart
     ? "translateX(0)"
     : playheadIsNearEnd
-    ? "translateX(-100%)"
-    : "translateX(-50%)";
+      ? "translateX(-100%)"
+      : "translateX(-50%)";
   const playheadAlignmentClasses = playheadIsNearStart
     ? "items-start text-left"
     : playheadIsNearEnd
-    ? "items-end text-right"
-    : "items-center text-center";
+      ? "items-end text-right"
+      : "items-center text-center";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-purple-50/30">
+    <div className="min-h-screen bg-background">
       <div className="flex">
         <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
-        <div className="flex flex-1 flex-col">
+        <div className="flex flex-1 flex-col min-w-0">
           <Header
             title="Video Studio"
             description="Craft cinematic episodes with AI-assisted editing tools"
@@ -1284,12 +1284,12 @@ export default function VideoStudio() {
                   variant="outline"
                   onClick={loadLatestConversation}
                   disabled={isLoadingConversation}
-                  className="gap-1"
+                  className="gap-1 h-8 rounded-lg border-border/50"
                 >
                   <RefreshCcw
-                    className={`h-4 w-4 ${isLoadingConversation ? "animate-spin" : ""}`}
+                    className={`size-3.5 ${isLoadingConversation ? "animate-spin" : ""}`}
                   />
-                  {isLoadingConversation ? "Refreshing" : "Reload conversation"}
+                  {isLoadingConversation ? "Refreshing" : "Reload"}
                 </Button>
                 <Button
                   type="button"
@@ -1297,82 +1297,86 @@ export default function VideoStudio() {
                   variant={snapEnabled ? "secondary" : "outline"}
                   onClick={() => setSnapEnabled((previous) => !previous)}
                   aria-pressed={snapEnabled}
-                  className="hidden sm:inline-flex"
+                  className="hidden sm:inline-flex h-8 rounded-lg border-border/50"
                 >
-                  <Magnet className="h-4 w-4" />
-                  {snapEnabled ? "Snapping on" : "Snapping off"}
+                  <Magnet className="size-3.5 mr-1" />
+                  {snapEnabled ? "Snap On" : "Snap Off"}
                 </Button>
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   onClick={() => setShowWaveforms((previous) => !previous)}
+                  className="h-8 rounded-lg border-border/50"
                 >
-                  {showWaveforms ? "Hide waveforms" : "Show waveforms"}
+                  {showWaveforms ? "Hide Waves" : "Show Waves"}
                 </Button>
                 <Button
                   type="button"
                   size="sm"
-                  variant="gradient"
+                  variant="default"
                   onClick={handleAddClipClick}
+                  className="h-8 rounded-lg shadow-sm"
                 >
-                  <Upload className="h-4 w-4" />
-                  Import media
+                  <Upload className="size-3.5 mr-1" />
+                  Import
                 </Button>
               </div>
             }
           />
-          <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6">
-            <div className="flex flex-col gap-6 xl:flex-row">
-              <div className="flex-1 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-                <div className="border-b border-gray-200 bg-white p-6">
-                  <div className="relative mx-auto flex aspect-video max-w-4xl items-center justify-center overflow-hidden rounded-xl bg-black">
-                    <div className="pointer-events-none text-center text-white/80">
-                      <Camera className="mx-auto mb-3 h-12 w-12 opacity-60" />
-                      <p className="text-sm font-medium">Video Preview</p>
+          <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6 lg:p-8 overflow-y-auto flex-1">
+            <div className="flex flex-col gap-6 xl:flex-row h-[600px]">
+              <div className="flex-1 flex flex-col overflow-hidden rounded-2xl border border-border/50 bg-card shadow-apple-card glass-panel">
+                <div className="border-b border-border/50 bg-black/5 p-6 flex-1 flex items-center justify-center relative">
+                  <div className="relative mx-auto flex aspect-video w-full max-w-4xl items-center justify-center overflow-hidden rounded-xl bg-black shadow-2xl ring-1 ring-white/10">
+                    <div className="pointer-events-none text-center text-white/60">
+                      <Camera className="mx-auto mb-3 size-12 opacity-50" />
+                      <p className="text-sm font-medium tracking-wide">Video Preview</p>
                     </div>
-                    <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity duration-300">
                       <Button
                         type="button"
-                        variant="glass"
+                        variant="ghost"
                         size="icon"
                         onClick={handlePlayPause}
                         aria-label={isPlaying ? "Pause playback" : "Play preview"}
-                        className="size-16 rounded-full border border-white/40 bg-white/10 text-white transition-all hover:scale-105 hover:bg-white/20"
+                        className="size-20 rounded-full bg-white/10 backdrop-blur-md text-white hover:bg-white/20 hover:scale-105 transition-all duration-300 border border-white/20 shadow-2xl"
                       >
-                        {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
+                        {isPlaying ? <Pause className="size-8 fill-current" /> : <Play className="size-8 fill-current ml-1" />}
                       </Button>
                     </div>
-                    <div className="absolute bottom-4 left-4 right-4 flex items-center gap-3 text-xs text-white/80">
-                      <span className="font-semibold text-white">{formatTime(currentTime)}</span>
-                      <div
-                        role="progressbar"
-                        aria-valuenow={Math.round(playbackProgress * 100)}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        className="relative h-1 flex-1 overflow-hidden rounded-full bg-white/20"
-                      >
+                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+                      <div className="flex items-center gap-3 text-xs text-white/90 font-medium font-mono">
+                        <span className="w-12 text-right">{formatTime(currentTime)}</span>
                         <div
-                          className="absolute inset-y-0 left-0 rounded-full bg-purple-500 transition-all"
-                          style={{ width: `${playbackProgress * 100}%` }}
-                        />
+                          role="progressbar"
+                          aria-valuenow={Math.round(playbackProgress * 100)}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/20 backdrop-blur-sm"
+                        >
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-full bg-primary shadow-[0_0_10px_rgba(var(--primary),0.5)] transition-all duration-100 ease-linear"
+                            style={{ width: `${playbackProgress * 100}%` }}
+                          />
+                        </div>
+                        <span className="w-12 text-white/60">{formatTime(totalDuration)}</span>
                       </div>
-                      <span className="text-white/60">{formatTime(totalDuration)}</span>
                     </div>
                   </div>
                 </div>
-                <div className="border-t border-gray-200">
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-gray-50/80 px-6 py-3">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                <div className="border-t border-border/50 bg-background/50 backdrop-blur-xl">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/50 px-4 py-2">
+                    <div className="flex flex-wrap items-center gap-1">
                       <Button
                         type="button"
                         size="icon"
-                        variant="secondary"
+                        variant="ghost"
                         onClick={handlePlayPause}
                         aria-label={isPlaying ? "Pause playback" : "Play preview"}
-                        className="rounded-full"
+                        className="rounded-lg hover:bg-secondary/80 size-8"
                       >
-                        {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                        {isPlaying ? <Pause className="size-4 fill-foreground" /> : <Play className="size-4 fill-foreground" />}
                       </Button>
                       <Button
                         type="button"
@@ -1380,64 +1384,59 @@ export default function VideoStudio() {
                         variant="ghost"
                         onClick={handleStop}
                         aria-label="Stop playback"
-                        className="rounded-full"
+                        className="rounded-lg hover:bg-secondary/80 size-8"
                       >
-                        <Square className="h-4 w-4" />
+                        <Square className="size-4 fill-foreground" />
                       </Button>
-                      <span className="font-semibold text-gray-900">{formatTime(currentTime)}</span>
-                      <span className="text-gray-400">/ {formatTime(totalDuration)}</span>
+                      <div className="h-4 w-px bg-border/50 mx-2" />
+                      <span className="font-mono text-xs font-medium text-foreground">{formatTime(currentTime)}</span>
+                      <span className="font-mono text-xs text-muted-foreground">/ {formatTime(totalDuration)}</span>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1">
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
                         onClick={handleZoomOut}
                         aria-label="Zoom out timeline"
-                        className="rounded-full"
+                        className="rounded-lg hover:bg-secondary/80 size-8"
                       >
-                        <ZoomOut className="h-4 w-4" />
+                        <ZoomOut className="size-4" />
                       </Button>
+                      <div className="w-20 px-2">
+                        <div className="h-1 w-full bg-secondary rounded-full overflow-hidden">
+                          <div className="h-full bg-primary/50" style={{ width: `${(zoomLevel / 3) * 100}%` }} />
+                        </div>
+                      </div>
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
                         onClick={handleZoomIn}
                         aria-label="Zoom in timeline"
-                        className="rounded-full"
+                        className="rounded-lg hover:bg-secondary/80 size-8"
                       >
-                        <ZoomIn className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={handleAddClipClick}
-                        className="gap-1"
-                      >
-                        <Plus className="h-4 w-4" />
-                        Add clip
+                        <ZoomIn className="size-4" />
                       </Button>
                     </div>
                   </div>
-                  <div className="flex h-[400px]">
-                    <div className="flex w-48 min-w-[12rem] flex-col border-r border-gray-200 bg-gray-50">
-                      <div className="flex h-12 items-center justify-between border-b border-gray-200 px-4">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+                  <div className="flex h-[280px]">
+                    <div className="flex w-48 min-w-[12rem] flex-col border-r border-border/50 bg-secondary/10">
+                      <div className="flex h-10 items-center justify-between border-b border-border/50 px-3 bg-secondary/20">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                           Tracks
                         </span>
                         <Button
                           type="button"
-                          size="xs"
+                          size="icon"
                           variant="ghost"
                           onClick={handleAddTrack}
-                          className="gap-1 text-[11px] text-gray-600"
+                          className="size-6 rounded-md hover:bg-background/50"
                         >
-                          <Plus className="h-3 w-3" />
-                          Add
+                          <Plus className="size-3" />
                         </Button>
                       </div>
-                      <div className="flex-1 overflow-y-auto">
+                      <div className="flex-1 overflow-y-auto custom-scrollbar">
                         {sortedTrackEntries.map(([trackNum, settings]) => {
                           const trackNumber = Number(trackNum);
                           const isMuted = settings.mute;
@@ -1447,13 +1446,11 @@ export default function VideoStudio() {
                           return (
                             <div
                               key={trackNum}
-                              className={`relative overflow-hidden border-b border-gray-200 px-4 text-xs ${
-                                isMuted ? "bg-gray-100" : "bg-gray-50"
-                              }`}
+                              className={`relative overflow-hidden border-b border-border/50 px-3 text-xs transition-colors ${isMuted ? "bg-secondary/50" : "bg-transparent hover:bg-secondary/20"
+                                }`}
                               style={{ height: TRACK_HEIGHT, minHeight: TRACK_HEIGHT }}
                             >
-                              <div className="pointer-events-none absolute inset-x-0 top-1/2 z-0 -translate-y-1/2 border-t border-dashed border-gray-200/80" />
-                              <div className="relative z-10 flex h-full flex-col justify-center gap-2">
+                              <div className="relative z-10 flex h-full flex-col justify-center gap-1.5">
                                 <div className="flex items-center justify-between gap-2">
                                   <input
                                     type="text"
@@ -1464,62 +1461,63 @@ export default function VideoStudio() {
                                         event.target.value,
                                       )
                                     }
-                                    className="w-full rounded border border-transparent bg-transparent px-0 text-xs font-semibold text-gray-700 focus:border-gray-300 focus:outline-none focus:ring-0"
+                                    className="w-full rounded border border-transparent bg-transparent px-0 text-xs font-medium text-foreground focus:border-primary/20 focus:outline-none focus:ring-0 truncate"
                                     aria-label={`Rename track ${trackNumber}`}
                                   />
-                                  <div className="flex items-center gap-1">
+                                  <div className="flex items-center gap-0.5">
                                     <Button
                                       type="button"
-                                      size="xs"
-                                      variant={isMuted ? "destructive" : "ghost"}
+                                      size="icon"
+                                      variant="ghost"
                                       onClick={() => toggleTrackMute(trackNumber)}
                                       aria-pressed={isMuted}
+                                      className={`size-5 rounded-md ${isMuted ? "text-destructive hover:text-destructive hover:bg-destructive/10" : "text-muted-foreground hover:text-foreground"}`}
                                     >
                                       {isMuted ? (
-                                        <VolumeX className="h-3 w-3" />
+                                        <VolumeX className="size-3" />
                                       ) : (
-                                        <Volume2 className="h-3 w-3" />
+                                        <Volume2 className="size-3" />
                                       )}
                                     </Button>
                                     <Button
                                       type="button"
-                                      size="xs"
+                                      size="icon"
                                       variant="ghost"
                                       onClick={() => handleRemoveTrack(trackNumber)}
                                       disabled={!canRemove}
-                                      className="disabled:opacity-40"
+                                      className="size-5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-30"
                                       title={
                                         canRemove
                                           ? "Remove track"
                                           : "Remove clips before deleting"
                                       }
                                     >
-                                      <Trash2 className="h-3 w-3" />
+                                      <Trash2 className="size-3" />
                                     </Button>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <input
-                                    type="range"
-                                    min={0}
-                                    max={1}
-                                    step={0.01}
-                                    value={settings.volume}
-                                    onChange={(event) =>
-                                      handleTrackVolumeChange(
-                                        trackNumber,
-                                        Number(event.target.value),
-                                      )
-                                    }
-                                    className="flex-1"
-                                    aria-label={`Adjust volume for track ${trackNumber}`}
-                                  />
-                                  <span className="w-10 text-right text-[11px] text-gray-500">
-                                    {Math.round(settings.volume * 100)}%
-                                  </span>
-                                </div>
-                                <div className="text-[10px] uppercase tracking-wide text-gray-400">
-                                  {clipCount} clip{clipCount === 1 ? "" : "s"}
+                                  <div className="flex-1 h-1 bg-secondary rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-primary/50 rounded-full"
+                                      style={{ width: `${settings.volume * 100}%` }}
+                                    />
+                                    <input
+                                      type="range"
+                                      min={0}
+                                      max={1}
+                                      step={0.01}
+                                      value={settings.volume}
+                                      onChange={(event) =>
+                                        handleTrackVolumeChange(
+                                          trackNumber,
+                                          Number(event.target.value),
+                                        )
+                                      }
+                                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                      aria-label={`Adjust volume for track ${trackNumber}`}
+                                    />
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -1527,18 +1525,17 @@ export default function VideoStudio() {
                         })}
                       </div>
                     </div>
-                    <div className="min-w-0 flex-1 overflow-x-auto" ref={scrollerRef}>
+                    <div className="min-w-0 flex-1 overflow-x-auto custom-scrollbar bg-background/30" ref={scrollerRef}>
                       <div
                         ref={timelineRef}
-                        className="relative bg-white select-none"
+                        className="relative select-none min-h-full"
                         style={{
                           width: `${timelineWidthPx}px`,
                           minWidth: "100%",
-                          height: "100%",
                         }}
                         onPointerDown={handleTimelinePointerDown}
                       >
-                        <div className="relative h-12 border-b border-gray-200 bg-gray-50/90">
+                        <div className="relative h-10 border-b border-border/50 bg-background/80 backdrop-blur-sm sticky top-0 z-30">
                           {timelineTicks.map((time) => {
                             const position = time * pixelsPerSecond;
                             const labelNearStart = position < 48;
@@ -1546,24 +1543,24 @@ export default function VideoStudio() {
                             const labelTransform = labelNearStart
                               ? "translateX(0)"
                               : labelNearEnd
-                              ? "translateX(-100%)"
-                              : "translateX(-50%)";
+                                ? "translateX(-100%)"
+                                : "translateX(-50%)";
                             const labelAlignment = labelNearStart
                               ? "items-start text-left"
                               : labelNearEnd
-                              ? "items-end text-right"
-                              : "items-center text-center";
+                                ? "items-end text-right"
+                                : "items-center text-center";
                             return (
                               <React.Fragment key={time}>
                                 <div
-                                  className="absolute inset-y-0 border-l border-gray-200"
+                                  className="absolute inset-y-0 border-l border-border/20 h-2 bottom-0"
                                   style={{ left: `${position}px` }}
                                 />
                                 <div
-                                  className={`absolute top-2 z-10 flex ${labelAlignment} text-[10px] font-medium text-gray-600`}
+                                  className={`absolute top-2.5 z-10 flex ${labelAlignment} text-[10px] font-medium text-muted-foreground font-mono`}
                                   style={{ left: `${position}px`, transform: labelTransform }}
                                 >
-                                  <span className="rounded bg-white/95 px-1.5 py-0.5 shadow-sm ring-1 ring-gray-200/70">
+                                  <span>
                                     {formatTime(time)}
                                   </span>
                                 </div>
@@ -1571,34 +1568,22 @@ export default function VideoStudio() {
                             );
                           })}
                           <div
-                            data-timeline-control
-                            className="absolute right-3 top-2 z-20 flex items-center gap-2 rounded-full bg-white/95 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-600 shadow-sm"
-                          >
-                            <Magnet className={`h-3 w-3 ${snapEnabled ? "text-purple-600" : "text-gray-400"}`} />
-                            {snapEnabled ? "Snapping on" : "Snapping off"}
-                          </div>
-                          <div
-                            className="pointer-events-none absolute top-0 z-30"
+                            className="pointer-events-none absolute top-0 z-30 h-full"
                             style={{ left: `${playheadLeftPx}px` }}
                           >
                             <div
-                              className={`relative flex flex-col gap-1 ${playheadAlignmentClasses}`}
-                              style={{ transform: playheadTransform }}
+                              className={`relative flex flex-col items-center`}
+                              style={{ transform: "translateX(-50%)" }}
                             >
-                              <span className="rounded bg-purple-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
-                                {formatTime(currentTime)}
-                              </span>
-                              <div className="h-0 w-0 border-b-[8px] border-l-[6px] border-r-[6px] border-b-purple-500 border-l-transparent border-r-transparent" />
+                              <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-primary drop-shadow-sm" />
                             </div>
                           </div>
                         </div>
                         <div
-                          className={`pointer-events-none absolute top-0 bottom-0 z-20 w-px ${
-                            isPlayheadActive ? "bg-purple-500" : "bg-purple-500/40"
-                          }`}
+                          className={`pointer-events-none absolute top-0 bottom-0 z-20 w-px ${isPlayheadActive ? "bg-primary" : "bg-primary/50"
+                            }`}
                           style={{
                             left: `${playheadLeftPx}px`,
-                            transform: "translateX(-0.5px)",
                           }}
                         />
                         {sortedTrackEntries.map(([trackNum, settings]) => {
@@ -1608,13 +1593,11 @@ export default function VideoStudio() {
                           return (
                             <div
                               key={trackNum}
-                              className="relative border-b border-gray-200"
+                              className="relative border-b border-border/50 bg-background/20"
                               style={{ height: TRACK_HEIGHT }}
                             >
-                              <div className="pointer-events-none absolute inset-0 z-0 bg-gradient-to-b from-gray-50/70 via-white to-gray-50/70" />
-                              <div className="pointer-events-none absolute inset-x-0 top-1/2 z-0 -translate-y-1/2 border-t border-dashed border-gray-200/80" />
                               {trackClips.length === 0 && (
-                                <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-medium uppercase tracking-wide text-gray-300">
+                                <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-medium uppercase tracking-wide text-muted-foreground/20">
                                   Drop clips here
                                 </div>
                               )}
@@ -1645,19 +1628,14 @@ export default function VideoStudio() {
                                 return (
                                   <div
                                     key={clip.id}
-                                    className={`group absolute top-1/2 z-10 flex h-10 -translate-y-1/2 transform items-stretch rounded-lg border shadow-sm transition-all duration-150 ease-out hover:border-purple-300/60
-                                      ${trackMuted || clip.muted ? "opacity-60" : ""}
-                                      ${isSelected ? "border-purple-500 shadow-lg" : "border-transparent"}
-                                      ${
-                                        isSelected || isDraggingClip || isResizingClip
-                                          ? "ring-2 ring-purple-400/50"
-                                          : ""
-                                      }
-                                      ${isDraggingClip ? "cursor-grabbing" : "cursor-grab"}`}
+                                    className={`group absolute top-1/2 z-10 flex h-10 -translate-y-1/2 transform items-stretch rounded-lg border shadow-sm transition-all duration-150 ease-out
+                                      ${trackMuted || clip.muted ? "opacity-60 grayscale" : ""}
+                                      ${isSelected ? "border-primary ring-2 ring-primary/20 shadow-md z-20" : "border-transparent hover:border-primary/40"}
+                                      ${isDraggingClip ? "cursor-grabbing scale-[1.02] shadow-lg z-30" : "cursor-grab"}`}
                                     style={{
                                       left: `${clipStart}px`,
                                       width: `${clipWidth}px`,
-                                      backgroundColor: applyAlphaToHex(clipColor, 0.65),
+                                      backgroundColor: applyAlphaToHex(clipColor, 0.8),
                                     }}
                                     onPointerDown={(event) =>
                                       handleClipInteractionStart(event, clip, "move")
@@ -1667,68 +1645,66 @@ export default function VideoStudio() {
                                       type="button"
                                       tabIndex={-1}
                                       aria-label="Trim clip start"
-                                      className={`absolute inset-y-0 left-0 z-20 flex w-3 cursor-ew-resize items-center justify-center rounded-l-lg bg-black/0 transition-opacity focus:outline-none ${
-                                        isSelected ? "opacity-90" : "opacity-0 group-hover:opacity-80"
-                                      }`}
+                                      className={`absolute inset-y-0 left-0 z-20 flex w-3 cursor-ew-resize items-center justify-center rounded-l-lg hover:bg-black/10 transition-colors focus:outline-none ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                        }`}
                                       onPointerDown={(event) =>
                                         handleClipInteractionStart(event, clip, "trim-start")
                                       }
                                     >
-                                      <span className="h-6 w-0.5 rounded bg-white/80" />
+                                      <div className="h-4 w-1 rounded-full bg-white/50" />
                                     </button>
                                     <button
                                       type="button"
                                       tabIndex={-1}
                                       aria-label="Trim clip end"
-                                      className={`absolute inset-y-0 right-0 z-20 flex w-3 cursor-ew-resize items-center justify-center rounded-r-lg bg-black/0 transition-opacity focus:outline-none ${
-                                        isSelected ? "opacity-90" : "opacity-0 group-hover:opacity-80"
-                                      }`}
+                                      className={`absolute inset-y-0 right-0 z-20 flex w-3 cursor-ew-resize items-center justify-center rounded-r-lg hover:bg-black/10 transition-colors focus:outline-none ${isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                        }`}
                                       onPointerDown={(event) =>
                                         handleClipInteractionStart(event, clip, "trim-end")
                                       }
                                     >
-                                      <span className="h-6 w-0.5 rounded bg-white/80" />
+                                      <div className="h-4 w-1 rounded-full bg-white/50" />
                                     </button>
                                     {fadeInWidth > 0 && (
                                       <div
-                                        className="pointer-events-none absolute inset-y-0 left-0 z-[1]"
+                                        className="pointer-events-none absolute inset-y-0 left-0 z-[1] rounded-l-lg"
                                         style={{
                                           width: `${fadeInWidth}px`,
-                                          backgroundImage: `linear-gradient(to right, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
+                                          backgroundImage: `linear-gradient(to right, rgba(0,0,0,0.3), transparent)`,
                                         }}
                                       />
                                     )}
                                     {fadeOutWidth > 0 && (
                                       <div
-                                        className="pointer-events-none absolute inset-y-0 right-0 z-[1]"
+                                        className="pointer-events-none absolute inset-y-0 right-0 z-[1] rounded-r-lg"
                                         style={{
                                           width: `${fadeOutWidth}px`,
-                                          backgroundImage: `linear-gradient(to left, rgba(${r}, ${g}, ${b}, 0.55), transparent)`,
+                                          backgroundImage: `linear-gradient(to left, rgba(0,0,0,0.3), transparent)`,
                                         }}
                                       />
                                     )}
-                                    <div className="pointer-events-none absolute inset-0">
+                                    <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-lg">
                                       {showWaveforms && waveformPath && (
                                         <svg
-                                          className="absolute inset-x-3 top-1 bottom-1 text-white/70"
-                                          viewBox={`0 0 ${clipWidth} ${WAVEFORM_HEIGHT}`}
+                                          className="absolute inset-x-0 top-0 bottom-0 text-white/40 h-full w-full"
                                           preserveAspectRatio="none"
                                         >
                                           <path
                                             d={waveformPath}
-                                            fill="rgba(255,255,255,0.35)"
-                                            stroke="rgba(255,255,255,0.55)"
-                                            strokeWidth={1}
+                                            fill="currentColor"
+                                            className="opacity-50"
                                           />
                                         </svg>
                                       )}
-                                      <div className="absolute inset-x-3 bottom-1 flex flex-col gap-0.5 text-white drop-shadow-sm">
-                                        <span className="truncate text-[11px] font-semibold leading-4">
+                                      <div className="absolute inset-x-3 top-1/2 -translate-y-1/2 flex flex-col gap-0.5 text-white drop-shadow-md">
+                                        <span className="truncate text-[11px] font-bold leading-tight tracking-tight">
                                           {clip.name}
                                         </span>
-                                        <span className="truncate text-[10px] font-medium leading-3 text-white/80">
-                                          {clipMeta}
-                                        </span>
+                                        {isSelected && (
+                                          <span className="truncate text-[9px] font-medium leading-none opacity-90">
+                                            {clipMeta}
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
@@ -1742,8 +1718,8 @@ export default function VideoStudio() {
                   </div>
                 </div>
               </div>
-              <div className="w-full xl:w-80">
-                <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+              <div className="w-full xl:w-80 shrink-0">
+                <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-border/50 bg-card shadow-apple-card glass-panel">
                   <SimpleInspectorPanel
                     activeTab={activeTab}
                     setActiveTab={setActiveTab}
@@ -1765,71 +1741,72 @@ export default function VideoStudio() {
               </div>
             </div>
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-              <Card className="border-gray-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-base font-semibold text-gray-900">
-                    Latest conversation
+              <Card className="glass-panel border-border/50 shadow-apple-card">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
+                    <FileText className="size-4 text-foreground" />
+                    Latest Conversation
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4 text-sm text-gray-600">
+                <CardContent className="space-y-4 text-sm text-muted-foreground">
                   {isLoadingConversation ? (
                     <div className="space-y-3">
-                      <div className="h-4 w-3/4 animate-pulse rounded bg-gray-200" />
-                      <div className="h-3 w-1/2 animate-pulse rounded bg-gray-200" />
-                      <div className="h-20 animate-pulse rounded-lg bg-gray-100" />
+                      <div className="h-4 w-3/4 animate-pulse rounded bg-secondary" />
+                      <div className="h-3 w-1/2 animate-pulse rounded bg-secondary" />
+                      <div className="h-20 animate-pulse rounded-lg bg-secondary/50" />
                     </div>
                   ) : conversationError ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive font-medium">
                       {conversationError}
                     </div>
                   ) : hasConversation ? (
                     <div className="space-y-4">
                       <div>
-                        <p className="font-medium text-gray-900">
+                        <p className="font-medium text-foreground">
                           {latestPaper?.title ?? "Untitled session"}
                         </p>
                         {latestPaper?.authors ? (
-                          <p className="text-xs uppercase tracking-wide text-gray-500">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground mt-1">
                             {latestPaper.authors}
                           </p>
                         ) : null}
                       </div>
                       {conversationSummary ? (
-                        <div className="space-y-2 rounded-lg bg-purple-50/80 p-3 text-xs text-purple-700">
+                        <div className="space-y-2 rounded-lg bg-secondary/30 border border-border/50 p-3 text-xs">
                           <div className="flex items-center justify-between">
-                            <span>Duration</span>
-                            <span className="font-semibold text-purple-800">
+                            <span className="text-muted-foreground">Duration</span>
+                            <span className="font-semibold text-foreground">
                               {conversationSummary.durationLabel}
                             </span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span>Host turns</span>
-                            <span className="font-semibold text-purple-800">
+                            <span className="text-muted-foreground">Host turns</span>
+                            <span className="font-semibold text-foreground">
                               {conversationSummary.hostTurns}
                             </span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span>Expert turns</span>
-                            <span className="font-semibold text-purple-800">
+                            <span className="text-muted-foreground">Expert turns</span>
+                            <span className="font-semibold text-foreground">
                               {conversationSummary.expertTurns}
                             </span>
                           </div>
                           <div className="flex items-center justify-between">
-                            <span>Audio tracks</span>
-                            <span className="flex items-center gap-3 font-semibold text-purple-800">
+                            <span className="text-muted-foreground">Audio tracks</span>
+                            <span className="flex items-center gap-3 font-semibold text-foreground">
                               <span className="flex items-center gap-1">
                                 {hostAudioAvailable ? (
-                                  <Volume2 className="h-3.5 w-3.5" />
+                                  <Volume2 className="size-3 text-foreground" />
                                 ) : (
-                                  <VolumeX className="h-3.5 w-3.5" />
+                                  <VolumeX className="size-3 text-muted-foreground" />
                                 )}
                                 Host
                               </span>
                               <span className="flex items-center gap-1">
                                 {expertAudioAvailable ? (
-                                  <Volume2 className="h-3.5 w-3.5" />
+                                  <Volume2 className="size-3 text-foreground" />
                                 ) : (
-                                  <VolumeX className="h-3.5 w-3.5" />
+                                  <VolumeX className="size-3 text-muted-foreground" />
                                 )}
                                 Expert
                               </span>
@@ -1838,93 +1815,98 @@ export default function VideoStudio() {
                         </div>
                       ) : null}
                       {conversationSummary?.highlight ? (
-                        <div className="rounded-lg border border-purple-100 bg-white p-3 text-xs text-gray-600 shadow-sm">
-                          <p className="font-semibold text-gray-900">Expert highlight</p>
-                          <p className="mt-1 text-gray-600 italic">
+                        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground shadow-sm">
+                          <p className="font-semibold text-foreground mb-1">Expert highlight</p>
+                          <p className="italic text-foreground/80">
                             &ldquo;{conversationSummary.highlight}&rdquo;
                           </p>
                         </div>
                       ) : null}
-                      <p className="text-xs text-gray-500">
-                        Last updated {conversationSummary?.lastUpdated ?? "just now"}. Reload after
-                        recording in the Audio Studio to pull in fresh clips.
+                      <p className="text-xs text-muted-foreground/70">
+                        Last updated {conversationSummary?.lastUpdated ?? "just now"}.
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-3 text-sm text-gray-600">
-                      <p className="font-medium text-gray-900">Waiting for a saved conversation</p>
-                      <p>
-                        Record a session in the Audio Studio and choose “Send to Video Studio” to
-                        import the transcript, audio tracks, and project timeline automatically.
-                      </p>
+                    <div className="space-y-3 text-sm text-muted-foreground text-center py-4">
+                      <div className="size-10 rounded-full bg-secondary mx-auto flex items-center justify-center">
+                        <FileText className="size-5 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-foreground">No conversation loaded</p>
+                        <p className="text-xs mt-1">
+                          Record a session in the Audio Studio first.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </CardContent>
               </Card>
-              <Card className="border-gray-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-base font-semibold text-gray-900">
-                    Timeline overview
+              <Card className="glass-panel border-border/50 shadow-apple-card">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
+                    <Sliders className="size-4 text-foreground" />
+                    Timeline Overview
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3 text-sm text-gray-600">
-                  <div className="flex items-center justify-between">
+                <CardContent className="space-y-3 text-sm text-muted-foreground">
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
                     <span>Duration</span>
-                    <span className="font-medium text-gray-900">{formatTime(totalDuration)}</span>
+                    <span className="font-medium text-foreground">{formatTime(totalDuration)}</span>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
                     <span>Clips</span>
-                    <span className="font-medium text-gray-900">{totalClips}</span>
+                    <span className="font-medium text-foreground">{totalClips}</span>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
                     <span>Tracks</span>
-                    <span className="font-medium text-gray-900">{activeTrackCount}</span>
+                    <span className="font-medium text-foreground">{activeTrackCount}</span>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
                     <span>Waveforms</span>
-                    <span className="font-medium text-gray-900">
+                    <span className="font-medium text-foreground">
                       {showWaveforms ? "Visible" : "Hidden"}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between py-1">
                     <span>Master volume</span>
-                    <span className="font-medium text-gray-900">
+                    <span className="font-medium text-foreground">
                       {Math.round(masterVolume * 100)}%
                     </span>
                   </div>
                 </CardContent>
               </Card>
-              <Card className="border-gray-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle className="text-base font-semibold text-gray-900">
-                    Export checklist
+              <Card className="glass-panel border-border/50 shadow-apple-card">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-semibold text-foreground flex items-center gap-2">
+                    <Download className="size-4 text-foreground" />
+                    Export Checklist
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3 text-sm text-gray-600">
-                  <div className="flex items-center justify-between">
+                <CardContent className="space-y-3 text-sm text-muted-foreground">
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
                     <span>Preset</span>
-                    <span className="font-medium text-gray-900">1080p • 30fps</span>
+                    <span className="font-medium text-foreground">1080p • 30fps</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span>File size estimate</span>
-                    <span className="font-medium text-gray-900">1.2 GB</span>
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
+                    <span>Estimated Size</span>
+                    <span className="font-medium text-foreground">~1.2 GB</span>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between py-1 border-b border-border/50">
                     <span>Enhancements</span>
-                    <span className="font-medium text-gray-900">Noise cleanup</span>
+                    <span className="font-medium text-foreground">Noise cleanup</span>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span>Delivery</span>
-                    <span className="font-medium text-gray-900">Podcast & social</span>
+                  <div className="flex items-center justify-between py-1">
+                    <span>Format</span>
+                    <span className="font-medium text-foreground">MP4 (H.264)</span>
                   </div>
-                  <div className="flex items-center gap-2 pt-2">
-                    <Button type="button" size="sm" variant="gradient" className="flex-1">
-                      <Download className="h-4 w-4" />
-                      Render episode
+                  <div className="flex items-center gap-3 pt-4">
+                    <Button type="button" size="sm" className="flex-1 shadow-md font-semibold">
+                      <Download className="size-3.5 mr-2" />
+                      Render
                     </Button>
-                    <Button type="button" size="sm" variant="outline" className="flex-1">
-                      <Upload className="h-4 w-4" />
-                      Publish draft
+                    <Button type="button" size="sm" variant="outline" className="flex-1 border-border/50">
+                      <Upload className="size-3.5 mr-2" />
+                      Publish
                     </Button>
                   </div>
                 </CardContent>
@@ -1989,37 +1971,37 @@ function SimpleInspectorPanel({
       : null;
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="flex h-full flex-col">
-      <TabsList className="grid w-full grid-cols-2 shrink-0 rounded-xl bg-gray-100 p-1 text-xs">
+      <TabsList className="grid w-full grid-cols-2 shrink-0 rounded-lg bg-secondary/50 p-1 m-3 mb-0">
         <TabsTrigger
           value="media"
-          className="flex items-center gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-purple-600"
+          className="flex items-center gap-1.5 rounded-md data-[state=active]:bg-background data-[state=active]:text-accent data-[state=active]:shadow-sm text-muted-foreground"
         >
-          <Folder className="h-4 w-4" />
-          <span className="hidden sm:inline">Media</span>
+          <Folder className="size-3.5" />
+          <span className="hidden sm:inline text-xs font-medium">Media</span>
         </TabsTrigger>
         <TabsTrigger
           value="properties"
-          className="flex items-center gap-1 rounded-lg data-[state=active]:bg-white data-[state=active]:text-purple-600"
+          className="flex items-center gap-1.5 rounded-md data-[state=active]:bg-background data-[state=active]:text-accent data-[state=active]:shadow-sm text-muted-foreground"
         >
-          <Sliders className="h-4 w-4" />
-          <span className="hidden sm:inline">Properties</span>
+          <Sliders className="size-3.5" />
+          <span className="hidden sm:inline text-xs font-medium">Properties</span>
         </TabsTrigger>
       </TabsList>
       <div className="flex-1 overflow-hidden">
-        <TabsContent value="media" className="h-full">
+        <TabsContent value="media" className="h-full m-0">
           <div className="flex h-full flex-col">
-            <div className="space-y-3 border-b border-gray-200 p-4">
+            <div className="space-y-3 border-b border-border/50 p-3">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <input
                   type="text"
                   placeholder="Search media…"
                   value={mediaQuery}
                   onChange={(event) => setMediaQuery(event.target.value)}
-                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500"
+                  className="w-full rounded-lg border border-border/50 bg-background py-2 pl-9 pr-3 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/50"
                 />
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 {filterOptions.map((filterOption) => (
                   <Button
                     key={filterOption}
@@ -2028,55 +2010,53 @@ function SimpleInspectorPanel({
                     variant={mediaFilter === filterOption ? "secondary" : "ghost"}
                     onClick={() => setMediaFilter(filterOption)}
                     aria-pressed={mediaFilter === filterOption}
-                    className={`rounded-full px-3 ${
-                      mediaFilter === filterOption
-                        ? "border border-purple-200 bg-purple-50 text-purple-700 shadow-sm"
-                        : "border border-transparent text-gray-600 hover:bg-gray-100"
-                    }`}
+                    className={`h-6 rounded-md px-2.5 text-[10px] font-medium ${mediaFilter === filterOption
+                      ? "bg-accent/10 text-accent border-accent/20"
+                      : "text-muted-foreground hover:bg-secondary"
+                      }`}
                   >
                     {filterOption.charAt(0).toUpperCase() + filterOption.slice(1)}
                   </Button>
                 ))}
               </div>
             </div>
-            <ScrollArea className="flex-1">
-              <div className="space-y-2 p-4">
+            <ScrollArea className="flex-1 custom-scrollbar">
+              <div className="space-y-2 p-3">
                 {mediaAssets.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-xs text-gray-500">
-                    Import media or adjust your filters to see assets.
+                  <div className="rounded-lg border border-dashed border-border/50 bg-secondary/20 p-6 text-center text-xs text-muted-foreground">
+                    No media found. Import or adjust filters.
                   </div>
                 ) : (
                   mediaAssets.map((asset) => (
                     <div
                       key={asset.id}
-                      className="flex items-center gap-4 rounded-lg border border-gray-200 px-4 py-3 transition hover:border-purple-300 hover:bg-purple-50/40"
+                      className="group flex items-center gap-3 rounded-lg border border-border/50 bg-background px-3 py-2.5 transition-all hover:border-primary/40 hover:bg-secondary/30 hover:shadow-sm"
                     >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100">
+                      <div className="flex size-9 items-center justify-center rounded-lg bg-secondary group-hover:bg-secondary/80 transition-colors">
                         {asset.type === "video" ? (
-                          <Video className="h-5 w-5 text-purple-600" />
+                          <Video className="size-4 text-foreground" />
                         ) : asset.type === "audio" ? (
-                          <Volume2 className="h-5 w-5 text-purple-600" />
+                          <Volume2 className="size-4 text-foreground" />
                         ) : (
-                          <ImageIcon className="h-5 w-5 text-purple-600" />
+                          <ImageIcon className="size-4 text-foreground" />
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-gray-900">
+                        <div className="truncate text-xs font-medium text-foreground">
                           {asset.name}
                         </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-[10px] text-muted-foreground">
                           {asset.type.toUpperCase()} • {asset.duration}
-                          {asset.source === "imported" ? " • Imported" : ""}
                         </div>
                       </div>
                       <Button
                         type="button"
                         size="xs"
-                        variant="outline"
+                        variant="ghost"
                         onClick={() => onAddAssetToTimeline(asset)}
-                        className="shrink-0 whitespace-nowrap text-xs"
+                        className="h-6 shrink-0 rounded-md px-2 text-[10px] font-medium hover:bg-secondary hover:text-foreground"
                       >
-                        Add to timeline
+                        Add
                       </Button>
                     </div>
                   ))
@@ -2085,54 +2065,63 @@ function SimpleInspectorPanel({
             </ScrollArea>
           </div>
         </TabsContent>
-        <TabsContent value="properties" className="h-full">
-          <ScrollArea className="h-full">
-            <div className="space-y-5 p-4 text-sm">
-              <div>
-                <h3 className="mb-2 text-sm font-medium text-gray-900">
-                  Master volume
+        <TabsContent value="properties" className="h-full m-0">
+          <ScrollArea className="h-full custom-scrollbar">
+            <div className="space-y-4 p-3 text-sm">
+              <div className="rounded-lg border border-border/50 bg-background p-3">
+                <h3 className="mb-2 text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Volume2 className="size-3.5 text-foreground" />
+                  Master Volume
                 </h3>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={masterVolume}
-                  onChange={(event) => setMasterVolume(Number(event.target.value))}
-                  className="w-full"
-                />
-                <div className="mt-1 text-xs text-gray-500">
-                  {Math.round(masterVolume * 100)}%
+                <div className="space-y-2">
+                  <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary/60 rounded-full transition-all"
+                      style={{ width: `${masterVolume * 100}%` }}
+                    />
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={masterVolume}
+                      onChange={(event) => setMasterVolume(Number(event.target.value))}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground text-center font-medium">
+                    {Math.round(masterVolume * 100)}%
+                  </div>
                 </div>
               </div>
               {selectedClips.length === 0 && (
-                <div className="rounded-lg border border-dashed border-gray-300 p-4 text-xs text-gray-500">
-                  Select a clip on the timeline to edit its properties.
+                <div className="rounded-lg border border-dashed border-border/50 bg-secondary/20 p-4 text-center text-xs text-muted-foreground">
+                  Select a clip to edit properties
                 </div>
               )}
               {selectedClips.length > 1 && (
-                <div className="rounded-lg border border-purple-200 bg-purple-50/60 p-4 text-xs text-purple-700">
-                  Multiple clips selected. Adjust start, trims, and fades individually for finer control.
+                <div className="rounded-lg border border-accent/20 bg-accent/5 p-3 text-xs text-accent font-medium">
+                  {selectedClips.length} clips selected
                 </div>
               )}
               {selectedClip && (
-                <div className="space-y-4">
-                  <div className="rounded-lg border border-gray-200 p-4">
-                    <div className="mb-3 flex items-center gap-2">
-                      {getClipTypeIcon(selectedClip.type, "h-5 w-5")}
-                      <div>
-                        <h3 className="text-sm font-semibold text-gray-900">
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-border/50 bg-background p-3">
+                    <div className="mb-3 flex items-center gap-2 pb-3 border-b border-border/50">
+                      {getClipTypeIcon(selectedClip.type, "size-5")}
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-xs font-semibold text-foreground truncate">
                           {selectedClip.name}
                         </h3>
-                        <p className="text-[11px] uppercase tracking-wide text-gray-500">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                           Track {selectedClip.track}
                         </p>
                       </div>
                     </div>
-                    <div className="space-y-3 text-xs text-gray-600">
-                      <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-3 text-xs">
+                      <div className="grid grid-cols-2 gap-2">
                         <label className="space-y-1">
-                          <span>Start (sec)</span>
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Start (s)</span>
                           <input
                             type="number"
                             min={0}
@@ -2143,11 +2132,11 @@ function SimpleInspectorPanel({
                                 startTime: Number(event.target.value),
                               })
                             }
-                            className="w-full rounded border border-gray-300 px-2 py-1 focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                            className="w-full rounded-md border border-border/50 bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
                           />
                         </label>
                         <label className="space-y-1">
-                          <span>Duration (sec)</span>
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Duration (s)</span>
                           <input
                             type="number"
                             min={0.1}
@@ -2158,13 +2147,13 @@ function SimpleInspectorPanel({
                                 duration: Number(event.target.value),
                               })
                             }
-                            className="w-full rounded border border-gray-300 px-2 py-1 focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                            className="w-full rounded-md border border-border/50 bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
                           />
                         </label>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-2">
                         <label className="space-y-1">
-                          <span>Track</span>
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Track</span>
                           <select
                             value={selectedClip.track}
                             onChange={(event) =>
@@ -2172,7 +2161,7 @@ function SimpleInspectorPanel({
                                 track: Number(event.target.value),
                               })
                             }
-                            className="w-full rounded border border-gray-300 px-2 py-1 focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                            className="w-full rounded-md border border-border/50 bg-background px-2 py-1.5 text-xs text-foreground focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
                           >
                             {trackOptions.map((option) => (
                               <option key={option.id} value={option.id}>
@@ -2182,69 +2171,89 @@ function SimpleInspectorPanel({
                           </select>
                         </label>
                         <label className="space-y-1">
-                          <span>Clip volume</span>
-                          <input
-                            type="range"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={selectedClip.volume ?? 1}
-                            onChange={(event) =>
-                              onUpdateClip(selectedClip.id, {
-                                volume: Number(event.target.value),
-                              })
-                            }
-                            className="w-full"
-                          />
-                          <span className="block text-[11px] text-gray-500">
-                            {Math.round((selectedClip.volume ?? 1) * 100)}%
-                          </span>
+                          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Volume</span>
+                          <div className="relative">
+                            <div className="h-2 w-full bg-secondary rounded-full overflow-hidden mt-1">
+                              <div
+                                className="h-full bg-primary/60 rounded-full"
+                                style={{ width: `${(selectedClip.volume ?? 1) * 100}%` }}
+                              />
+                              <input
+                                type="range"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                                value={selectedClip.volume ?? 1}
+                                onChange={(event) =>
+                                  onUpdateClip(selectedClip.id, {
+                                    volume: Number(event.target.value),
+                                  })
+                                }
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                              />
+                            </div>
+                            <span className="block text-[10px] text-muted-foreground text-center mt-1">
+                              {Math.round((selectedClip.volume ?? 1) * 100)}%
+                            </span>
+                          </div>
                         </label>
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-2">
                         <div className="space-y-1">
-                          <span className="block">Fade in</span>
-                          <input
-                            type="range"
-                            min={0}
-                            max={5}
-                            step={0.1}
-                            value={selectedClip.fadeInSec ?? 0}
-                            onChange={(event) =>
-                              onUpdateClip(selectedClip.id, {
-                                fadeInSec: Number(event.target.value),
-                              })
-                            }
-                            className="w-full"
-                          />
-                          <span className="block text-[11px] text-gray-500">
+                          <span className="block text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Fade In</span>
+                          <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary/60 rounded-full"
+                              style={{ width: `${((selectedClip.fadeInSec ?? 0) / 5) * 100}%` }}
+                            />
+                            <input
+                              type="range"
+                              min={0}
+                              max={5}
+                              step={0.1}
+                              value={selectedClip.fadeInSec ?? 0}
+                              onChange={(event) =>
+                                onUpdateClip(selectedClip.id, {
+                                  fadeInSec: Number(event.target.value),
+                                })
+                              }
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            />
+                          </div>
+                          <span className="block text-[10px] text-muted-foreground text-center">
                             {(selectedClip.fadeInSec ?? 0).toFixed(1)}s
                           </span>
                         </div>
                         <div className="space-y-1">
-                          <span className="block">Fade out</span>
-                          <input
-                            type="range"
-                            min={0}
-                            max={5}
-                            step={0.1}
-                            value={selectedClip.fadeOutSec ?? 0}
-                            onChange={(event) =>
-                              onUpdateClip(selectedClip.id, {
-                                fadeOutSec: Number(event.target.value),
-                              })
-                            }
-                            className="w-full"
-                          />
-                          <span className="block text-[11px] text-gray-500">
+                          <span className="block text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Fade Out</span>
+                          <div className="h-2 w-full bg-secondary rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary/60 rounded-full"
+                              style={{ width: `${((selectedClip.fadeOutSec ?? 0) / 5) * 100}%` }}
+                            />
+                            <input
+                              type="range"
+                              min={0}
+                              max={5}
+                              step={0.1}
+                              value={selectedClip.fadeOutSec ?? 0}
+                              onChange={(event) =>
+                                onUpdateClip(selectedClip.id, {
+                                  fadeOutSec: Number(event.target.value),
+                                })
+                              }
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            />
+                          </div>
+                          <span className="block text-[10px] text-muted-foreground text-center">
                             {(selectedClip.fadeOutSec ?? 0).toFixed(1)}s
                           </span>
                         </div>
                       </div>
-                      <div className="rounded-md bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
-                        <div>Starts at {formatTime(selectedClip.startTime)}</div>
+                      <div className="rounded-md bg-secondary/30 px-3 py-2 text-[10px] text-muted-foreground space-y-0.5 font-mono">
+                        <div>Start: {formatTime(selectedClip.startTime)}</div>
                         {clipEnd != null && (
-                          <div>Ends at {formatTime(clipEnd)}</div>
+                          <div>End: {formatTime(clipEnd)}</div>
                         )}
                       </div>
                     </div>
