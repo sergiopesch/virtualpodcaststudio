@@ -53,36 +53,18 @@ export default function Library() {
       <div className="flex">
         <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
         <div className="flex flex-1 flex-col min-w-0">
-          <Header
-            title="Your Library"
-            description="Manage your generated episodes, research papers, and assets"
-          />
           <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6 lg:p-8 overflow-y-auto flex-1">
             <div className="max-w-7xl mx-auto space-y-8">
-              {/* Header Section */}
-              <div className="relative overflow-hidden rounded-2xl bg-card border border-border/50 text-foreground p-8 lg:p-10 shadow-apple-card glass-panel">
-                <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                  <div>
-                    <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-2">
-                      Your Library
-                    </h1>
-                    <p className="text-muted-foreground text-lg max-w-xl">
-                      Manage your generated episodes, research papers, and assets.
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    <Button variant="outline" className="border-border/50 shadow-sm">
-                      <Filter className="size-4 mr-2" />
-                      Filter
-                    </Button>
-                    <Button className="shadow-md font-semibold">
-                      <Plus className="size-4 mr-2" />
-                      New Project
-                    </Button>
-                  </div>
-                </div>
+              <div className="flex justify-end gap-3">
+                <Button variant="outline" className="border-border/50 shadow-sm">
+                  <Filter className="size-4 mr-2" />
+                  Filter
+                </Button>
+                <Button className="shadow-md font-semibold">
+                  <Plus className="size-4 mr-2" />
+                  New Project
+                </Button>
               </div>
-
               {/* Tabs */}
               <div className="flex border-b border-border/50">
                 {tabs.map((t) => (

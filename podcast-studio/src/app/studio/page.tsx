@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSidebar } from "@/contexts/sidebar-context";
 import { useApiConfig } from "@/contexts/api-config-context";
+import { useRealtimeConversation } from "@/hooks/useRealtimeConversation";
 import {
   encodePcm16ChunksToWav,
   saveConversationToSession,
@@ -31,6 +32,7 @@ import {
   Sparkles,
   Video,
   Volume2,
+  ArrowRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -217,8 +219,7 @@ const formatTime = (seconds: number) => {
 
 const StudioPage: React.FC = () => {
   const { collapsed, toggleCollapsed } = useSidebar();
-  const { activeProvider, apiKeys, defaultModels, models, supportsRealtime } = useApiConfig();
-  const activeApiKey = (apiKeys[activeProvider] ?? "").trim();
+  const { activeProvider, defaultModels, models } = useApiConfig();
   const activeModel = (models?.[activeProvider] ?? defaultModels[activeProvider]).trim();
   const router = useRouter();
 
@@ -240,26 +241,14 @@ const StudioPage: React.FC = () => {
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
-  const micChunkQueueRef = useRef<Uint8Array[]>([]);
   const micFlushIntervalRef = useRef<number | null>(null);
-  const isUploadingRef = useRef(false);
-  const isCommittingRef = useRef(false);
   const aiAudioChunksRef = useRef<Uint8Array[]>([]);
   const hostAudioChunksRef = useRef<Uint8Array[]>([]);
   const MAX_AUDIO_CHUNKS = 10000; // Limit to prevent memory exhaustion (~240MB at 24kHz)
-  const audioEventSourceRef = useRef<EventSource | null>(null);
-  const aiTranscriptEventSourceRef = useRef<EventSource | null>(null);
-  const userTranscriptEventSourceRef = useRef<EventSource | null>(null);
-  const hasAiTranscriptSseRef = useRef(false);
-  const hasUserTranscriptSseRef = useRef(false);
   const hasCapturedAudioRef = useRef(false);
   const latestConversationRef = useRef<StoredConversation | null>(null);
   const aiPlaybackTimeRef = useRef(0);
   const aiPlaybackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
-  const localVadSpeakingRef = useRef(false);
-  const lastVoiceActivityAtRef = useRef<number | null>(null);
-  const VAD_THRESHOLD = 0.02; // simple RMS proxy threshold for voice activity
-  const VAD_SILENCE_MS = 900; // commit after ~0.9s of silence
 
   const entrySequenceRef = useRef(0);
   const hostActiveIdRef = useRef<string | null>(null);
@@ -270,6 +259,369 @@ const StudioPage: React.FC = () => {
   const aiTypingIntervalRef = useRef<number | null>(null);
 
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // --- Helpers for Transcript Management ---
+
+  const updateEntryText = useCallback((id: string, updater: (value: string) => string) => {
+    const updatedAt = Date.now();
+    setEntries((prev) =>
+      prev.map((entry) =>
+        entry.id === id
+          ? {
+            ...entry,
+            text: updater(entry.text),
+            updatedAt,
+          }
+          : entry,
+      ),
+    );
+  }, []);
+
+  const markEntryFinal = useCallback((id: string) => {
+    const completedAt = Date.now();
+    setEntries((prev) =>
+      prev.map((entry) =>
+        entry.id === id
+          ? {
+            ...entry,
+            status: "final",
+            completedAt,
+          }
+          : entry,
+      ),
+    );
+  }, []);
+
+  const startSegment = useCallback((speaker: Speaker) => {
+    const id = `${speaker}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const startedAt = Date.now();
+    const entry: TranscriptEntry = {
+      id,
+      speaker,
+      text: "",
+      status: "streaming",
+      startedAt,
+      updatedAt: startedAt,
+      sequence: entrySequenceRef.current++,
+    };
+    setEntries((prev) => {
+      const next = [...prev, entry];
+      next.sort((a, b) => a.sequence - b.sequence);
+      return next;
+    });
+    if (speaker === "host") {
+      hostActiveIdRef.current = id;
+    } else {
+      aiActiveIdRef.current = id;
+    }
+    return id;
+  }, []);
+
+  const ensureSegment = useCallback((speaker: Speaker) => {
+    if (speaker === "host") {
+      if (!hostActiveIdRef.current) {
+        const id = startSegment("host");
+        setIsHostSpeaking(true);
+        return id;
+      }
+      setIsHostSpeaking(true);
+      return hostActiveIdRef.current;
+    }
+    if (!aiActiveIdRef.current) {
+      const id = startSegment("ai");
+      setIsAiSpeaking(true);
+      return id;
+    }
+    setIsAiSpeaking(true);
+    return aiActiveIdRef.current;
+  }, [startSegment]);
+
+  const drainPending = useCallback(
+    (speaker: Speaker, flushAll: boolean) => {
+      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
+      const pending = pendingRef.current;
+      if (!pending) {
+        return;
+      }
+
+      let activeId: string | null;
+      if (speaker === "host") {
+        activeId = hostActiveIdRef.current;
+        if (!activeId) {
+          activeId = ensureSegment("host");
+        }
+      } else {
+        activeId = aiActiveIdRef.current;
+        if (!activeId) {
+          activeId = ensureSegment("ai");
+        }
+      }
+
+      if (!activeId) {
+        return;
+      }
+
+      if (flushAll) {
+        const chunk = pending;
+        pendingRef.current = "";
+        updateEntryText(activeId, (value) => value + chunk);
+        return;
+      }
+
+      const [chunk, rest] = nextWordChunk(pending);
+      if (!chunk) {
+        pendingRef.current = rest;
+        return;
+      }
+
+      pendingRef.current = rest;
+      updateEntryText(activeId, (value) => value + chunk);
+    },
+    [ensureSegment, updateEntryText],
+  );
+
+  const stopTypingInterval = useCallback((speaker: Speaker) => {
+    const ref = speaker === "host" ? hostTypingIntervalRef : aiTypingIntervalRef;
+    if (ref.current != null) {
+      window.clearInterval(ref.current);
+      ref.current = null;
+    }
+  }, []);
+
+  const ensureTypingInterval = useCallback(
+    (speaker: Speaker) => {
+      const ref = speaker === "host" ? hostTypingIntervalRef : aiTypingIntervalRef;
+      if (ref.current != null) {
+        return;
+      }
+      const tick = speaker === "host" ? 36 : 28;
+      ref.current = window.setInterval(() => {
+        drainPending(speaker, false);
+      }, tick);
+    },
+    [drainPending],
+  );
+
+  const appendToSegment = useCallback(
+    (speaker: Speaker, delta: string) => {
+      if (!delta) {
+        return;
+      }
+      ensureSegment(speaker);
+      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
+      pendingRef.current += delta;
+      ensureTypingInterval(speaker);
+      drainPending(speaker, false);
+    },
+    [drainPending, ensureSegment, ensureTypingInterval],
+  );
+
+  const finalizeSegment = useCallback(
+    (speaker: Speaker, finalText?: string) => {
+      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
+      const activeRef = speaker === "host" ? hostActiveIdRef : aiActiveIdRef;
+
+      if (!activeRef.current && !pendingRef.current && finalText == null) {
+        if (speaker === "host") {
+          setIsHostSpeaking(false);
+        } else {
+          setIsAiSpeaking(false);
+        }
+        return;
+      }
+
+      if (!activeRef.current) {
+        ensureSegment(speaker);
+      }
+
+      const activeId = activeRef.current;
+      if (!activeId) {
+        pendingRef.current = "";
+        return;
+      }
+
+      if (pendingRef.current) {
+        const chunk = pendingRef.current;
+        pendingRef.current = "";
+        updateEntryText(activeId, (value) => value + chunk);
+      }
+
+      if (typeof finalText === "string") {
+        updateEntryText(activeId, () => finalText);
+      }
+
+      markEntryFinal(activeId);
+      activeRef.current = null;
+      pendingRef.current = "";
+      stopTypingInterval(speaker);
+
+      if (speaker === "host") {
+        setIsHostSpeaking(false);
+      } else {
+        setIsAiSpeaking(false);
+      }
+    },
+    [ensureSegment, markEntryFinal, stopTypingInterval, updateEntryText],
+  );
+
+  const handleAiTranscriptDelta = useCallback(
+    (delta: string) => {
+      appendToSegment("ai", delta);
+    },
+    [appendToSegment],
+  );
+
+  const handleUserTranscriptionComplete = useCallback(
+    (transcript: string) => {
+      finalizeSegment("host", transcript);
+    },
+    [finalizeSegment],
+  );
+
+  const resetConversation = useCallback(() => {
+    hostActiveIdRef.current = null;
+    aiActiveIdRef.current = null;
+    hostPendingRef.current = "";
+    aiPendingRef.current = "";
+    stopTypingInterval("host");
+    stopTypingInterval("ai");
+    setIsHostSpeaking(false);
+    setIsAiSpeaking(false);
+    setEntries([]);
+    entrySequenceRef.current = 0;
+  }, [stopTypingInterval]);
+
+  const base64ToUint8Array = useCallback((base64: string): Uint8Array => {
+    const sanitized = (base64 || "").replace(/\s+/g, "");
+
+    if (typeof window !== "undefined" && typeof window.atob === "function") {
+      const binary = window.atob(sanitized);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index++) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    }
+
+    if (typeof Buffer !== "undefined") {
+      return Uint8Array.from(Buffer.from(sanitized, "base64"));
+    }
+
+    throw new Error("Base64 decoding is not supported in this environment.");
+  }, []);
+
+  const playAiAudioChunk = useCallback(
+    async (chunk: Uint8Array) => {
+      if (chunk.length === 0) {
+        return;
+      }
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      let context = audioContextRef.current;
+      if (!context) {
+        const AudioContextConstructor =
+          window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) {
+          console.warn("[WARN] Web Audio API not available for AI playback");
+          return;
+        }
+        context = new AudioContextConstructor({ sampleRate: 24000 });
+        audioContextRef.current = context;
+        console.log("[INFO] Audio context created for AI playback");
+      }
+
+      if (context.state === "suspended") {
+        console.log("[INFO] Resuming suspended audio context");
+        await context.resume().catch(() => undefined);
+      }
+
+      const frameCount = Math.floor(chunk.length / 2);
+      if (frameCount <= 0) {
+        return;
+      }
+
+      const audioBuffer = context.createBuffer(1, frameCount, 24000);
+      const channel = audioBuffer.getChannelData(0);
+      const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      for (let index = 0; index < frameCount; index++) {
+        channel[index] = view.getInt16(index * 2, true) / 32767;
+      }
+
+      const source = context.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(context.destination);
+
+      const startAt = Math.max(context.currentTime, aiPlaybackTimeRef.current);
+      source.start(startAt);
+      aiPlaybackSourcesRef.current.push(source);
+      aiPlaybackTimeRef.current = startAt + audioBuffer.duration;
+      setIsAudioPlaying(true);
+      console.log("[DEBUG] Playing AI audio chunk, duration:", audioBuffer.duration.toFixed(3), "s");
+
+      source.onended = () => {
+        aiPlaybackSourcesRef.current = aiPlaybackSourcesRef.current.filter((node) => node !== source);
+        if (aiPlaybackSourcesRef.current.length === 0) {
+          const remaining = aiPlaybackTimeRef.current - context!.currentTime;
+          if (remaining <= 0.05) {
+            setIsAudioPlaying(false);
+            aiPlaybackTimeRef.current = context!.currentTime;
+          }
+        }
+      };
+    },
+    [setIsAudioPlaying],
+  );
+
+  // --- Use Realtime Hook ---
+
+  const rt = useRealtimeConversation({
+    onAudioDelta: (base64) => {
+      try {
+        const bytes = base64ToUint8Array(base64);
+        if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+          aiAudioChunksRef.current.push(bytes);
+        }
+        void playAiAudioChunk(bytes);
+        setIsAiSpeaking(true);
+      } catch (e) {
+        console.error("Failed to process AI audio delta", e);
+      }
+    },
+    onAiTranscriptDelta: (text) => {
+      handleAiTranscriptDelta(text);
+    },
+    onUserTranscript: (text) => {
+      handleUserTranscriptionComplete(text);
+    },
+    onSpeechStarted: () => {
+      setIsHostSpeaking(true);
+      ensureSegment("host");
+    },
+    onSpeechStopped: () => {
+      setIsHostSpeaking(false);
+    }
+  });
+
+  const uint8ArrayToBase64 = useCallback((bytes: Uint8Array): string => {
+    if (typeof window !== "undefined" && typeof window.btoa === "function") {
+      let binary = "";
+      for (let index = 0; index < bytes.length; index++) {
+        binary += String.fromCharCode(bytes[index]);
+      }
+      return window.btoa(binary);
+    }
+
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(bytes).toString("base64");
+    }
+
+    throw new Error("Base64 encoding is not supported in this environment.");
+  }, []);
+
+  // --- Initialization ---
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -364,456 +716,6 @@ const StudioPage: React.FC = () => {
     scrollToLatest();
   }, [entries, isHostSpeaking, isAiSpeaking, scrollToLatest]);
 
-  const startSegment = useCallback((speaker: Speaker) => {
-    const id = `${speaker}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-    const startedAt = Date.now();
-    const entry: TranscriptEntry = {
-      id,
-      speaker,
-      text: "",
-      status: "streaming",
-      startedAt,
-      updatedAt: startedAt,
-      sequence: entrySequenceRef.current++,
-    };
-    setEntries((prev) => {
-      const next = [...prev, entry];
-      next.sort((a, b) => a.sequence - b.sequence);
-      return next;
-    });
-    if (speaker === "host") {
-      hostActiveIdRef.current = id;
-    } else {
-      aiActiveIdRef.current = id;
-    }
-    return id;
-  }, []);
-
-  const ensureSegment = useCallback((speaker: Speaker) => {
-    if (speaker === "host") {
-      if (!hostActiveIdRef.current) {
-        const id = startSegment("host");
-        setIsHostSpeaking(true);
-        return id;
-      }
-      setIsHostSpeaking(true);
-      return hostActiveIdRef.current;
-    }
-    if (!aiActiveIdRef.current) {
-      const id = startSegment("ai");
-      setIsAiSpeaking(true);
-      return id;
-    }
-    setIsAiSpeaking(true);
-    return aiActiveIdRef.current;
-  }, [startSegment]);
-
-  const updateEntryText = useCallback((id: string, updater: (value: string) => string) => {
-    const updatedAt = Date.now();
-    setEntries((prev) =>
-      prev.map((entry) =>
-        entry.id === id
-          ? {
-            ...entry,
-            text: updater(entry.text),
-            updatedAt,
-          }
-          : entry,
-      ),
-    );
-  }, []);
-
-  const markEntryFinal = useCallback((id: string) => {
-    const completedAt = Date.now();
-    setEntries((prev) =>
-      prev.map((entry) =>
-        entry.id === id
-          ? {
-            ...entry,
-            status: "final",
-            completedAt,
-          }
-          : entry,
-      ),
-    );
-  }, []);
-
-  const drainPending = useCallback(
-    (speaker: Speaker, flushAll: boolean) => {
-      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
-      const pending = pendingRef.current;
-      if (!pending) {
-        return;
-      }
-
-      let activeId: string | null;
-      if (speaker === "host") {
-        activeId = hostActiveIdRef.current;
-        if (!activeId) {
-          activeId = ensureSegment("host");
-        }
-      } else {
-        activeId = aiActiveIdRef.current;
-        if (!activeId) {
-          activeId = ensureSegment("ai");
-        }
-      }
-
-      if (!activeId) {
-        return;
-      }
-
-      if (flushAll) {
-        const chunk = pending;
-        pendingRef.current = "";
-        updateEntryText(activeId, (value) => value + chunk);
-        return;
-      }
-
-      const [chunk, rest] = nextWordChunk(pending);
-      if (!chunk) {
-        pendingRef.current = rest;
-        return;
-      }
-
-      pendingRef.current = rest;
-      updateEntryText(activeId, (value) => value + chunk);
-    },
-    [ensureSegment, updateEntryText],
-  );
-
-  const stopTypingInterval = useCallback((speaker: Speaker) => {
-    const ref = speaker === "host" ? hostTypingIntervalRef : aiTypingIntervalRef;
-    if (ref.current != null) {
-      window.clearInterval(ref.current);
-      ref.current = null;
-    }
-  }, []);
-
-  const ensureTypingInterval = useCallback(
-    (speaker: Speaker) => {
-      const ref = speaker === "host" ? hostTypingIntervalRef : aiTypingIntervalRef;
-      if (ref.current != null) {
-        return;
-      }
-      const tick = speaker === "host" ? 36 : 28;
-      ref.current = window.setInterval(() => {
-        drainPending(speaker, false);
-      }, tick);
-    },
-    [drainPending],
-  );
-
-  const appendToSegment = useCallback(
-    (speaker: Speaker, delta: string) => {
-      if (!delta) {
-        return;
-      }
-      console.log(`[DEBUG] Appending to ${speaker} segment:`, delta.substring(0, 30));
-      ensureSegment(speaker);
-      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
-      pendingRef.current += delta;
-      ensureTypingInterval(speaker);
-      drainPending(speaker, false);
-    },
-    [drainPending, ensureSegment, ensureTypingInterval],
-  );
-
-  const finalizeSegment = useCallback(
-    (speaker: Speaker, finalText?: string) => {
-      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
-      const activeRef = speaker === "host" ? hostActiveIdRef : aiActiveIdRef;
-
-      if (!activeRef.current && !pendingRef.current && finalText == null) {
-        if (speaker === "host") {
-          setIsHostSpeaking(false);
-        } else {
-          setIsAiSpeaking(false);
-        }
-        return;
-      }
-
-      if (!activeRef.current) {
-        ensureSegment(speaker);
-      }
-
-      const activeId = activeRef.current;
-      if (!activeId) {
-        pendingRef.current = "";
-        return;
-      }
-
-      if (pendingRef.current) {
-        const chunk = pendingRef.current;
-        pendingRef.current = "";
-        updateEntryText(activeId, (value) => value + chunk);
-      }
-
-      if (typeof finalText === "string") {
-        updateEntryText(activeId, () => finalText);
-      }
-
-      markEntryFinal(activeId);
-      activeRef.current = null;
-      pendingRef.current = "";
-      stopTypingInterval(speaker);
-
-      if (speaker === "host") {
-        setIsHostSpeaking(false);
-      } else {
-        setIsAiSpeaking(false);
-      }
-    },
-    [ensureSegment, markEntryFinal, stopTypingInterval, updateEntryText],
-  );
-
-  const resetConversation = useCallback(() => {
-    hostActiveIdRef.current = null;
-    aiActiveIdRef.current = null;
-    hostPendingRef.current = "";
-    aiPendingRef.current = "";
-    stopTypingInterval("host");
-    stopTypingInterval("ai");
-    setIsHostSpeaking(false);
-    setIsAiSpeaking(false);
-    setEntries([]);
-    entrySequenceRef.current = 0;
-  }, [stopTypingInterval]);
-
-  const base64ToUint8Array = useCallback((base64: string): Uint8Array => {
-    const sanitized = (base64 || "").replace(/\s+/g, "");
-
-    if (typeof window !== "undefined" && typeof window.atob === "function") {
-      const binary = window.atob(sanitized);
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index++) {
-        bytes[index] = binary.charCodeAt(index);
-      }
-      return bytes;
-    }
-
-    if (typeof Buffer !== "undefined") {
-      return Uint8Array.from(Buffer.from(sanitized, "base64"));
-    }
-
-    throw new Error("Base64 decoding is not supported in this environment.");
-  }, []);
-
-  const uint8ArrayToBase64 = useCallback((bytes: Uint8Array): string => {
-    if (typeof window !== "undefined" && typeof window.btoa === "function") {
-      let binary = "";
-      for (let index = 0; index < bytes.length; index++) {
-        binary += String.fromCharCode(bytes[index]);
-      }
-      return window.btoa(binary);
-    }
-
-    if (typeof Buffer !== "undefined") {
-      return Buffer.from(bytes).toString("base64");
-    }
-
-    throw new Error("Base64 encoding is not supported in this environment.");
-  }, []);
-
-  const playAiAudioChunk = useCallback(
-    async (chunk: Uint8Array) => {
-      if (chunk.length === 0) {
-        return;
-      }
-
-      if (typeof window === "undefined") {
-        return;
-      }
-
-      let context = audioContextRef.current;
-      if (!context) {
-        const AudioContextConstructor =
-          window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AudioContextConstructor) {
-          console.warn("[WARN] Web Audio API not available for AI playback");
-          return;
-        }
-        context = new AudioContextConstructor({ sampleRate: 24000 });
-        audioContextRef.current = context;
-        console.log("[INFO] Audio context created for AI playback");
-      }
-
-      if (context.state === "suspended") {
-        console.log("[INFO] Resuming suspended audio context");
-        await context.resume().catch(() => undefined);
-      }
-
-      const frameCount = Math.floor(chunk.length / 2);
-      if (frameCount <= 0) {
-        return;
-      }
-
-      const audioBuffer = context.createBuffer(1, frameCount, 24000);
-      const channel = audioBuffer.getChannelData(0);
-      const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      for (let index = 0; index < frameCount; index++) {
-        channel[index] = view.getInt16(index * 2, true) / 32767;
-      }
-
-      const source = context.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(context.destination);
-
-      const startAt = Math.max(context.currentTime, aiPlaybackTimeRef.current);
-      source.start(startAt);
-      aiPlaybackSourcesRef.current.push(source);
-      aiPlaybackTimeRef.current = startAt + audioBuffer.duration;
-      setIsAudioPlaying(true);
-      console.log("[DEBUG] Playing AI audio chunk, duration:", audioBuffer.duration.toFixed(3), "s");
-
-      source.onended = () => {
-        aiPlaybackSourcesRef.current = aiPlaybackSourcesRef.current.filter((node) => node !== source);
-        if (aiPlaybackSourcesRef.current.length === 0) {
-          const remaining = aiPlaybackTimeRef.current - context!.currentTime;
-          if (remaining <= 0.05) {
-            setIsAudioPlaying(false);
-            aiPlaybackTimeRef.current = context!.currentTime;
-          }
-        }
-      };
-    },
-    [setIsAudioPlaying],
-  );
-
-
-  const ensureRealtimeSession = useCallback(async () => {
-    if (!supportsRealtime(activeProvider)) {
-      throw new Error(
-        "Realtime studio is not supported for the selected provider. Choose a provider with realtime capabilities in Settings.",
-      );
-    }
-
-    console.log("[INFO] Starting realtime session with config", {
-      sessionId,
-      provider: activeProvider,
-      model: activeModel,
-      hasPaper: !!currentPaper,
-      paperTitle: currentPaper?.title
-    });
-
-    const payload = {
-      sessionId,
-      provider: activeProvider,
-      apiKey: activeApiKey || undefined,
-      model: activeModel || undefined,
-      paper: currentPaper,
-    };
-
-    const response = await fetch("/api/rt/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      let message = "Failed to start realtime session.";
-      let code: string | undefined;
-      try {
-        const data = (await response.json()) as { error?: string; code?: string };
-        if (typeof data.error === "string" && data.error.trim()) {
-          message = data.error.trim();
-        }
-        if (typeof data.code === "string" && data.code.trim()) {
-          code = data.code.trim();
-        }
-      } catch {
-        message = await response.text();
-      }
-      console.error("[ERROR] Failed to start realtime session", { message, code, status: response.status });
-      const error = new Error(message || "Failed to start realtime session.");
-      if (code) {
-        (error as { code?: string }).code = code;
-      }
-      throw error;
-    }
-
-    const result = await response.json().catch(() => ({}));
-    console.log("[INFO] Realtime session started successfully", result);
-    isSessionActiveRef.current = true;
-    return result;
-  }, [activeApiKey, activeModel, activeProvider, currentPaper, sessionId, supportsRealtime]);
-
-  const commitAudioTurn = useCallback(async () => {
-    if (isCommittingRef.current) {
-      console.log("[DEBUG] Skipping commit - already committing");
-      return;
-    }
-
-    console.log("[INFO] Committing audio turn", {
-      sessionId,
-      micChunksQueued: micChunkQueueRef.current.length,
-      hostAudioChunks: hostAudioChunksRef.current.length
-    });
-    isCommittingRef.current = true;
-    try {
-      const response = await fetch("/api/rt/audio-commit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({ sessionId }),
-      });
-
-      if (!response.ok) {
-        const message = await response.text();
-        console.error("[ERROR] Commit failed with status", response.status, message);
-        throw new Error(message || "Failed to commit audio turn");
-      }
-      const result = await response.json();
-      console.log("[INFO] Audio turn committed successfully", result);
-    } catch (err) {
-      console.error("[ERROR] Commit turn failed", err);
-    } finally {
-      isCommittingRef.current = false;
-    }
-  }, [sessionId]);
-
-  const uploadMicChunks = useCallback(async () => {
-    if (micChunkQueueRef.current.length === 0 || isUploadingRef.current || !isSessionActiveRef.current) {
-      return;
-    }
-
-    const chunks = micChunkQueueRef.current.splice(0, micChunkQueueRef.current.length);
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const merged = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    isUploadingRef.current = true;
-    try {
-      const response = await fetch("/api/rt/audio-append", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({ sessionId, base64: uint8ArrayToBase64(merged) }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(async () => ({ error: await response.text() }));
-        const message = typeof data.error === "string" && data.error.trim() ? data.error : "Failed to upload audio";
-
-        if (message.includes("Session not ready")) {
-          console.warn("[WARN] Session not ready for audio upload, dropping chunk.");
-          return;
-        }
-
-        throw new Error(message);
-      }
-    } catch (error) {
-      console.error("[ERROR] Failed to upload audio chunk", error);
-    } finally {
-      isUploadingRef.current = false;
-    }
-  }, [sessionId, uint8ArrayToBase64]);
-
   const stopMicrophonePipeline = useCallback(() => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
@@ -823,11 +725,8 @@ const StudioPage: React.FC = () => {
       window.clearInterval(micFlushIntervalRef.current);
       micFlushIntervalRef.current = null;
     }
-    void uploadMicChunks();
-    micChunkQueueRef.current = [];
-    isUploadingRef.current = false;
     setIsRecording(false);
-  }, [uploadMicChunks]);
+  }, []);
 
   const startMicrophonePipeline = useCallback(async () => {
     try {
@@ -862,34 +761,21 @@ const StudioPage: React.FC = () => {
       // Capture mic locally for saving the conversation (no uploads)
       scriptProcessor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
-        // Track simple voice activity using peak magnitude
-        let maxAbs = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          const abs = Math.abs(inputData[i]);
-          if (abs > maxAbs) maxAbs = abs;
-        }
-        if (maxAbs > VAD_THRESHOLD) {
-          localVadSpeakingRef.current = true;
-          lastVoiceActivityAtRef.current = Date.now();
-          setIsHostSpeaking(true);
-          // Ensure we have a segment ready while speaking
-          try {
-            ensureSegment("host");
-          } catch { }
-        }
+        
         const pcm16Buffer = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           const sample = Math.max(-1, Math.min(1, inputData[i]));
           pcm16Buffer[i] = Math.round(sample * 32767);
         }
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
-        micChunkQueueRef.current.push(new Uint8Array(uint8Array));
+        
+        // Send to realtime hook immediately
+        const base64 = uint8ArrayToBase64(uint8Array);
+        rt.sendAudioChunk(base64);
 
-        // Prevent memory exhaustion by limiting chunk storage
+        // Store for saving
         if (hostAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
           hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
-        } else {
-          console.warn("[WARN] Maximum audio chunk limit reached. Oldest chunks will be dropped.");
         }
 
         if (!hasCapturedAudioRef.current) {
@@ -914,39 +800,11 @@ const StudioPage: React.FC = () => {
             silentGain.disconnect();
           } catch { }
           stream.getTracks().forEach((track) => track.stop());
-          if (micFlushIntervalRef.current != null) {
-            window.clearInterval(micFlushIntervalRef.current);
-            micFlushIntervalRef.current = null;
-          }
-          void uploadMicChunks();
         },
       };
 
       mediaRecorderRef.current = processor;
-      console.log("[INFO] Microphone pipeline started, beginning audio capture");
-      micFlushIntervalRef.current = window.setInterval(() => {
-        void (async () => {
-          await uploadMicChunks();
-          // Fallback commit if server-side VAD events don't arrive
-          const now = Date.now();
-          if (
-            localVadSpeakingRef.current &&
-            hasCapturedAudioRef.current &&
-            lastVoiceActivityAtRef.current != null &&
-            now - lastVoiceActivityAtRef.current > VAD_SILENCE_MS &&
-            !isCommittingRef.current
-          ) {
-            try {
-              localVadSpeakingRef.current = false;
-              setIsHostSpeaking(false);
-              await uploadMicChunks();
-              await commitAudioTurn();
-            } catch (e) {
-              console.error("[ERROR] Fallback commit failed", e);
-            }
-          }
-        })();
-      }, 200);
+      console.log("[INFO] Microphone pipeline started");
       setIsRecording(true);
       return true;
     } catch (error) {
@@ -955,25 +813,12 @@ const StudioPage: React.FC = () => {
       setError("Failed to access microphone. Please check permissions.");
       return false;
     }
-  }, [uploadMicChunks, ensureSegment, commitAudioTurn]);
+  }, [rt, uint8ArrayToBase64]);
 
   const teardownRealtime = useCallback(async () => {
     stopMicrophonePipeline();
+    rt.disconnect();
 
-    if (audioEventSourceRef.current) {
-      audioEventSourceRef.current.close();
-      audioEventSourceRef.current = null;
-    }
-    if (userTranscriptEventSourceRef.current) {
-      userTranscriptEventSourceRef.current.close();
-      userTranscriptEventSourceRef.current = null;
-    }
-    if (aiTranscriptEventSourceRef.current) {
-      aiTranscriptEventSourceRef.current.close();
-      aiTranscriptEventSourceRef.current = null;
-    }
-    hasUserTranscriptSseRef.current = false;
-    hasAiTranscriptSseRef.current = false;
     setIsAiSpeaking(false);
     setIsHostSpeaking(false);
 
@@ -991,22 +836,11 @@ const StudioPage: React.FC = () => {
       audioContextRef.current = null;
     }
 
-    micChunkQueueRef.current = [];
     hostAudioChunksRef.current = [];
     aiAudioChunksRef.current = [];
-    isUploadingRef.current = false;
     hasCapturedAudioRef.current = false;
     isSessionActiveRef.current = false;
-    try {
-      await fetch("/api/rt/stop", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-      });
-    } catch (error) {
-      console.debug("[DEBUG] Failed to notify realtime stop", error);
-    }
-  }, [sessionId, stopMicrophonePipeline]);
+  }, [rt, stopMicrophonePipeline]);
 
   const buildConversationPayload = useCallback((): StoredConversation | null => {
     if (!currentPaper || entries.length === 0) {
@@ -1071,175 +905,6 @@ const StudioPage: React.FC = () => {
     };
   }, [currentPaper, entries, sessionDuration]);
 
-  useEffect(() => {
-    if (phase === "live") {
-      void ensureRealtimeSession();
-    }
-  }, [ensureRealtimeSession, phase]);
-
-  const handleUserTranscriptionDelta = useCallback(
-    (delta: string) => {
-      appendToSegment("host", delta);
-    },
-    [appendToSegment],
-  );
-
-  const handleUserTranscriptionComplete = useCallback(
-    (transcript: string) => {
-      finalizeSegment("host", transcript);
-    },
-    [finalizeSegment],
-  );
-
-  const handleAiTranscriptDelta = useCallback(
-    (delta: string) => {
-      appendToSegment("ai", delta);
-    },
-    [appendToSegment],
-  );
-
-  const attachRealtimeStreams = useCallback(() => {
-    const params = new URLSearchParams({ sessionId });
-
-    if (aiTranscriptEventSourceRef.current) {
-      aiTranscriptEventSourceRef.current.close();
-      aiTranscriptEventSourceRef.current = null;
-    }
-    if (userTranscriptEventSourceRef.current) {
-      userTranscriptEventSourceRef.current.close();
-      userTranscriptEventSourceRef.current = null;
-    }
-    if (audioEventSourceRef.current) {
-      audioEventSourceRef.current.close();
-      audioEventSourceRef.current = null;
-    }
-
-    const transcriptSource = new EventSource(`/api/rt/transcripts?${params.toString()}`);
-    console.log("[INFO] AI transcript EventSource created, waiting for events...");
-
-    transcriptSource.onopen = () => {
-      console.log("[INFO] AI transcript stream connected successfully");
-    };
-
-    transcriptSource.onmessage = (event) => {
-      const text = event.data ?? "";
-      if (text) {
-        // console.log("[DEBUG] AI transcript delta received:", text.substring(0, 50));
-        handleAiTranscriptDelta(text);
-      }
-    };
-    transcriptSource.addEventListener("done", () => {
-      console.log("[INFO] AI response complete - finalizing segment");
-      finalizeSegment("ai");
-      setIsAiSpeaking(false);
-    });
-    transcriptSource.onerror = (error) => {
-      // Only log errors if the stream is in a failed state
-      if (transcriptSource.readyState === EventSource.CLOSED) {
-        console.error("[ERROR] AI transcript stream closed unexpectedly", error);
-      } else if (transcriptSource.readyState === EventSource.CONNECTING) {
-        console.log("[INFO] AI transcript stream reconnecting...");
-      }
-    };
-    aiTranscriptEventSourceRef.current = transcriptSource;
-    hasAiTranscriptSseRef.current = true;
-
-    const userSource = new EventSource(`/api/rt/user-transcripts?${params.toString()}`);
-    console.log("[INFO] User transcript EventSource created, waiting for events...");
-
-    userSource.onopen = () => {
-      console.log("[INFO] User transcript stream connected successfully");
-    };
-
-    userSource.addEventListener("delta", (event) => {
-      const text = (event as MessageEvent).data ?? "";
-      if (text) {
-        // console.log("[DEBUG] User transcript delta received:", text.substring(0, 50));
-        handleUserTranscriptionDelta(text);
-      }
-    });
-    userSource.addEventListener("complete", (event) => {
-      const text = (event as MessageEvent).data ?? "";
-      console.log("[INFO] User transcript complete:", text);
-      handleUserTranscriptionComplete(text);
-    });
-    userSource.addEventListener("speech-started", () => {
-      console.log("[INFO] User speech started - creating transcript segment");
-      setIsHostSpeaking(true);
-      // Ensure a segment is ready when user starts speaking
-      ensureSegment("host");
-    });
-    userSource.addEventListener("speech-stopped", () => {
-      console.log("[INFO] Speech stopped detected - uploading chunks and committing turn");
-      setIsHostSpeaking(false);
-      void (async () => {
-        await uploadMicChunks();
-        await commitAudioTurn();
-      })();
-    });
-    userSource.onerror = (error) => {
-      // Only log errors if the stream is in a failed state
-      if (userSource.readyState === EventSource.CLOSED) {
-        console.error("[ERROR] User transcript stream closed unexpectedly", error);
-      } else if (userSource.readyState === EventSource.CONNECTING) {
-        console.log("[INFO] User transcript stream reconnecting...");
-      }
-    };
-    userTranscriptEventSourceRef.current = userSource;
-    hasUserTranscriptSseRef.current = true;
-
-    const audioSource = new EventSource(`/api/rt/audio?${params.toString()}`);
-    console.log("[INFO] AI audio EventSource created, waiting for events...");
-
-    audioSource.onopen = () => {
-      console.log("[INFO] AI audio stream connected successfully");
-    };
-
-    audioSource.onmessage = (event) => {
-      const base64 = event.data ?? "";
-      if (!base64) {
-        return;
-      }
-      try {
-        console.log("[DEBUG] AI audio chunk received, size:", base64.length);
-        const bytes = base64ToUint8Array(base64);
-
-        // Prevent memory exhaustion by limiting AI audio chunk storage
-        if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
-          aiAudioChunksRef.current.push(bytes);
-        } else {
-          console.warn("[WARN] Maximum AI audio chunk limit reached. Oldest chunks will be dropped.");
-        }
-
-        void playAiAudioChunk(bytes);
-        setIsAiSpeaking(true);
-      } catch (error) {
-        console.error("[ERROR] Failed to process AI audio chunk", error);
-      }
-    };
-    audioSource.onerror = (error) => {
-      // Only log errors if the stream is in a failed state
-      if (audioSource.readyState === EventSource.CLOSED) {
-        console.error("[ERROR] AI audio stream closed unexpectedly", error);
-      } else if (audioSource.readyState === EventSource.CONNECTING) {
-        console.log("[INFO] AI audio stream reconnecting...");
-      }
-    };
-    audioEventSourceRef.current = audioSource;
-  }, [
-    base64ToUint8Array,
-    commitAudioTurn,
-    ensureSegment,
-    finalizeSegment,
-    handleAiTranscriptDelta,
-    handleUserTranscriptionComplete,
-    handleUserTranscriptionDelta,
-    playAiAudioChunk,
-    sessionId,
-    uploadMicChunks,
-  ]);
-
-
   const startSession = useCallback(async () => {
     if (phase === "preparing" || phase === "live") {
       return;
@@ -1259,75 +924,41 @@ const StudioPage: React.FC = () => {
 
     try {
       console.log("[INFO] Starting session...");
-      await ensureRealtimeSession();
-      console.log("[INFO] Session started successfully");
-
-      // Brief delay to ensure backend WebSocket is fully established
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      console.log("[INFO] Attaching realtime streams...");
-      attachRealtimeStreams();
-      console.log("[INFO] Streams attached");
-
-      console.log("[INFO] Starting microphone pipeline...");
-      const micStarted = await startMicrophonePipeline();
-      if (!micStarted) {
-        throw new Error("Microphone access required to record the conversation.");
-      }
-      console.log("[INFO] Microphone started");
-
-      setPhase("live");
-      setStatusMessage("Live recording started.");
-      console.log("[INFO] Session is now LIVE");
+      await rt.connect();
+      
+      // Wait for connection state
+      // We'll handle success in a separate effect or check immediately below if sync
     } catch (err) {
-      console.error("[ERROR] Connection failed:", err);
-      setStatusMessage(null);
-
-      const errorCode =
-        err && typeof err === "object" && "code" in err && typeof (err as { code?: string }).code === "string"
-          ? (err as { code?: string }).code
-          : undefined;
-
-      let friendlyMessage = err instanceof Error ? err.message : "Failed to connect to AI";
-
-      switch (errorCode) {
-        case "MISSING_API_KEY":
-          friendlyMessage = "Add an OpenAI API key in Settings before starting a live session.";
-          break;
-        case "INVALID_API_KEY":
-          friendlyMessage = "The OpenAI API key looks invalid. Double-check the value in Settings and try again.";
-          break;
-        case "UNSUPPORTED_PROVIDER":
-          friendlyMessage = "Realtime studio is unavailable for the selected provider. Choose a provider with realtime capabilities in Settings.";
-          break;
-        case "RATE_LIMITED":
-          friendlyMessage = "OpenAI is rate limiting requests right now. Please wait a few moments and try again.";
-          break;
-        case "FORBIDDEN":
-          friendlyMessage = "OpenAI denied access to the realtime API. Verify your account has billing enabled.";
-          break;
-        case "NETWORK_ERROR":
-          friendlyMessage = "Unable to reach OpenAI. Check your network connection and try again.";
-          break;
-        case "INVALID_REQUEST":
-          friendlyMessage = "OpenAI rejected the realtime request. Please try again or verify your configuration.";
-          break;
-        case "TIMEOUT":
-          friendlyMessage = "Timed out while connecting to the realtime service. Please retry in a moment.";
-          break;
-        case "WEBSOCKET_ERROR":
-          friendlyMessage = "Realtime connection closed unexpectedly. Please try starting the session again.";
-          break;
-        default:
-          break;
-      }
-
-      setError(friendlyMessage);
-      await teardownRealtime();
+      console.error("Failed to start session", err);
+      setError("Failed to connect to the realtime server.");
       setPhase("idle");
-      setIsRecording(false);
     }
-  }, [attachRealtimeStreams, ensureRealtimeSession, phase, resetConversation, startMicrophonePipeline, teardownRealtime]);
+  }, [phase, resetConversation, rt]);
+
+  // Handle connection state changes
+  useEffect(() => {
+    if (rt.isConnected && phase === "preparing") {
+       console.log("[INFO] Realtime connected!");
+       
+       // Start mic pipeline
+       startMicrophonePipeline().then((started) => {
+         if (started) {
+           setPhase("live");
+           setStatusMessage("Live recording started.");
+           isSessionActiveRef.current = true;
+         } else {
+           setPhase("idle");
+           rt.disconnect();
+           setError("Failed to access microphone.");
+         }
+       });
+    } else if (rt.error && phase !== "idle" && phase !== "stopping") {
+       console.error("[ERROR] Realtime error:", rt.error);
+       setError(rt.error);
+       setPhase("idle");
+       teardownRealtime();
+    }
+  }, [rt.isConnected, rt.error, phase, startMicrophonePipeline, teardownRealtime, rt]);
 
   const stopSession = useCallback(async () => {
     if (phase === "idle" || phase === "stopping") {
@@ -1340,7 +971,6 @@ const StudioPage: React.FC = () => {
 
     try {
       stopMicrophonePipeline();
-      await uploadMicChunks();
       const payload = buildConversationPayload();
       if (payload) {
         latestConversationRef.current = payload;
@@ -1367,7 +997,7 @@ const StudioPage: React.FC = () => {
     setIsAudioPlaying(false);
     setIsHostSpeaking(false);
     setIsAiSpeaking(false);
-  }, [buildConversationPayload, phase, stopMicrophonePipeline, teardownRealtime, uploadMicChunks]);
+  }, [buildConversationPayload, phase, stopMicrophonePipeline, teardownRealtime]);
 
   const stopSessionRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -1488,6 +1118,7 @@ const StudioPage: React.FC = () => {
             },
             null,
             2,
+            1,
           ),
         ),
       });
@@ -1528,7 +1159,7 @@ const StudioPage: React.FC = () => {
   }, [phase]);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-black text-white">
       <div className="flex">
         <Sidebar
           collapsed={collapsed}
@@ -1537,54 +1168,47 @@ const StudioPage: React.FC = () => {
         />
 
         <div className="flex-1 flex flex-col min-w-0">
-          <Header
-            title="Audio Studio"
-            description="Capture a realtime podcast between you and an AI expert."
-            status={headerStatus}
-            timer={{ duration: sessionDuration, format: formatTime }}
-          />
-
-          <main id="main-content" tabIndex={-1} className="flex-1 p-6 lg:p-8 overflow-y-auto">
+          <main id="main-content" tabIndex={-1} className="flex-1 p-6 lg:p-10 overflow-y-auto">
             <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-8 h-full">
               <div className="space-y-8">
                 {/* Current Paper Card */}
-                <Card className="glass-panel border-border/50 shadow-apple-card">
-                  <CardHeader className="pb-4 border-b border-border/50">
-                    <CardTitle className="flex items-center gap-3 text-foreground">
-                      <div className="size-8 rounded-full bg-secondary flex items-center justify-center">
-                        <FileText className="size-4 text-foreground" />
+                <Card className="glass-panel border-white/10">
+                  <CardHeader className="pb-4 border-b border-white/5">
+                    <CardTitle className="flex items-center gap-3 text-white">
+                      <div className="size-8 rounded-full bg-white/10 flex items-center justify-center">
+                        <FileText className="size-4 text-white" />
                       </div>
                       Current Paper
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-6">
                     {paperLoadError ? (
-                      <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-destructive text-sm font-medium">
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white text-sm font-medium">
                         {paperLoadError}
                       </div>
                     ) : currentPaper ? (
                       <div className="space-y-6">
                         <div className="space-y-3">
-                          <h3 className="font-semibold text-lg text-foreground leading-tight">
+                          <h3 className="font-semibold text-xl text-white leading-tight">
                             {currentPaper.title}
                           </h3>
-                          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            <span className="bg-secondary px-2 py-1 rounded-md">
+                          <div className="flex items-center gap-2 text-xs font-bold text-white/50 uppercase tracking-wider">
+                            <span className="bg-white/10 px-2.5 py-1 rounded-md text-white">
                               Published {currentPaper.formattedPublishedDate ?? "Unknown"}
                             </span>
                           </div>
-                          <p className="text-sm text-muted-foreground font-medium">
+                          <p className="text-sm text-white/70 font-medium">
                             {currentPaper.primaryAuthor
                               ? `${currentPaper.primaryAuthor}${currentPaper.hasAdditionalAuthors ? " et al." : ""}`
                               : currentPaper.authors}
                           </p>
                         </div>
-                        <p className="text-sm leading-relaxed text-muted-foreground/90 line-clamp-4">
+                        <p className="text-sm leading-relaxed text-white/60 line-clamp-4 font-light">
                           {currentPaper.abstract}
                         </p>
                         <div>
                           {currentPaper.arxiv_url ? (
-                            <Button asChild variant="outline" className="w-full justify-center h-10 rounded-xl border-border/50 hover:bg-secondary hover:text-foreground transition-all">
+                            <Button asChild variant="outline" className="w-full justify-center h-12 rounded-xl border-white/20 hover:bg-white/10 hover:text-white hover:border-white/40 transition-all">
                               <a
                                 href={currentPaper.arxiv_url}
                                 target="_blank"
@@ -1595,7 +1219,7 @@ const StudioPage: React.FC = () => {
                               </a>
                             </Button>
                           ) : (
-                            <Button variant="outline" className="w-full justify-center h-10 rounded-xl" disabled>
+                            <Button variant="outline" className="w-full justify-center h-12 rounded-xl" disabled>
                               <FileText className="mr-2 size-4" />
                               View on arXiv
                             </Button>
@@ -1603,39 +1227,43 @@ const StudioPage: React.FC = () => {
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-3 text-center py-6">
-                        <div className="size-12 rounded-full bg-secondary mx-auto flex items-center justify-center">
-                          <FileText className="size-6 text-muted-foreground" />
+                      <div className="space-y-4 text-center py-8">
+                        <div className="size-14 rounded-full bg-white/5 mx-auto flex items-center justify-center">
+                          <FileText className="size-6 text-white/30" />
                         </div>
-                        <div className="space-y-1">
-                          <p className="font-medium text-foreground">No paper selected</p>
-                          <p className="text-sm text-muted-foreground">
+                        <div className="space-y-2">
+                          <p className="font-medium text-white">No paper selected</p>
+                          <p className="text-sm text-white/50 max-w-[200px] mx-auto">
                             Select a paper from the Research Hub to start.
                           </p>
                         </div>
+                        <Button variant="secondary" className="mt-2" onClick={() => router.push("/")}>
+                          Go to Research Hub
+                        </Button>
                       </div>
                     )}
                   </CardContent>
                 </Card>
 
                 {/* Session Controls Card */}
-                <Card className="glass-panel border-border/50 shadow-apple-card">
-                  <CardHeader className="pb-4 border-b border-border/50">
-                    <CardTitle className="flex items-center gap-3 text-foreground">
-                      <div className="size-8 rounded-full bg-secondary flex items-center justify-center">
-                        <Mic className="size-4 text-foreground" />
+                <Card className="glass-panel border-white/10">
+                  <CardHeader className="pb-4 border-b border-white/5">
+                    <CardTitle className="flex items-center gap-3 text-white">
+                      <div className="size-8 rounded-full bg-white/10 flex items-center justify-center">
+                        <Mic className="size-4 text-white" />
                       </div>
                       Session Controls
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-6">
                     {error && (
-                      <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive font-medium">
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/90 font-medium">
+                        <span className="block mb-1 text-xs uppercase tracking-wide opacity-50">Error</span>
                         {error}
                       </div>
                     )}
                     {!error && statusMessage && (
-                      <div className="rounded-xl border border-accent/20 bg-accent/5 p-4 text-sm text-accent font-medium">
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/90 font-medium animate-pulse">
                         {statusMessage}
                       </div>
                     )}
@@ -1646,19 +1274,31 @@ const StudioPage: React.FC = () => {
                         disabled={phase === "preparing" || phase === "live"}
                         size="lg"
                         className={cn(
-                          "w-full justify-center h-12 rounded-xl text-base font-semibold shadow-lg transition-all duration-300",
-                          phase === "live" ? "opacity-50 cursor-not-allowed" : "hover:scale-[1.02]"
+                          "w-full justify-center h-14 rounded-2xl text-base font-semibold shadow-glass transition-all duration-300",
+                          phase === "live" ? "opacity-50 cursor-not-allowed bg-white/10" : "bg-white text-black hover:scale-[1.02] hover:bg-gray-100"
                         )}
                       >
-                        <Mic className="mr-2 size-5" />
-                        {phase === "preparing" ? "Connecting..." : "Start Live Session"}
+                        {phase === "preparing" ? (
+                           <>
+                             <span className="size-4 border-2 border-black/30 border-t-black rounded-full animate-spin mr-2"></span>
+                             Connecting...
+                           </>
+                        ) : (
+                           <>
+                             <Mic className="mr-2 size-5" />
+                             Start Live Session
+                           </>
+                        )}
                       </Button>
                       <Button
                         onClick={stopSession}
                         disabled={phase !== "live"}
                         variant="destructive"
                         size="lg"
-                        className="w-full justify-center h-12 rounded-xl text-base font-semibold shadow-sm hover:bg-destructive/90 transition-all"
+                        className={cn(
+                           "w-full justify-center h-14 rounded-2xl text-base font-semibold transition-all border-white/10 hover:bg-white/10",
+                           phase === "live" ? "opacity-100" : "opacity-50"
+                        )}
                       >
                         <MicOff className="mr-2 size-5" />
                         End Session
@@ -1666,37 +1306,37 @@ const StudioPage: React.FC = () => {
                     </div>
 
                     <div className="space-y-2 pt-2">
-                      <Button variant="ghost" className="w-full justify-start h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary" onClick={handleExportTranscript}>
-                        <FileText className="mr-2 size-4" />
+                      <Button variant="ghost" className="w-full justify-start h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/10" onClick={handleExportTranscript}>
+                        <FileText className="mr-3 size-4" />
                         Export Transcript
                       </Button>
-                      <Button variant="ghost" className="w-full justify-start h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary" onClick={handleDownloadAudio} disabled={!hasCapturedAudio}>
-                        <Download className="mr-2 size-4" />
+                      <Button variant="ghost" className="w-full justify-start h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/10" onClick={handleDownloadAudio} disabled={!hasCapturedAudio}>
+                        <Download className="mr-3 size-4" />
                         Download Audio Bundle
                       </Button>
-                      <Button variant="ghost" className="w-full justify-start h-10 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary" onClick={handleSendToVideoStudio}>
-                        <Video className="mr-2 size-4" />
+                      <Button variant="ghost" className="w-full justify-start h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/10" onClick={handleSendToVideoStudio}>
+                        <Video className="mr-3 size-4" />
                         Send to Video Studio
                       </Button>
                     </div>
 
-                    <div className="rounded-xl border border-border/50 bg-secondary/30 p-4 space-y-2">
-                      <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                        <Radio className="size-4 text-primary" />
-                        Live Session Tips
+                    <div className="rounded-2xl border border-white/5 bg-white/5 p-5 space-y-3">
+                      <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                        <Radio className="size-4 text-white/80" />
+                        Pro Tips
                       </p>
-                      <ul className="space-y-1.5">
-                        <li className="text-xs text-muted-foreground flex items-start gap-2">
-                          <span className="block size-1 rounded-full bg-muted-foreground mt-1.5" />
-                          Speak naturally and pause briefly when finished.
+                      <ul className="space-y-2">
+                        <li className="text-xs text-white/50 flex items-start gap-2 leading-relaxed">
+                          <span className="block size-1 rounded-full bg-white/40 mt-1.5 shrink-0" />
+                          Speak naturally. The AI is listening for context.
                         </li>
-                        <li className="text-xs text-muted-foreground flex items-start gap-2">
-                          <span className="block size-1 rounded-full bg-muted-foreground mt-1.5" />
-                          The feed scrolls automatically to the latest message.
+                        <li className="text-xs text-white/50 flex items-start gap-2 leading-relaxed">
+                          <span className="block size-1 rounded-full bg-white/40 mt-1.5 shrink-0" />
+                          The feed auto-scrolls to keep you in the flow.
                         </li>
-                        <li className="text-xs text-muted-foreground flex items-start gap-2">
-                          <span className="block size-1 rounded-full bg-muted-foreground mt-1.5" />
-                          Download or hand off the conversation after ending.
+                        <li className="text-xs text-white/50 flex items-start gap-2 leading-relaxed">
+                          <span className="block size-1 rounded-full bg-white/40 mt-1.5 shrink-0" />
+                          Don't forget to download your session assets.
                         </li>
                       </ul>
                     </div>
@@ -1705,46 +1345,66 @@ const StudioPage: React.FC = () => {
               </div>
 
               <div className="xl:col-span-2 h-full min-h-[600px]">
-                <Card className="h-full flex flex-col overflow-hidden glass-panel border-border/50 shadow-apple-card">
-                  <CardHeader className="border-b border-border/50 bg-white/50 backdrop-blur-md py-4">
+                <Card className="h-full flex flex-col overflow-hidden glass-panel border-white/10 shadow-glass">
+                  <CardHeader className="border-b border-white/5 bg-white/5 backdrop-blur-xl py-5 px-8">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-3 text-foreground">
-                        <div className="size-8 rounded-full bg-secondary flex items-center justify-center">
-                          <Sparkles className="size-4 text-foreground" />
+                      <CardTitle className="flex items-center gap-3 text-white">
+                        <div className="size-8 rounded-full bg-white/10 flex items-center justify-center">
+                          <Sparkles className="size-4 text-white" />
                         </div>
-                        Live Conversation Feed
+                        Live Feed
                       </CardTitle>
-                      <div className="flex items-center gap-4 text-xs font-medium text-muted-foreground bg-secondary/50 px-3 py-1.5 rounded-full border border-border/50">
-                        <div className="flex items-center gap-1.5">
-                          <span className="size-2 rounded-full bg-foreground" /> Host
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="size-2 rounded-full bg-primary" /> Dr. Sarah
-                        </div>
-                        <div className="w-px h-3 bg-border" />
-                        <div className="flex items-center gap-1.5">
-                          <Volume2 className="size-3.5" />
-                          {phase === "live"
-                            ? isAudioPlaying
-                              ? <span className="text-accent animate-pulse">AI Speaking</span>
-                              : "Waiting..."
-                            : "Idle"}
+                      <div className="flex items-center gap-4">
+                        {phase !== "idle" && (
+                          <div className="flex items-center gap-3 text-sm font-mono bg-black/40 px-4 py-2 rounded-xl border border-white/5 shadow-inner">
+                            <div className={`size-2 rounded-full transition-all duration-500 ${phase === "live" ? 'bg-red-500 shadow-glow animate-pulse' : 'bg-yellow-500'}`} />
+                            <span className="text-white font-medium tracking-wider">
+                              {phase === "live" ? formatTime(sessionDuration) : "CONNECTING"}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-4 text-xs font-medium text-white/60 bg-black/40 px-4 py-2 rounded-full border border-white/5 shadow-inner">
+                          <div className="flex items-center gap-2">
+                            <span className="size-2 rounded-full bg-white" /> Host
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="size-2 rounded-full bg-white/40" /> Dr. Sarah
+                          </div>
+                          <div className="w-px h-3 bg-white/10 mx-1" />
+                          <div className="flex items-center gap-2">
+                            {phase === "live" ? (
+                               <>
+                                 {isAudioPlaying ? (
+                                   <span className="flex gap-1">
+                                      <span className="w-0.5 h-3 bg-white animate-music-bar-1"></span>
+                                      <span className="w-0.5 h-3 bg-white animate-music-bar-2"></span>
+                                      <span className="w-0.5 h-3 bg-white animate-music-bar-3"></span>
+                                   </span>
+                                 ) : (
+                                   <span className="size-2 bg-white/20 rounded-full"></span>
+                                 )}
+                                 {isAudioPlaying ? "Speaking..." : "Listening"}
+                               </>
+                            ) : (
+                               "Offline"
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
                   </CardHeader>
 
-                  <CardContent className="flex-1 flex flex-col p-0 relative bg-gradient-to-b from-transparent to-secondary/10">
-                    <ScrollArea ref={transcriptScrollRef} className="flex-1 px-8 py-6">
-                      <div className="space-y-6 max-w-4xl mx-auto">
+                  <CardContent className="flex-1 flex flex-col p-0 relative bg-gradient-to-b from-transparent to-black/40">
+                    <ScrollArea ref={transcriptScrollRef} className="flex-1 px-8 py-8">
+                      <div className="space-y-8 max-w-4xl mx-auto">
                         {entries.length === 0 && phase !== "live" && (
-                          <div className="text-center py-32 space-y-6">
-                            <div className="size-24 rounded-full bg-secondary mx-auto flex items-center justify-center shadow-inner">
-                              <Brain className="size-12 text-muted-foreground/50" />
+                          <div className="text-center py-40 space-y-8 opacity-0 animate-in fade-in zoom-in duration-1000 fill-mode-forwards">
+                            <div className="size-32 rounded-full bg-gradient-to-br from-white/10 to-transparent mx-auto flex items-center justify-center shadow-glass border border-white/5">
+                              <Brain className="size-16 text-white/20" />
                             </div>
-                            <div className="space-y-2">
-                              <h3 className="text-xl font-semibold text-foreground">Ready to capture</h3>
-                              <p className="text-muted-foreground max-w-sm mx-auto">
+                            <div className="space-y-3">
+                              <h3 className="text-2xl font-semibold text-white">Ready to capture</h3>
+                              <p className="text-white/40 max-w-sm mx-auto font-light text-lg">
                                 Start the session and speak naturally. The transcript will appear here instantly.
                               </p>
                             </div>
@@ -1753,9 +1413,11 @@ const StudioPage: React.FC = () => {
 
                         {entries.map((entry) => {
                           const isHost = entry.speaker === "host";
+                          
+                          // Monochrome message bubbles
                           const bubbleClass = isHost
-                            ? "bg-foreground text-background rounded-tr-sm shadow-md"
-                            : "bg-white border border-border/50 text-foreground rounded-tl-sm shadow-sm";
+                            ? "bg-white text-black rounded-[1.5rem] rounded-tr-sm shadow-glass-sm"
+                            : "bg-white/10 border border-white/10 text-white rounded-[1.5rem] rounded-tl-sm backdrop-blur-md";
 
                           const containerClass = isHost ? "flex-row-reverse" : "flex-row";
 
@@ -1767,31 +1429,31 @@ const StudioPage: React.FC = () => {
                           });
 
                           return (
-                            <div key={entry.id} className={cn("flex items-end gap-3 group", containerClass)}>
+                            <div key={entry.id} className={cn("flex items-end gap-4 group animate-in fade-in slide-in-from-bottom-4 duration-500", containerClass)}>
                               <div className={cn(
-                                "size-8 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1",
-                                isHost ? "bg-foreground text-background" : "bg-primary text-primary-foreground"
+                                "size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
+                                isHost ? "bg-white text-black" : "bg-white/10 text-white border border-white/10"
                               )}>
-                                {isHost ? <Headphones className="size-4" /> : <Sparkles className="size-4" />}
+                                {isHost ? <Headphones className="size-5" /> : <Sparkles className="size-5" />}
                               </div>
 
-                              <div className={cn("flex flex-col max-w-[80%]", isHost ? "items-end" : "items-start")}>
-                                <div className="flex items-center gap-2 mb-1 px-1">
-                                  <span className="text-xs font-semibold text-muted-foreground">
+                              <div className={cn("flex flex-col max-w-[85%]", isHost ? "items-end" : "items-start")}>
+                                <div className="flex items-center gap-3 mb-2 px-2 opacity-60 group-hover:opacity-100 transition-opacity">
+                                  <span className="text-xs font-bold tracking-wide uppercase">
                                     {isHost ? "You" : "Dr. Sarah"}
                                   </span>
-                                  <span className="text-[10px] text-muted-foreground/70 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <span className="text-[10px] font-mono">
                                     {timestamp}
                                   </span>
                                 </div>
 
-                                <div className={cn("px-5 py-3.5 text-sm leading-relaxed rounded-2xl transition-all duration-200", bubbleClass)}>
+                                <div className={cn("px-6 py-4 text-[15px] leading-7 shadow-sm", bubbleClass)}>
                                   <span>{entry.text || (entry.status === "streaming" ? "" : "")}</span>
                                   {entry.status === "streaming" && (
-                                    <span className="inline-flex gap-1 ml-1 items-center">
-                                      <span className="size-1 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
-                                      <span className="size-1 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
-                                      <span className="size-1 bg-current rounded-full animate-bounce" />
+                                    <span className="inline-flex gap-1.5 ml-2 items-center align-middle">
+                                      <span className="size-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
+                                      <span className="size-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
+                                      <span className="size-1.5 bg-current rounded-full animate-bounce" />
                                     </span>
                                   )}
                                 </div>
@@ -1801,11 +1463,11 @@ const StudioPage: React.FC = () => {
                         })}
 
                         {phase === "live" && (
-                          <div className="flex justify-center py-4 sticky bottom-0 z-10">
-                            <div className="flex items-center gap-3 rounded-full border border-border/50 bg-white/90 backdrop-blur-md px-5 py-2.5 text-sm font-medium text-foreground shadow-lg animate-in slide-in-from-bottom-4 fade-in duration-300">
+                          <div className="flex justify-center py-8 sticky bottom-0 z-10 pointer-events-none">
+                            <div className="flex items-center gap-3 rounded-full border border-white/10 bg-black/60 backdrop-blur-xl px-6 py-3 text-sm font-medium text-white shadow-apple-floating animate-in slide-in-from-bottom-4 fade-in duration-300">
                               <div className="relative flex size-3">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full size-3 bg-red-500"></span>
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-30"></span>
+                                <span className="relative inline-flex rounded-full size-3 bg-white"></span>
                               </div>
                               <span>
                                 {isHostSpeaking
@@ -1820,16 +1482,16 @@ const StudioPage: React.FC = () => {
                       </div>
                     </ScrollArea>
 
-                    <div className="border-t border-border/50 bg-white/50 backdrop-blur-md px-6 py-3 flex items-center justify-between text-xs font-medium text-muted-foreground">
+                    <div className="border-t border-white/5 bg-black/20 backdrop-blur-md px-8 py-4 flex items-center justify-between text-xs font-medium text-white/50">
                       <div className="flex items-center gap-2">
-                        <div className={cn("size-2 rounded-full", isRecording ? "bg-red-500 animate-pulse" : "bg-muted-foreground")} />
+                        <div className={cn("size-2 rounded-full transition-colors duration-500", isRecording ? "bg-white animate-pulse shadow-glow" : "bg-white/20")} />
                         {phase === "live"
                           ? isRecording
                             ? "Microphone Active"
                             : "Microphone Idle"
                           : "Session Idle"}
                       </div>
-                      <div className="font-mono bg-secondary/50 px-2 py-1 rounded-md border border-border/50">
+                      <div className="font-mono bg-white/5 px-3 py-1.5 rounded-lg border border-white/5 text-white/80">
                         {formatTime(sessionDuration)}
                       </div>
                     </div>
@@ -1845,5 +1507,3 @@ const StudioPage: React.FC = () => {
 };
 
 export default StudioPage;
-
-

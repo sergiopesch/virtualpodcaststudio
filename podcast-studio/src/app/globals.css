@@ -8,6 +8,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -16,11 +17,13 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+  
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -37,149 +40,95 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 12px);
+  --radius-3xl: calc(var(--radius) + 20px);
 
-  /* Dark Mode Shadows - Enhanced Depth */
-  --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 0 0.5px rgba(255, 255, 255, 0.05);
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.9), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
-  --shadow-floating: 0 8px 24px rgba(0, 0, 0, 0.9), 0 0 0 0.5px rgba(255, 255, 255, 0.15);
-  --shadow-apple-card: 0 2px 12px rgba(0, 0, 0, 0.8), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
-  --shadow-apple-floating: 0 12px 36px rgba(0, 0, 0, 0.9), 0 0 0 0.5px rgba(255, 255, 255, 0.15);
-  --shadow-accent: 0 0 0 3px rgba(10, 132, 255, 0.3);
-
+  /* Apple Glass Shadows */
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  --shadow-glass-sm: 0 4px 16px 0 rgba(0, 0, 0, 0.3);
+  --shadow-subtle: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 20px rgba(255, 255, 255, 0.15);
+  
   --ease-apple: cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 :root {
-  /* Apple Dark Mode - Proper Contrast */
-  --radius: 0.75rem;
+  /* Base System - Monochrome Glass */
+  --radius: 1rem; /* Increased radius for softer look */
 
-  /* Base Background - Slightly elevated, not pure black */
-  --background: #1C1C1E;
-  /* True Apple dark mode background */
+  /* Always Dark/Monochrome */
+  --background: #000000;
   --foreground: #FFFFFF;
-  /* Pure white for primary text */
 
-  /* Elevated Surfaces - Noticeably lighter for clear separation */
-  --card: #2C2C2E;
-  /* Cards are lighter than background */
+  /* Glass Surfaces */
+  --card: rgba(28, 28, 30, 0.6);
   --card-foreground: #FFFFFF;
 
-  --popover: #2C2C2E;
+  --popover: rgba(28, 28, 30, 0.9);
   --popover-foreground: #FFFFFF;
 
-  /* Secondary - Even lighter for controls and tertiary surfaces */
-  --secondary: #3A3A3C;
-  /* Gray controls with good contrast */
+  /* Primary Actions - High Contrast */
+  --primary: #FFFFFF;
+  --primary-foreground: #000000;
+
+  /* Secondary Actions - Glassy */
+  --secondary: rgba(255, 255, 255, 0.15);
   --secondary-foreground: #FFFFFF;
 
-  /* Tertiary - Highest elevation */
-  --tertiary: #48484A;
+  /* Muted - Subtle Text/Elements */
+  --muted: rgba(255, 255, 255, 0.1);
+  --muted-foreground: rgba(255, 255, 255, 0.55);
 
-  /* Muted - Subtle elements */
-  --muted: #2C2C2E;
-  --muted-foreground: rgba(255, 255, 255, 0.6);
-  /* 60% opacity */
-
-  /* Primary - Blue for important interactive elements */
-  --primary: #0A84FF;
-  /* Apple Blue */
-  --primary-foreground: #FFFFFF;
-
-  /* Accent - Same as primary for consistency */
-  --accent: #0A84FF;
-  /* Apple Blue */
+  /* Accent - Highlight without Color */
+  --accent: rgba(255, 255, 255, 0.2);
   --accent-foreground: #FFFFFF;
 
-  /* Status Colors */
-  --success: #30D158;
-  /* Apple Green */
-  --warning: #FFD60A;
-  /* Apple Yellow */
-  --destructive: #FF453A;
-  /* Apple Red */
-  --info: #64D2FF;
-  /* Apple Teal */
+  /* Destructive - Grayscale Warning */
+  --destructive: #333333;
+  --destructive-foreground: #FFFFFF;
 
-  /* Borders - More visible */
-  --border: rgba(255, 255, 255, 0.15);
-  /* Visible separators */
-  --border-strong: rgba(255, 255, 255, 0.25);
-  /* Emphasized borders */
-  --card-border: rgba(255, 255, 255, 0.2);
-  /* Card outlines */
+  /* Borders - Subtle Glass Edges */
+  --border: rgba(255, 255, 255, 0.12);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: rgba(255, 255, 255, 0.3);
 
-  --input: #2C2C2E;
-  --ring: #0A84FF;
-  /* Focus rings */
-
-  /* Charts - Balanced colors */
-  --chart-1: #0A84FF;
-  --chart-2: #30D158;
-  --chart-3: #FFD60A;
-  --chart-4: #FF453A;
-  --chart-5: #64D2FF;
-
-  /* Sidebar - Pure black for maximum contrast */
+  /* Sidebar */
   --sidebar: #000000;
   --sidebar-foreground: #FFFFFF;
-  --sidebar-primary: #0A84FF;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #2C2C2E;
+  --sidebar-primary: #FFFFFF;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: rgba(255, 255, 255, 0.15);
   --sidebar-accent-foreground: #FFFFFF;
-  --sidebar-border: rgba(255, 255, 255, 0.15);
-  --sidebar-ring: #0A84FF;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: rgba(255, 255, 255, 0.3);
 }
 
 .dark {
+  /* Redundant mapping if we force dark mode, but good for compatibility */
   --background: #000000;
-  --foreground: #F5F5F7;
-
-  --card: #1C1C1E;
-  /* Apple's dark mode card */
-  --card-foreground: #F5F5F7;
-
-  --popover: #1C1C1E;
-  --popover-foreground: #F5F5F7;
-
-  --primary: #F5F5F7;
+  --foreground: #FFFFFF;
+  --card: rgba(28, 28, 30, 0.6);
+  --card-foreground: #FFFFFF;
+  --popover: rgba(28, 28, 30, 0.9);
+  --popover-foreground: #FFFFFF;
+  --primary: #FFFFFF;
   --primary-foreground: #000000;
-
-  --secondary: #1C1C1E;
-  --secondary-foreground: #F5F5F7;
-
-  --muted: #1C1C1E;
-  --muted-foreground: #86868B;
-
-  --accent: #0A84FF;
-  /* Apple Blue Dark */
+  --secondary: rgba(255, 255, 255, 0.15);
+  --secondary-foreground: #FFFFFF;
+  --muted: rgba(255, 255, 255, 0.1);
+  --muted-foreground: rgba(255, 255, 255, 0.55);
+  --accent: rgba(255, 255, 255, 0.2);
   --accent-foreground: #FFFFFF;
-
-  --destructive: #FF453A;
-  /* Apple Red Dark */
+  --destructive: #333333;
   --destructive-foreground: #FFFFFF;
-
-  --border: #38383A;
-  --input: #2C2C2E;
-  --ring: #0A84FF;
-
-  --chart-1: #F5F5F7;
-  --chart-2: #86868B;
-  --chart-3: #38383A;
-  --chart-4: #0A84FF;
-  --chart-5: #5E5CE6;
-
-  --sidebar: #000000;
-  --sidebar-foreground: #F5F5F7;
-  --sidebar-primary: #0A84FF;
-  --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #1C1C1E;
-  --sidebar-accent-foreground: #F5F5F7;
-  --sidebar-border: rgba(255, 255, 255, 0.1);
-  --sidebar-ring: #0A84FF;
+  --border: rgba(255, 255, 255, 0.12);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: rgba(255, 255, 255, 0.3);
 }
 
 @layer base {
@@ -191,60 +140,62 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-image: radial-gradient(circle at top center, #1a1a1a 0%, #000000 60%);
+    background-attachment: fixed;
+    min-height: 100vh;
   }
 
-  /* Typography Hierarchy */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-semibold tracking-tight text-white;
+  }
+
   h1 {
-    @apply text-4xl font-semibold tracking-tight;
-    letter-spacing: -0.02em;
-  }
-
-  h2 {
-    @apply text-2xl font-semibold tracking-tight;
-    letter-spacing: -0.01em;
-  }
-
-  h3 {
-    @apply text-xl font-medium tracking-tight;
-  }
-
-  p {
-    @apply leading-relaxed text-muted-foreground;
+    letter-spacing: -0.03em;
   }
 }
 
 @layer utilities {
-
-  /* Apple-style Glassmorphism - Enhanced */
+  /* Premium Glassmorphism */
   .glass-panel {
-    background: rgba(44, 44, 46, 0.8);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(20, 20, 20, 0.65);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: var(--shadow-glass);
+  }
+  
+  .glass-panel-light {
+    background: rgba(40, 40, 40, 0.4);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .glass-sidebar {
-    @apply bg-sidebar/80 backdrop-blur-xl border-r border-sidebar-border;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  
+  .glass-button {
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.3s var(--ease-apple);
+  }
+  
+  .glass-button:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
   }
 
-  /* Refined Shadows */
-  .shadow-apple-card {
-    box-shadow: var(--shadow-card);
-  }
-
-  .shadow-apple-floating {
-    box-shadow: var(--shadow-floating);
-  }
-
-  /* Layout Utilities */
-  .layout-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1.5rem;
-  }
-
-  .content-container {
-    @apply max-w-7xl mx-auto px-6 lg:px-8 py-8;
+  /* Text Gradients for "Pro" feel */
+  .text-gradient-silver {
+    background: linear-gradient(180deg, #FFFFFF 0%, #AAAAAA 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 }

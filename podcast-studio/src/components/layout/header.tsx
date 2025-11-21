@@ -2,7 +2,6 @@
 
 import React from "react";
 import { Clock, Search } from "lucide-react";
-import { UserMenu } from "./user-menu";
 
 interface HeaderProps {
   title: string;
@@ -38,57 +37,57 @@ export function Header({
 }: HeaderProps) {
   const getStatusColor = (color: string, active: boolean) => {
     const colors = {
-      green: active ? 'bg-green-500' : 'bg-muted',
-      red: active ? 'bg-red-500' : 'bg-muted',
-      yellow: active ? 'bg-yellow-500' : 'bg-muted',
-      blue: active ? 'bg-blue-500' : 'bg-muted',
-      gray: 'bg-muted'
+      green: active ? 'bg-white shadow-glow' : 'bg-white/20',
+      red: active ? 'bg-white shadow-glow animate-pulse' : 'bg-white/20', // Monochrome pulse
+      yellow: active ? 'bg-white/80' : 'bg-white/20',
+      blue: active ? 'bg-white' : 'bg-white/20',
+      gray: 'bg-white/10'
     };
-    return colors[color as keyof typeof colors] || 'bg-muted';
+    return colors[color as keyof typeof colors] || 'bg-white/10';
   };
 
   const searchInputId = React.useId();
 
   return (
-    <header className="glass-panel border-b border-border/50 px-8 py-4 sticky top-0 z-10">
+    <header className="glass-panel-light border-b border-white/5 px-8 py-5 sticky top-0 z-40 backdrop-blur-xl">
       <div className="flex items-center justify-between max-w-7xl mx-auto">
         <div className="flex items-center gap-8">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+            <h1 className="text-2xl font-semibold tracking-tight text-white leading-tight">
               {title}
             </h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
+            <p className="text-sm text-white/50 mt-1 font-light">
               {description}
             </p>
           </div>
 
           {status && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary/50 border border-border/50">
-              <div className={`size-2 rounded-full ${getStatusColor(status.color, status.active)} ${status.active ? 'animate-pulse' : ''}`} />
-              <span className="text-xs font-medium text-foreground">
+            <div className="flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
+              <div className={`size-2 rounded-full transition-all duration-500 ${getStatusColor(status.color, status.active)}`} />
+              <span className="text-xs font-medium text-white tracking-wide uppercase">
                 {status.label}
               </span>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-6">
           {timer && (
-            <div className="flex items-center gap-2 text-sm font-mono bg-secondary px-3 py-1.5 rounded-md border border-border/50">
-              <Clock className="size-3.5 text-muted-foreground" />
-              <span className="text-foreground font-medium">{timer.format(timer.duration)}</span>
+            <div className="flex items-center gap-3 text-sm font-mono bg-black/40 px-4 py-2 rounded-xl border border-white/5 shadow-inner">
+              <Clock className="size-3.5 text-white/40" />
+              <span className="text-white font-medium tracking-wider">{timer.format(timer.duration)}</span>
             </div>
           )}
 
           {progress && (
-            <div className="flex items-center gap-3 min-w-[140px]">
-              <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div className="flex items-center gap-4 min-w-[160px]">
+              <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-primary rounded-full transition-all duration-500 ease-apple"
+                  className="h-full bg-white rounded-full transition-all duration-700 ease-apple shadow-[0_0_10px_rgba(255,255,255,0.5)]"
                   style={{ width: `${progress.value}%` }}
                 />
               </div>
-              <span className="text-xs text-muted-foreground font-medium w-8 text-right">
+              <span className="text-xs text-white/60 font-medium w-8 text-right">
                 {progress.label || `${Math.round(progress.value)}%`}
               </span>
             </div>
@@ -100,7 +99,7 @@ export function Header({
                 {search.placeholder}
               </label>
               <Search
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground group-focus-within:text-foreground transition-colors"
+                className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-white/40 group-focus-within:text-white transition-colors duration-300"
                 aria-hidden="true"
               />
               <input
@@ -108,18 +107,14 @@ export function Header({
                 type="search"
                 inputMode="search"
                 placeholder={search.placeholder}
-                className="w-64 rounded-lg border border-border/50 bg-secondary/50 pl-10 pr-4 py-2 text-sm text-foreground placeholder:text-muted-foreground transition-all focus:bg-background focus:border-primary/20 focus:ring-2 focus:ring-primary/10 outline-none"
+                className="w-72 rounded-2xl border border-white/10 bg-white/5 pl-11 pr-4 py-2.5 text-sm text-white placeholder:text-white/30 transition-all duration-300 focus:bg-white/10 focus:border-white/20 focus:ring-0 outline-none hover:bg-white/10"
                 onChange={(e) => search.onSearch?.(e.target.value)}
               />
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {actions}
-          </div>
-
-          <div className="pl-4 border-l border-border/50">
-            <UserMenu />
           </div>
         </div>
       </div>

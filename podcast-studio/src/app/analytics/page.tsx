@@ -155,10 +155,6 @@ export default function AnalyticsPage() {
       <div className="flex">
         <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
         <div className="flex flex-1 flex-col min-w-0">
-          <Header
-            title="Analytics"
-            description="Track performance and audience engagement"
-          />
           <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6 lg:p-8 overflow-y-auto flex-1">
             <div className="max-w-7xl mx-auto space-y-8">
               {/* Overview Cards */}

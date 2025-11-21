@@ -124,7 +124,7 @@ class RealtimeSession:
         
         try:
             self.openai_ws = await websockets.connect(
-                "wss://api.openai.com/v1/realtime?model=gpt-realtime-mini",
+                "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
                 extra_headers=headers
             )
             logger.info("Connected to OpenAI Realtime API")
@@ -150,33 +150,18 @@ class RealtimeSession:
         """Handle incoming message from client"""
         try:
             if message.get("type") == "audio":
-                # Create conversation item with audio input
-                item_event = {
-                    "event_id": f"event_{datetime.now().isoformat()}",
-                    "type": "conversation.item.create",
-                    "item": {
-                        "id": f"item_{datetime.now().isoformat()}",
-                        "type": "message",
-                        "role": "user",
-                        "content": [{"type": "input_audio", "audio": message["audio"]}]
-                    }
+                # Append audio to buffer
+                append_event = {
+                    "type": "input_audio_buffer.append",
+                    "audio": message["audio"]
                 }
-                await self.openai_ws.send(json.dumps(item_event))
-                
-                # Trigger response
-                response_event = {
-                    "event_id": f"event_{datetime.now().isoformat()}",
-                    "type": "response.create"
-                }
-                await self.openai_ws.send(json.dumps(response_event))
+                await self.openai_ws.send(json.dumps(append_event))
                 
             elif message.get("type") == "text":
                 # Create conversation item with text input
                 item_event = {
-                    "event_id": f"event_{datetime.now().isoformat()}",
                     "type": "conversation.item.create",
                     "item": {
-                        "id": f"item_{datetime.now().isoformat()}",
                         "type": "message",
                         "role": "user",
                         "content": [{"type": "input_text", "text": message["text"]}]
@@ -186,8 +171,8 @@ class RealtimeSession:
                 
                 # Trigger response
                 response_event = {
-                    "event_id": f"event_{datetime.now().isoformat()}",
-                    "type": "response.create"
+                    "type": "response.create",
+                    "response": { "modalities": ["text", "audio"] }
                 }
                 await self.openai_ws.send(json.dumps(response_event))
                 
@@ -200,6 +185,8 @@ class RealtimeSession:
             async for message in self.openai_ws:
                 data = json.loads(message)
                 event_type = data.get("type")
+                
+                # logger.info(f"Received OpenAI event: {event_type}")
                 
                 if event_type == "session.created":
                     await self.client_ws.send_json({"type": "session_ready"})
@@ -217,6 +204,13 @@ class RealtimeSession:
                         "type": "text_delta",
                         "text": data.get("delta", "")
                     })
+
+                elif event_type == "response.audio_transcript.delta":
+                    # Forward audio transcript (AI speech text) to client
+                    await self.client_ws.send_json({
+                        "type": "text_delta",
+                        "text": data.get("delta", "")
+                    })
                     
                 elif event_type == "response.done":
                     await self.client_ws.send_json({"type": "response_done"})
@@ -226,6 +220,20 @@ class RealtimeSession:
                     
                 elif event_type == "input_audio_buffer.speech_stopped":
                     await self.client_ws.send_json({"type": "speech_stopped"})
+
+                elif event_type == "conversation.item.input_audio_transcription.completed":
+                    # Handle user transcript
+                    await self.client_ws.send_json({
+                        "type": "user_transcript",
+                        "text": data.get("transcript", "")
+                    })
+                
+                elif event_type == "error":
+                    logger.error(f"OpenAI Error: {data.get('error', {}).get('message')}")
+                    await self.client_ws.send_json({
+                        "type": "error",
+                        "message": data.get("error", {}).get("message", "Unknown OpenAI error")
+                    })
                     
         except websockets.exceptions.ConnectionClosed:
             logger.info("OpenAI WebSocket connection closed")

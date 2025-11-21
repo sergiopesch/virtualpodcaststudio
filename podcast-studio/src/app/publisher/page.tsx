@@ -192,30 +192,14 @@ export default function Publisher() {
       <div className="flex">
         <Sidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
         <div className="flex flex-1 flex-col min-w-0">
-          <Header
-            title="Publisher"
-            description="Distribute your podcast to the world"
-          />
           <main id="main-content" tabIndex={-1} className="space-y-6 p-4 sm:p-6 lg:p-8 overflow-y-auto flex-1">
             <div className="max-w-5xl mx-auto space-y-8">
-              {/* Header Section */}
-              <div className="relative overflow-hidden rounded-2xl bg-card border border-border/50 text-foreground p-8 lg:p-10 shadow-apple-card glass-panel">
-                <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-                  <div>
-                    <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-2">
-                      Publisher
-                    </h1>
-                    <p className="text-muted-foreground text-lg max-w-xl">
-                      Distribute your podcast to the world.
-                    </p>
-                  </div>
-                  <Button className="shadow-md font-semibold">
-                    <Upload className="size-4 mr-2" />
-                    New Release
-                  </Button>
-                </div>
+              <div className="flex justify-end">
+                <Button className="shadow-md font-semibold">
+                  <Upload className="size-4 mr-2" />
+                  New Release
+                </Button>
               </div>
-
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Main Content */}
                 <div className="lg:col-span-2 space-y-6">
