@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
-import { VideoProjectData, VideoClip, MediaAsset, MediaFilter, DragState } from "./types";
-import { createId, cloneProject, cloneClip } from "./utils";
+import React, { useState, useEffect } from "react";
+import { VideoProjectData, VideoClip, MediaAsset } from "./types";
+import { createId, cloneClip } from "./utils";
 import { Header } from "./components/Header";
 import { AssetBrowser } from "./components/AssetBrowser";
 import { Player } from "./components/Player";
@@ -10,7 +10,6 @@ import { Inspector } from "./components/Inspector";
 import { Timeline } from "./components/Timeline";
 import { Sidebar } from "@/components/layout/sidebar";
 import { useSidebar } from "@/contexts/sidebar-context";
-import { StoredConversation } from "@/lib/conversationStorage";
 
   // Initial empty project state
   const createEmptyProject = (): VideoProjectData => ({
@@ -56,7 +55,7 @@ export default function VideoStudio() {
       }, 16); // ~60fps
     }
     return () => clearInterval(interval);
-  }, [isPlaying, project.clips]);
+  }, [isPlaying, project.clips, currentTime]);
 
   // Handlers
   const handlePlayPause = () => setIsPlaying(p => !p);
@@ -254,7 +253,7 @@ export default function VideoStudio() {
   };
 
   const getMediaDuration = (file: File): Promise<number> => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
         const element = document.createElement(file.type.startsWith('audio') ? 'audio' : 'video');
         element.preload = 'metadata';
         element.onloadedmetadata = () => {

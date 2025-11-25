@@ -3,18 +3,15 @@
 import React, {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
-import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSidebar } from "@/contexts/sidebar-context";
-import { useApiConfig } from "@/contexts/api-config-context";
 import { useRealtimeConversation } from "@/hooks/useRealtimeConversation";
 import {
   encodePcm16ChunksToWav,
@@ -31,8 +28,6 @@ import {
   Radio,
   Sparkles,
   Video,
-  Volume2,
-  ArrowRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -219,8 +214,6 @@ const formatTime = (seconds: number) => {
 
 const StudioPage: React.FC = () => {
   const { collapsed, toggleCollapsed } = useSidebar();
-  const { activeProvider, defaultModels, models } = useApiConfig();
-  const activeModel = (models?.[activeProvider] ?? defaultModels[activeProvider]).trim();
   const router = useRouter();
 
   const [sessionId] = useState(() => `session_${Date.now()}`);
@@ -1110,15 +1103,14 @@ const StudioPage: React.FC = () => {
       files.push({
         name: "metadata.json",
         data: encoder.encode(
-          JSON.stringify(
+            JSON.stringify(
             {
               paper: payload.paper,
               durationSeconds: payload.durationSeconds,
               createdAt: payload.createdAt,
             },
             null,
-            2,
-            1,
+            2
           ),
         ),
       });
@@ -1144,19 +1136,6 @@ const StudioPage: React.FC = () => {
       setError(error instanceof Error ? error.message : "Failed to download audio bundle");
     }
   }, [base64ToUint8Array, buildConversationPayload, sessionId]);
-
-  const headerStatus = useMemo(() => {
-    switch (phase) {
-      case "preparing":
-        return { label: "CONNECTING", color: "yellow" as const, active: false };
-      case "live":
-        return { label: "LIVE", color: "red" as const, active: true };
-      case "stopping":
-        return { label: "SAVING", color: "yellow" as const, active: false };
-      default:
-        return { label: "IDLE", color: "gray" as const, active: false };
-    }
-  }, [phase]);
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -1336,7 +1315,7 @@ const StudioPage: React.FC = () => {
                         </li>
                         <li className="text-xs text-white/50 flex items-start gap-2 leading-relaxed">
                           <span className="block size-1 rounded-full bg-white/40 mt-1.5 shrink-0" />
-                          Don't forget to download your session assets.
+                          Don&apos;t forget to download your session assets.
                         </li>
                       </ul>
                     </div>
