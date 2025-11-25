@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { VideoProjectData, VideoClip, MediaAsset } from "./types";
 import { createId, cloneClip } from "./utils";
 import { Header } from "./components/Header";
@@ -37,13 +37,17 @@ export default function VideoStudio() {
   const [isExporting, setIsExporting] = useState(false);
   const { collapsed, toggleCollapsed } = useSidebar();
   
+  // Ref to track playback start time - avoids re-triggering effect on every frame
+  const playbackStartRef = useRef<number>(0);
+  
   // Playback loop
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (isPlaying) {
-      const startTime = Date.now() - currentTime * 1000;
+      // Capture the reference point when playback begins
+      playbackStartRef.current = Date.now() - currentTime * 1000;
       interval = setInterval(() => {
-        const newTime = (Date.now() - startTime) / 1000;
+        const newTime = (Date.now() - playbackStartRef.current) / 1000;
         const maxDuration = Math.max(60, ...project.clips.map(c => c.startTime + c.duration));
         
         if (newTime >= maxDuration) {
@@ -55,12 +59,16 @@ export default function VideoStudio() {
       }, 16); // ~60fps
     }
     return () => clearInterval(interval);
-  }, [isPlaying, project.clips, currentTime]);
+  }, [isPlaying, project.clips]);
 
   // Handlers
   const handlePlayPause = () => setIsPlaying(p => !p);
   const handleSeek = (time: number) => {
       setCurrentTime(time);
+      // Update playback reference when seeking during playback
+      if (isPlaying) {
+        playbackStartRef.current = Date.now() - time * 1000;
+      }
   };
 
   // Keyboard Shortcuts
