@@ -9,7 +9,7 @@ interface ProviderMetadata {
 
 const providers: Record<SupportedProvider, ProviderMetadata> = {
   openai: {
-    defaultModel: SecureEnv.getWithDefault("OPENAI_MODEL", "gpt-realtime-mini"),
+    defaultModel: SecureEnv.getWithDefault("OPENAI_MODEL", "gpt-4o-mini-realtime-preview"),
     supportsRealtime: true,
   },
   google: {

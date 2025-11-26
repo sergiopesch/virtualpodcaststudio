@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useSidebar } from "@/contexts/sidebar-context";
-import { useRealtimeConversation } from "@/hooks/useRealtimeConversation";
+import { useApiConfig } from "@/contexts/api-config-context";
 import {
   encodePcm16ChunksToWav,
   saveConversationToSession,
@@ -30,6 +30,7 @@ import {
   Video,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { UserSettingsDialog } from "@/components/settings/user-settings-dialog";
 
 interface SelectedPaper {
   id: string;
@@ -214,6 +215,7 @@ const formatTime = (seconds: number) => {
 
 const StudioPage: React.FC = () => {
   const { collapsed, toggleCollapsed } = useSidebar();
+  const { apiKeys, activeProvider } = useApiConfig();
   const router = useRouter();
 
   const [sessionId] = useState(() => `session_${Date.now()}`);
@@ -231,20 +233,27 @@ const StudioPage: React.FC = () => {
   const [hasCapturedAudio, setHasCapturedAudio] = useState(false);
   const [isHostSpeaking, setIsHostSpeaking] = useState(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isApiKeyMissing, setIsApiKeyMissing] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
-  const micFlushIntervalRef = useRef<number | null>(null);
   const aiAudioChunksRef = useRef<Uint8Array[]>([]);
   const hostAudioChunksRef = useRef<Uint8Array[]>([]);
-  const MAX_AUDIO_CHUNKS = 10000; // Limit to prevent memory exhaustion (~240MB at 24kHz)
+  const MAX_AUDIO_CHUNKS = 10000;
   const hasCapturedAudioRef = useRef(false);
   const latestConversationRef = useRef<StoredConversation | null>(null);
   const aiPlaybackTimeRef = useRef(0);
   const aiPlaybackSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
+  // SSE stream refs
+  const audioStreamRef = useRef<EventSource | null>(null);
+  const transcriptStreamRef = useRef<EventSource | null>(null);
+  const userTranscriptStreamRef = useRef<EventSource | null>(null);
+
   const entrySequenceRef = useRef(0);
   const hostActiveIdRef = useRef<string | null>(null);
+  const lastHostEntryIdRef = useRef<string | null>(null);
   const aiActiveIdRef = useRef<string | null>(null);
   const hostPendingRef = useRef("");
   const aiPendingRef = useRef("");
@@ -254,6 +263,14 @@ const StudioPage: React.FC = () => {
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
   // --- Helpers for Transcript Management ---
+
+  const stopTypingInterval = useCallback((speaker: Speaker) => {
+    const ref = speaker === "host" ? hostTypingIntervalRef : aiTypingIntervalRef;
+    if (ref.current != null) {
+      window.clearInterval(ref.current);
+      ref.current = null;
+    }
+  }, []);
 
   const updateEntryText = useCallback((id: string, updater: (value: string) => string) => {
     const updatedAt = Date.now();
@@ -304,13 +321,86 @@ const StudioPage: React.FC = () => {
     });
     if (speaker === "host") {
       hostActiveIdRef.current = id;
+      lastHostEntryIdRef.current = id;
     } else {
       aiActiveIdRef.current = id;
     }
     return id;
   }, []);
 
+  const finalizeSegment = useCallback(
+    (speaker: Speaker, finalText?: string) => {
+      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
+      const activeRef = speaker === "host" ? hostActiveIdRef : aiActiveIdRef;
+
+      // 1. Identify the target ID
+      let targetId = activeRef.current;
+
+      // If no active segment, try to rescue the last one (for Host) to fix race conditions where
+      // AI interruption closed the bubble before transcript arrived.
+      if (!targetId && speaker === "host" && lastHostEntryIdRef.current) {
+         targetId = lastHostEntryIdRef.current;
+      }
+
+      // If still no target ID...
+      if (!targetId) {
+         // If we have nothing to write, just bail
+         if (!finalText && !pendingRef.current) {
+            if (speaker === "host") setIsHostSpeaking(false);
+            else setIsAiSpeaking(false);
+            return;
+         }
+         // Otherwise, create a new segment to hold the content
+         targetId = startSegment(speaker);
+         if (speaker === "host") {
+            hostActiveIdRef.current = targetId;
+            lastHostEntryIdRef.current = targetId;
+            setIsHostSpeaking(true);
+         } else {
+            aiActiveIdRef.current = targetId;
+            setIsAiSpeaking(true);
+         }
+      }
+
+      // 2. Apply updates to targetId
+      if (pendingRef.current) {
+        const chunk = pendingRef.current;
+        pendingRef.current = "";
+        updateEntryText(targetId, (value) => value + chunk);
+      }
+
+      if (typeof finalText === "string") {
+        // If it's a complete transcript, replace the text (usually empty or partial)
+        updateEntryText(targetId, () => finalText);
+      }
+
+      // 3. Mark final
+      markEntryFinal(targetId);
+      
+      // 4. Cleanup refs
+      if (activeRef.current === targetId) {
+        activeRef.current = null;
+      }
+      pendingRef.current = "";
+      stopTypingInterval(speaker);
+
+      if (speaker === "host") {
+        setIsHostSpeaking(false);
+      } else {
+        setIsAiSpeaking(false);
+      }
+    },
+    [startSegment, markEntryFinal, stopTypingInterval, updateEntryText],
+  );
+
   const ensureSegment = useCallback((speaker: Speaker) => {
+    // Turn-taking logic: If the OTHER speaker is active, finalize them to ensure chronological flow
+    if (speaker === "host" && aiActiveIdRef.current) {
+      finalizeSegment("ai");
+    } else if (speaker === "ai" && hostActiveIdRef.current) {
+      finalizeSegment("host");
+    }
+
     if (speaker === "host") {
       if (!hostActiveIdRef.current) {
         const id = startSegment("host");
@@ -327,7 +417,7 @@ const StudioPage: React.FC = () => {
     }
     setIsAiSpeaking(true);
     return aiActiveIdRef.current;
-  }, [startSegment]);
+  }, [startSegment, finalizeSegment]);
 
   const drainPending = useCallback(
     (speaker: Speaker, flushAll: boolean) => {
@@ -373,13 +463,7 @@ const StudioPage: React.FC = () => {
     [ensureSegment, updateEntryText],
   );
 
-  const stopTypingInterval = useCallback((speaker: Speaker) => {
-    const ref = speaker === "host" ? hostTypingIntervalRef : aiTypingIntervalRef;
-    if (ref.current != null) {
-      window.clearInterval(ref.current);
-      ref.current = null;
-    }
-  }, []);
+  // Remove duplicate stopTypingInterval definition that was here
 
   const ensureTypingInterval = useCallback(
     (speaker: Speaker) => {
@@ -400,61 +484,33 @@ const StudioPage: React.FC = () => {
       if (!delta) {
         return;
       }
+      
+      // HOST: Direct update (no typing effect) to reduce latency
+      if (speaker === "host") {
+        // If host is active, update active
+        if (hostActiveIdRef.current) {
+          updateEntryText(hostActiveIdRef.current, (value) => value + delta);
+          return;
+        }
+        // If no active host segment, but we have a recent one (e.g. finalized by AI interruption), append to it
+        if (lastHostEntryIdRef.current) {
+           updateEntryText(lastHostEntryIdRef.current, (value) => value + delta);
+           return;
+        }
+        // Fallback: ensure new segment
+        const activeId = ensureSegment("host");
+        updateEntryText(activeId, (value) => value + delta);
+        return;
+      }
+
+      // AI: Use typing effect for smoother reading
       ensureSegment(speaker);
-      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
+      const pendingRef = aiPendingRef;
       pendingRef.current += delta;
       ensureTypingInterval(speaker);
       drainPending(speaker, false);
     },
-    [drainPending, ensureSegment, ensureTypingInterval],
-  );
-
-  const finalizeSegment = useCallback(
-    (speaker: Speaker, finalText?: string) => {
-      const pendingRef = speaker === "host" ? hostPendingRef : aiPendingRef;
-      const activeRef = speaker === "host" ? hostActiveIdRef : aiActiveIdRef;
-
-      if (!activeRef.current && !pendingRef.current && finalText == null) {
-        if (speaker === "host") {
-          setIsHostSpeaking(false);
-        } else {
-          setIsAiSpeaking(false);
-        }
-        return;
-      }
-
-      if (!activeRef.current) {
-        ensureSegment(speaker);
-      }
-
-      const activeId = activeRef.current;
-      if (!activeId) {
-        pendingRef.current = "";
-        return;
-      }
-
-      if (pendingRef.current) {
-        const chunk = pendingRef.current;
-        pendingRef.current = "";
-        updateEntryText(activeId, (value) => value + chunk);
-      }
-
-      if (typeof finalText === "string") {
-        updateEntryText(activeId, () => finalText);
-      }
-
-      markEntryFinal(activeId);
-      activeRef.current = null;
-      pendingRef.current = "";
-      stopTypingInterval(speaker);
-
-      if (speaker === "host") {
-        setIsHostSpeaking(false);
-      } else {
-        setIsAiSpeaking(false);
-      }
-    },
-    [ensureSegment, markEntryFinal, stopTypingInterval, updateEntryText],
+    [drainPending, ensureSegment, ensureTypingInterval, updateEntryText],
   );
 
   const handleAiTranscriptDelta = useCallback(
@@ -503,6 +559,22 @@ const StudioPage: React.FC = () => {
     throw new Error("Base64 decoding is not supported in this environment.");
   }, []);
 
+  const uint8ArrayToBase64 = useCallback((bytes: Uint8Array): string => {
+    if (typeof window !== "undefined" && typeof window.btoa === "function") {
+      let binary = "";
+      for (let index = 0; index < bytes.length; index++) {
+        binary += String.fromCharCode(bytes[index]);
+      }
+      return window.btoa(binary);
+    }
+
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(bytes).toString("base64");
+    }
+
+    throw new Error("Base64 encoding is not supported in this environment.");
+  }, []);
+
   const playAiAudioChunk = useCallback(
     async (chunk: Uint8Array) => {
       if (chunk.length === 0) {
@@ -523,11 +595,9 @@ const StudioPage: React.FC = () => {
         }
         context = new AudioContextConstructor({ sampleRate: 24000 });
         audioContextRef.current = context;
-        console.log("[INFO] Audio context created for AI playback");
       }
 
       if (context.state === "suspended") {
-        console.log("[INFO] Resuming suspended audio context");
         await context.resume().catch(() => undefined);
       }
 
@@ -552,7 +622,6 @@ const StudioPage: React.FC = () => {
       aiPlaybackSourcesRef.current.push(source);
       aiPlaybackTimeRef.current = startAt + audioBuffer.duration;
       setIsAudioPlaying(true);
-      console.log("[DEBUG] Playing AI audio chunk, duration:", audioBuffer.duration.toFixed(3), "s");
 
       source.onended = () => {
         aiPlaybackSourcesRef.current = aiPlaybackSourcesRef.current.filter((node) => node !== source);
@@ -568,50 +637,99 @@ const StudioPage: React.FC = () => {
     [setIsAudioPlaying],
   );
 
-  // --- Use Realtime Hook ---
+  // --- SSE Stream Setup ---
 
-  const rt = useRealtimeConversation({
-    onAudioDelta: (base64) => {
-      try {
-        const bytes = base64ToUint8Array(base64);
-        if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
-          aiAudioChunksRef.current.push(bytes);
+  const setupSseStreams = useCallback(() => {
+    // Audio stream
+    const audioSource = new EventSource(`/api/rt/audio?sessionId=${sessionId}`);
+    audioStreamRef.current = audioSource;
+
+    audioSource.onmessage = (event) => {
+      if (event.data) {
+        try {
+          const bytes = base64ToUint8Array(event.data);
+          if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+            aiAudioChunksRef.current.push(bytes);
+          }
+          void playAiAudioChunk(bytes);
+          setIsAiSpeaking(true);
+        } catch (e) {
+          console.error("[ERROR] Failed to process AI audio delta", e);
         }
-        void playAiAudioChunk(bytes);
-        setIsAiSpeaking(true);
-      } catch (e) {
-        console.error("Failed to process AI audio delta", e);
       }
-    },
-    onAiTranscriptDelta: (text) => {
-      handleAiTranscriptDelta(text);
-    },
-    onUserTranscript: (text) => {
-      handleUserTranscriptionComplete(text);
-    },
-    onSpeechStarted: () => {
+    };
+
+    audioSource.onerror = () => {
+      if (phaseRef.current === "live") {
+        console.warn("[WARN] Audio stream error");
+      }
+    };
+
+    // AI transcript stream
+    const transcriptSource = new EventSource(`/api/rt/transcripts?sessionId=${sessionId}`);
+    transcriptStreamRef.current = transcriptSource;
+
+    transcriptSource.onmessage = (event) => {
+      if (event.data) {
+        handleAiTranscriptDelta(event.data);
+      }
+    };
+
+    transcriptSource.addEventListener("done", () => {
+      finalizeSegment("ai");
+    });
+
+    transcriptSource.onerror = () => {
+      if (phaseRef.current === "live") {
+        console.warn("[WARN] Transcript stream error");
+      }
+    };
+
+    // User transcript stream
+    const userTranscriptSource = new EventSource(`/api/rt/user-transcripts?sessionId=${sessionId}`);
+    userTranscriptStreamRef.current = userTranscriptSource;
+
+    userTranscriptSource.addEventListener("complete", (event: MessageEvent) => {
+      if (event.data) {
+        handleUserTranscriptionComplete(event.data);
+      }
+    });
+
+    userTranscriptSource.addEventListener("delta", (event: MessageEvent) => {
+      if (event.data) {
+        appendToSegment("host", event.data);
+      }
+    });
+
+    userTranscriptSource.addEventListener("speech-started", () => {
       setIsHostSpeaking(true);
       ensureSegment("host");
-    },
-    onSpeechStopped: () => {
+    });
+
+    userTranscriptSource.addEventListener("speech-stopped", () => {
       setIsHostSpeaking(false);
-    }
-  });
+    });
 
-  const uint8ArrayToBase64 = useCallback((bytes: Uint8Array): string => {
-    if (typeof window !== "undefined" && typeof window.btoa === "function") {
-      let binary = "";
-      for (let index = 0; index < bytes.length; index++) {
-        binary += String.fromCharCode(bytes[index]);
+    userTranscriptSource.onerror = () => {
+      if (phaseRef.current === "live") {
+        console.warn("[WARN] User transcript stream error");
       }
-      return window.btoa(binary);
-    }
+    };
+  }, [sessionId, base64ToUint8Array, playAiAudioChunk, handleAiTranscriptDelta, finalizeSegment, handleUserTranscriptionComplete, appendToSegment, ensureSegment]);
 
-    if (typeof Buffer !== "undefined") {
-      return Buffer.from(bytes).toString("base64");
+  const closeSseStreams = useCallback(() => {
+    if (audioStreamRef.current) {
+      audioStreamRef.current.close();
+      audioStreamRef.current = null;
     }
-
-    throw new Error("Base64 encoding is not supported in this environment.");
+    if (transcriptStreamRef.current) {
+      transcriptStreamRef.current.close();
+      transcriptStreamRef.current = null;
+    }
+    if (userTranscriptStreamRef.current) {
+      userTranscriptStreamRef.current.close();
+      userTranscriptStreamRef.current = null;
+    }
   }, []);
 
   // --- Initialization ---
@@ -714,10 +832,6 @@ const StudioPage: React.FC = () => {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current = null;
     }
-    if (micFlushIntervalRef.current != null) {
-      window.clearInterval(micFlushIntervalRef.current);
-      micFlushIntervalRef.current = null;
-    }
     setIsRecording(false);
   }, []);
 
@@ -751,7 +865,13 @@ const StudioPage: React.FC = () => {
       const silentGain = audioContext.createGain();
       silentGain.gain.value = 0;
 
-      // Capture mic locally for saving the conversation (no uploads)
+      // Capture mic and send to API
+      const bufferAccumulator: Uint8Array[] = [];
+      let bufferSize = 0;
+      // Accumulate roughly 100ms of audio (24000 * 0.1 = 2400 samples)
+      // 1024 * 3 = 3072 samples (~128ms)
+      const SEND_THRESHOLD_BYTES = 1024 * 2 * 3; 
+
       scriptProcessor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
         
@@ -762,13 +882,36 @@ const StudioPage: React.FC = () => {
         }
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
         
-        // Send to realtime hook immediately
-        const base64 = uint8ArrayToBase64(uint8Array);
-        rt.sendAudioChunk(base64);
-
         // Store for saving
         if (hostAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
           hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
+        }
+
+        // Accumulate for API
+        bufferAccumulator.push(uint8Array);
+        bufferSize += uint8Array.length;
+
+        if (bufferSize >= SEND_THRESHOLD_BYTES) {
+          const combined = new Uint8Array(bufferSize);
+          let offset = 0;
+          for (const buf of bufferAccumulator) {
+            combined.set(buf, offset);
+            offset += buf.length;
+          }
+          
+          // Reset buffer
+          bufferAccumulator.length = 0;
+          bufferSize = 0;
+
+          // Send to API
+          const base64 = uint8ArrayToBase64(combined);
+          fetch('/api/rt/audio-append', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base64, sessionId }),
+          }).catch((err) => {
+            console.error("[ERROR] Failed to send audio chunk:", err);
+          });
         }
 
         if (!hasCapturedAudioRef.current) {
@@ -797,7 +940,6 @@ const StudioPage: React.FC = () => {
       };
 
       mediaRecorderRef.current = processor;
-      console.log("[INFO] Microphone pipeline started");
       setIsRecording(true);
       return true;
     } catch (error) {
@@ -806,11 +948,22 @@ const StudioPage: React.FC = () => {
       setError("Failed to access microphone. Please check permissions.");
       return false;
     }
-  }, [rt, uint8ArrayToBase64]);
+  }, [sessionId, uint8ArrayToBase64]);
 
   const teardownRealtime = useCallback(async () => {
     stopMicrophonePipeline();
-    rt.disconnect();
+    closeSseStreams();
+
+    // Stop the session on the server
+    try {
+      await fetch('/api/rt/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+    } catch (e) {
+      console.error("[ERROR] Failed to stop session:", e);
+    }
 
     setIsAiSpeaking(false);
     setIsHostSpeaking(false);
@@ -833,7 +986,7 @@ const StudioPage: React.FC = () => {
     aiAudioChunksRef.current = [];
     hasCapturedAudioRef.current = false;
     isSessionActiveRef.current = false;
-  }, [rt, stopMicrophonePipeline]);
+  }, [sessionId, stopMicrophonePipeline, closeSseStreams]);
 
   const buildConversationPayload = useCallback((): StoredConversation | null => {
     if (!currentPaper || entries.length === 0) {
@@ -905,7 +1058,7 @@ const StudioPage: React.FC = () => {
 
     resetConversation();
     setPhase("preparing");
-    setStatusMessage("Preparing realtime session...");
+    setStatusMessage("Preparing realtime session…");
     setError(null);
     setSessionDuration(0);
     hostAudioChunksRef.current = [];
@@ -916,42 +1069,55 @@ const StudioPage: React.FC = () => {
     setIsAudioPlaying(false);
 
     try {
-      console.log("[INFO] Starting session...");
-      await rt.connect();
-      
-      // Wait for connection state
-      // We'll handle success in a separate effect or check immediately below if sync
-    } catch (err) {
-      console.error("Failed to start session", err);
-      setError("Failed to connect to the realtime server.");
-      setPhase("idle");
-    }
-  }, [phase, resetConversation, rt]);
+      const apiKey = apiKeys[activeProvider];
+      if (!apiKey) {
+        setIsApiKeyMissing(true);
+        setError(`Please add your ${activeProvider === 'openai' ? 'OpenAI' : 'Google'} API key in Settings.`);
+        return;
+      }
+      setIsApiKeyMissing(false);
 
-  // Handle connection state changes
-  useEffect(() => {
-    if (rt.isConnected && phase === "preparing") {
-       console.log("[INFO] Realtime connected!");
-       
-       // Start mic pipeline
-       startMicrophonePipeline().then((started) => {
-         if (started) {
-           setPhase("live");
-           setStatusMessage("Live recording started.");
-           isSessionActiveRef.current = true;
-         } else {
-           setPhase("idle");
-           rt.disconnect();
-           setError("Failed to access microphone.");
-         }
-       });
-    } else if (rt.error && phase !== "idle" && phase !== "stopping") {
-       console.error("[ERROR] Realtime error:", rt.error);
-       setError(rt.error);
-       setPhase("idle");
-       teardownRealtime();
+      // Start the session via API
+      const response = await fetch('/api/rt/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          provider: activeProvider,
+          apiKey,
+          paper: currentPaper,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to start session');
+      }
+
+      // Set up SSE streams
+      setupSseStreams();
+
+      // Start microphone
+      const micStarted = await startMicrophonePipeline();
+      if (!micStarted) {
+        closeSseStreams();
+        setPhase("idle");
+        setError("Failed to access microphone.");
+        return;
+      }
+
+      setPhase("live");
+      setStatusMessage("Live recording started.");
+      isSessionActiveRef.current = true;
+
+    } catch (err) {
+      console.error("[ERROR] Failed to start session:", err);
+      setError(err instanceof Error ? err.message : "Failed to connect to the realtime server.");
+      setPhase("idle");
+      closeSseStreams();
     }
-  }, [rt.isConnected, rt.error, phase, startMicrophonePipeline, teardownRealtime, rt]);
+  }, [phase, resetConversation, sessionId, currentPaper, setupSseStreams, startMicrophonePipeline, closeSseStreams, activeProvider, apiKeys]);
 
   const stopSession = useCallback(async () => {
     if (phase === "idle" || phase === "stopping") {
@@ -959,7 +1125,7 @@ const StudioPage: React.FC = () => {
     }
 
     setPhase("stopping");
-    setStatusMessage("Wrapping up session...");
+    setStatusMessage("Wrapping up session…");
     setError(null);
 
     try {
@@ -997,6 +1163,14 @@ const StudioPage: React.FC = () => {
   useEffect(() => {
     stopSessionRef.current = stopSession;
   }, [stopSession]);
+
+  // Clear API key missing error when API key is added
+  useEffect(() => {
+    if (isApiKeyMissing && apiKeys[activeProvider]) {
+      setIsApiKeyMissing(false);
+      setError(null);
+    }
+  }, [apiKeys, activeProvider, isApiKeyMissing]);
 
   useEffect(() => {
     return () => {
@@ -1236,9 +1410,19 @@ const StudioPage: React.FC = () => {
                   </CardHeader>
                   <CardContent className="pt-6 space-y-6">
                     {error && (
-                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/90 font-medium">
-                        <span className="block mb-1 text-xs uppercase tracking-wide opacity-50">Error</span>
-                        {error}
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+                        <div className="text-sm text-white/90 font-medium">
+                          <span className="block mb-1 text-xs uppercase tracking-wide opacity-50">Error</span>
+                          {error}
+                        </div>
+                        {isApiKeyMissing && (
+                          <Button
+                            onClick={() => setSettingsOpen(true)}
+                            className="w-full bg-white text-black hover:bg-gray-200 rounded-xl h-10 font-medium"
+                          >
+                            Open Settings
+                          </Button>
+                        )}
                       </div>
                     )}
                     {!error && statusMessage && (
@@ -1260,7 +1444,7 @@ const StudioPage: React.FC = () => {
                         {phase === "preparing" ? (
                            <>
                              <span className="size-4 border-2 border-black/30 border-t-black rounded-full animate-spin mr-2"></span>
-                             Connecting...
+                             Connecting…
                            </>
                         ) : (
                            <>
@@ -1362,7 +1546,7 @@ const StudioPage: React.FC = () => {
                                  ) : (
                                    <span className="size-2 bg-white/20 rounded-full"></span>
                                  )}
-                                 {isAudioPlaying ? "Speaking..." : "Listening"}
+                                 {isAudioPlaying ? "Speaking…" : "Listening"}
                                </>
                             ) : (
                                "Offline"
@@ -1393,9 +1577,8 @@ const StudioPage: React.FC = () => {
                         {entries.map((entry) => {
                           const isHost = entry.speaker === "host";
                           
-                          // Monochrome message bubbles
                           const bubbleClass = isHost
-                            ? "bg-white text-black rounded-[1.5rem] rounded-tr-sm shadow-glass-sm"
+                            ? "bg-white !text-black border border-black/10 rounded-[1.5rem] rounded-tr-sm shadow-glass-sm"
                             : "bg-white/10 border border-white/10 text-white rounded-[1.5rem] rounded-tl-sm backdrop-blur-md";
 
                           const containerClass = isHost ? "flex-row-reverse" : "flex-row";
@@ -1426,13 +1609,22 @@ const StudioPage: React.FC = () => {
                                   </span>
                                 </div>
 
-                                <div className={cn("px-6 py-4 text-[15px] leading-7 shadow-sm", bubbleClass)}>
-                                  <span>{entry.text || (entry.status === "streaming" ? "" : "")}</span>
+                                <div
+                                  className={cn("px-6 py-4 text-[15px] leading-7 shadow-sm", bubbleClass)}
+                                >
+                                  <span className={cn(isHost ? "text-black" : "text-white")}>
+                                    {entry.text || (
+                                       // Debug fallback: show status if empty
+                                       <span className="opacity-50 italic text-[10px]">
+                                         {entry.status === "streaming" ? "..." : "(empty)"}
+                                       </span>
+                                    )}
+                                  </span>
                                   {entry.status === "streaming" && (
                                     <span className="inline-flex gap-1.5 ml-2 items-center align-middle">
-                                      <span className="size-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.3s]" />
-                                      <span className="size-1.5 bg-current rounded-full animate-bounce [animation-delay:-0.15s]" />
-                                      <span className="size-1.5 bg-current rounded-full animate-bounce" />
+                                      <span className={cn("size-1.5 rounded-full animate-bounce [animation-delay:-0.3s]", isHost ? "bg-black" : "bg-current")} />
+                                      <span className={cn("size-1.5 rounded-full animate-bounce [animation-delay:-0.15s]", isHost ? "bg-black" : "bg-current")} />
+                                      <span className={cn("size-1.5 rounded-full animate-bounce", isHost ? "bg-black" : "bg-current")} />
                                     </span>
                                   )}
                                 </div>
@@ -1450,10 +1642,10 @@ const StudioPage: React.FC = () => {
                               </div>
                               <span>
                                 {isHostSpeaking
-                                  ? "Listening..."
+                                  ? "Listening…"
                                   : isAiSpeaking
-                                    ? "Dr. Sarah is speaking..."
-                                    : "Listening..."}
+                                    ? "Dr. Sarah is speaking…"
+                                    : "Listening…"}
                               </span>
                             </div>
                           </div>
@@ -1481,6 +1673,7 @@ const StudioPage: React.FC = () => {
           </main>
         </div>
       </div>
+      <UserSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 };

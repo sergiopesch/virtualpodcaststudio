@@ -326,6 +326,10 @@ class RTManager extends EventEmitter {
   constructor(sessionId?: string) {
     super();
     this.sessionId = sessionId || "default";
+    // Prevent unhandled error events from crashing the process
+    this.on("error", (err) => {
+      console.error(`[ERROR] RTManager error (handled): ${err instanceof Error ? err.message : err}`);
+    });
   }
 
   getStatus(): "inactive" | "starting" | "active" {
@@ -528,6 +532,15 @@ class RTManager extends EventEmitter {
           },
         });
 
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (!settled) {
+            settled = true;
+            clearTimeoutIfNeeded();
+            fn();
+          }
+        };
+
         const clearTimeoutIfNeeded = () => {
           if (this.connectionTimeout) {
             clearTimeout(this.connectionTimeout);
@@ -536,48 +549,130 @@ class RTManager extends EventEmitter {
         };
 
         this.connectionTimeout = setTimeout(() => {
-          ws.terminate();
-          reject(
-            new RealtimeSessionError(
-              "TIMEOUT",
-              "Timed out while establishing realtime connection",
-              { status: REALTIME_ERROR_STATUS.TIMEOUT },
-            ),
-          );
-        }, 10_000);
+          settle(() => {
+            ws.terminate();
+            reject(
+              new RealtimeSessionError(
+                "TIMEOUT",
+                "Timed out while establishing realtime connection",
+                { status: REALTIME_ERROR_STATUS.TIMEOUT },
+              ),
+            );
+          });
+        }, 30_000);
+
+        // Handler for session confirmation or error from OpenAI
+        const handleMessage = (data: WebSocket.RawData) => {
+          try {
+            const text = typeof data === "string" ? data : data.toString();
+            const payload = JSON.parse(text) as Record<string, unknown>;
+            const type = typeof payload.type === "string" ? payload.type : "";
+
+            console.log(`[DEBUG] Connection phase event: ${type}`);
+
+            // Session confirmed - connection is truly established
+            if (type === "session.created" || type === "session.updated") {
+              console.log("[INFO] Session confirmed by OpenAI:", type);
+              settle(() => {
+                cleanup();
+                this.emit("ready");
+                resolve();
+              });
+              return;
+            }
+
+            // Error from OpenAI (e.g., invalid API key)
+            if (type === "error" || type === "response.error") {
+              const errorObj = payload.error as { code?: string; message?: string } | undefined;
+              const errorCode = errorObj?.code || "unknown";
+              const errorMessage = errorObj?.message || "OpenAI session error";
+              console.error(`[ERROR] OpenAI returned error during connection: ${errorCode} - ${errorMessage}`);
+
+              settle(() => {
+                cleanup();
+                ws.close();
+                this.ws = null;
+
+                // Map OpenAI error codes to our error types
+                let code: RealtimeSessionErrorCode = "UPSTREAM_ERROR";
+                let status = REALTIME_ERROR_STATUS.UPSTREAM_ERROR;
+
+                if (errorCode === "invalid_api_key") {
+                  code = "INVALID_API_KEY";
+                  status = REALTIME_ERROR_STATUS.INVALID_API_KEY;
+                } else if (errorCode === "rate_limit_exceeded") {
+                  code = "RATE_LIMITED";
+                  status = REALTIME_ERROR_STATUS.RATE_LIMITED;
+                } else if (errorCode === "insufficient_quota") {
+                  code = "FORBIDDEN";
+                  status = REALTIME_ERROR_STATUS.FORBIDDEN;
+                }
+
+                reject(
+                  new RealtimeSessionError(code, errorMessage, { status }),
+                );
+              });
+              return;
+            }
+          } catch (e) {
+            console.warn("[WARN] Failed to parse connection phase message:", e);
+          }
+        };
 
         ws.on("open", () => {
-          clearTimeoutIfNeeded();
+          console.log("[INFO] WebSocket connected, awaiting session confirmation...");
           this.ws = ws;
-          this.registerMessageHandlers(ws);
+          // Add temporary message handler for connection phase
+          ws.on("message", handleMessage);
           this.pushSessionUpdate();
           this.needsNewAudioBuffer = true;
-          this.emit("ready");
-          resolve();
+          // DON'T resolve here - wait for session.created/session.updated
         });
+
+        // After settlement, remove the temporary handler
+        const cleanup = () => {
+          ws.off("message", handleMessage);
+        };
 
         ws.on("error", (error: Error & { code?: number }) => {
-          clearTimeoutIfNeeded();
-          try {
-            ws.terminate();
-          } catch {
-            // ignored
-          }
-          reject(
-            new RealtimeSessionError(
-              "WEBSOCKET_ERROR",
-              `WebSocket connection error: ${error.message}`,
-              { status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR, cause: error },
-            ),
-          );
+          settle(() => {
+            try {
+              ws.terminate();
+            } catch {
+              // ignored
+            }
+            reject(
+              new RealtimeSessionError(
+                "WEBSOCKET_ERROR",
+                `WebSocket connection error: ${error.message}`,
+                { status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR, cause: error },
+              ),
+            );
+          });
         });
 
-        ws.on("close", () => {
-          clearTimeoutIfNeeded();
-          this.ws = null;
-          this.emit("close");
+        ws.on("close", (code, reason) => {
+          const reasonStr = reason?.toString() || "unknown";
+          console.log(`[INFO] WebSocket closed: ${code} - ${reasonStr}`);
+          settle(() => {
+            this.ws = null;
+            this.emit("close");
+            // If we close before session confirmation, that's an error
+            reject(
+              new RealtimeSessionError(
+                "WEBSOCKET_ERROR",
+                `Connection closed before session was established (code: ${code})`,
+                { status: REALTIME_ERROR_STATUS.WEBSOCKET_ERROR },
+              ),
+            );
+          });
         });
       });
+
+      // Connection established, now register the full message handlers
+      if (this.ws) {
+        this.registerMessageHandlers(this.ws);
+      }
     } finally {
       this.starting = false;
     }
@@ -721,6 +816,7 @@ class RTManager extends EventEmitter {
           type === "input_audio_buffer.transcription.delta" ||
           type === "input_audio_buffer.transcript.delta"
         ) {
+          // Check multiple fields for the transcript
           const delta =
             typeof (payload as { delta?: string }).delta === "string"
               ? (payload as { delta?: string }).delta
@@ -732,6 +828,9 @@ class RTManager extends EventEmitter {
           if (delta) {
             console.log(`[DEBUG] User transcript delta: "${delta}"`);
             this.emit("user_transcript_delta", delta);
+          } else {
+             // Debug logging for empty payload on delta
+             console.log(`[DEBUG] Received empty delta for ${type}`, payload);
           }
           return;
         }
@@ -754,6 +853,8 @@ class RTManager extends EventEmitter {
           if (transcript) {
             console.log(`[INFO] User transcript completed: "${transcript}"`);
             this.emit("user_transcript", transcript);
+          } else {
+             console.log(`[DEBUG] Received empty completed transcript for ${type}`, payload);
           }
           return;
         }
@@ -802,6 +903,27 @@ class RTManager extends EventEmitter {
         if (type === "input_audio_buffer.speech_stopped") {
           console.log("[INFO] User speech stopped");
           this.emit("user_speech_stopped");
+          return;
+        }
+
+        // Fallback: handle conversation.item.created for user messages
+        if (type === "conversation.item.created") {
+          try {
+            const item = (payload as { item?: unknown }).item as Record<string, unknown> | undefined;
+            if (item?.role === "user") {
+              const content = item.content as Array<{ type: string; text?: string; transcript?: string }>;
+              if (Array.isArray(content)) {
+                const textPart = content.find((c) => c.type === "input_text" || c.type === "input_audio_transcription");
+                const text = textPart?.text ?? textPart?.transcript;
+                if (text) {
+                  console.log(`[INFO] User text from conversation.item.created: "${text}"`);
+                  this.emit("user_transcript", text);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("[WARN] Failed to parse conversation.item.created", e);
+          }
           return;
         }
 

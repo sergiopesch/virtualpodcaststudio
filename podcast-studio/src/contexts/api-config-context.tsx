@@ -13,7 +13,7 @@ import { ApiKeySecurity } from "@/lib/apiKeySecurity";
 export type LlmProvider = "openai" | "google";
 
 const PROVIDER_DEFAULT_MODELS: Record<LlmProvider, string> = {
-  openai: process.env.NEXT_PUBLIC_OPENAI_REALTIME_MODEL ?? "gpt-realtime-mini",
+  openai: process.env.NEXT_PUBLIC_OPENAI_REALTIME_MODEL ?? "gpt-4o-mini-realtime-preview",
   google: process.env.NEXT_PUBLIC_GOOGLE_MODEL ?? "models/gemini-1.5-flash",
 };
 
@@ -104,7 +104,7 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     } catch (error) {
       console.error("Failed to persist API configuration", error);
     }
-  }, [preferences, hasHydrated]);
+  }, [preferences, apiKeys, hasHydrated]);
 
   const setActiveProvider = useCallback((provider: LlmProvider) => {
     setPreferences((previous) => ({

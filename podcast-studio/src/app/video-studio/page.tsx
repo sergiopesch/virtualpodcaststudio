@@ -59,6 +59,7 @@ export default function VideoStudio() {
       }, 16); // ~60fps
     }
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- currentTime intentionally captured only on play start; handleSeek updates ref during playback
   }, [isPlaying, project.clips]);
 
   // Handlers

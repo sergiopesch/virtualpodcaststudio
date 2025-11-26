@@ -1,16 +1,12 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator
-from typing import List, Dict, Any
+from typing import List
 import feedparser
 import httpx
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
-import json
-import asyncio
-import websockets
-import base64
 import os
 from dotenv import load_dotenv
 from collections import defaultdict
@@ -48,13 +44,13 @@ def check_rate_limit(client_ip: str) -> bool:
     return True
 
 # Add CORS middleware
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],  # Restrict methods
-    allow_headers=["Content-Type", "Authorization"],  # Restrict headers
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 class PaperRequest(BaseModel):
@@ -89,161 +85,6 @@ class Paper(BaseModel):
 
 class PaperResponse(BaseModel):
     papers: List[Paper]
-
-class ConversationMessage(BaseModel):
-    role: str
-    content: str
-    timestamp: str
-
-class RealtimeSession:
-    def __init__(self, websocket: WebSocket):
-        self.client_ws = websocket
-        self.openai_ws = None
-        self.session_config = {
-            "modalities": ["text", "audio"],
-            "instructions": "You are a podcast host and AI expert discussing research papers. Engage in natural conversation with the user about academic topics.",
-            "voice": "alloy",
-            "input_audio_format": "pcm16",
-            "output_audio_format": "pcm16",
-            "input_audio_transcription": {"enabled": True, "model": "whisper-1"},
-            "turn_detection": {"type": "server_vad", "threshold": 0.5, "prefix_padding_ms": 300, "silence_duration_ms": 200},
-            "temperature": 0.8,
-            "max_output_tokens": 4096
-        }
-        
-    async def connect_to_openai(self):
-        """Establish WebSocket connection to OpenAI Realtime API"""
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-            
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "OpenAI-Beta": "realtime=v1"
-        }
-        
-        try:
-            self.openai_ws = await websockets.connect(
-                "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01",
-                extra_headers=headers
-            )
-            logger.info("Connected to OpenAI Realtime API")
-            
-            # Send session configuration
-            await self._send_session_update()
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to connect to OpenAI: {e}")
-            return False
-    
-    async def _send_session_update(self):
-        """Send session configuration to OpenAI"""
-        session_update = {
-            "event_id": f"event_{datetime.now().isoformat()}",
-            "type": "session.update",
-            "session": self.session_config
-        }
-        await self.openai_ws.send(json.dumps(session_update))
-        
-    async def handle_client_message(self, message: Dict[str, Any]):
-        """Handle incoming message from client"""
-        try:
-            if message.get("type") == "audio":
-                # Append audio to buffer
-                append_event = {
-                    "type": "input_audio_buffer.append",
-                    "audio": message["audio"]
-                }
-                await self.openai_ws.send(json.dumps(append_event))
-                
-            elif message.get("type") == "text":
-                # Create conversation item with text input
-                item_event = {
-                    "type": "conversation.item.create",
-                    "item": {
-                        "type": "message",
-                        "role": "user",
-                        "content": [{"type": "input_text", "text": message["text"]}]
-                    }
-                }
-                await self.openai_ws.send(json.dumps(item_event))
-                
-                # Trigger response
-                response_event = {
-                    "type": "response.create",
-                    "response": { "modalities": ["text", "audio"] }
-                }
-                await self.openai_ws.send(json.dumps(response_event))
-                
-        except Exception as e:
-            logger.error(f"Error handling client message: {e}")
-    
-    async def handle_openai_response(self):
-        """Handle responses from OpenAI and forward to client"""
-        try:
-            async for message in self.openai_ws:
-                data = json.loads(message)
-                event_type = data.get("type")
-                
-                # logger.info(f"Received OpenAI event: {event_type}")
-                
-                if event_type == "session.created":
-                    await self.client_ws.send_json({"type": "session_ready"})
-                    
-                elif event_type == "response.audio.delta":
-                    # Forward audio delta to client
-                    await self.client_ws.send_json({
-                        "type": "audio_delta",
-                        "audio": data.get("delta", "")
-                    })
-                    
-                elif event_type == "response.text.delta":
-                    # Forward text delta to client
-                    await self.client_ws.send_json({
-                        "type": "text_delta",
-                        "text": data.get("delta", "")
-                    })
-
-                elif event_type == "response.audio_transcript.delta":
-                    # Forward audio transcript (AI speech text) to client
-                    await self.client_ws.send_json({
-                        "type": "text_delta",
-                        "text": data.get("delta", "")
-                    })
-                    
-                elif event_type == "response.done":
-                    await self.client_ws.send_json({"type": "response_done"})
-                    
-                elif event_type == "input_audio_buffer.speech_started":
-                    await self.client_ws.send_json({"type": "speech_started"})
-                    
-                elif event_type == "input_audio_buffer.speech_stopped":
-                    await self.client_ws.send_json({"type": "speech_stopped"})
-
-                elif event_type == "conversation.item.input_audio_transcription.completed":
-                    # Handle user transcript
-                    await self.client_ws.send_json({
-                        "type": "user_transcript",
-                        "text": data.get("transcript", "")
-                    })
-                
-                elif event_type == "error":
-                    logger.error(f"OpenAI Error: {data.get('error', {}).get('message')}")
-                    await self.client_ws.send_json({
-                        "type": "error",
-                        "message": data.get("error", {}).get("message", "Unknown OpenAI error")
-                    })
-                    
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("OpenAI WebSocket connection closed")
-        except Exception as e:
-            logger.error(f"Error handling OpenAI response: {e}")
-    
-    async def close(self):
-        """Close OpenAI WebSocket connection"""
-        if self.openai_ws:
-            await self.openai_ws.close()
 
 def sanitize_input(topic: str) -> str:
     """Sanitize topic input to prevent injection attacks"""
@@ -357,43 +198,6 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
-
-@app.websocket("/ws/conversation")
-async def websocket_conversation(websocket: WebSocket):
-    """WebSocket endpoint for realtime conversation"""
-    # Basic rate limiting for WebSocket connections
-    client_ip = websocket.client.host if websocket.client else "unknown"
-    if not check_rate_limit(client_ip):
-        await websocket.close(code=1008, reason="Rate limit exceeded")
-        return
-    
-    await websocket.accept()
-    session = RealtimeSession(websocket)
-    
-    try:
-        # Connect to OpenAI Realtime API
-        if not await session.connect_to_openai():
-            await websocket.send_json({"type": "error", "message": "Failed to connect to OpenAI"})
-            return
-        
-        # Start handling OpenAI responses
-        openai_task = asyncio.create_task(session.handle_openai_response())
-        
-        # Handle client messages
-        try:
-            while True:
-                data = await websocket.receive_json()
-                await session.handle_client_message(data)
-                
-        except WebSocketDisconnect:
-            logger.info("Client disconnected")
-            openai_task.cancel()
-        except Exception as e:
-            logger.error(f"Error in WebSocket conversation: {e}")
-            await websocket.send_json({"type": "error", "message": str(e)})
-        
-    finally:
-        await session.close()
 
 @app.post("/api/papers", response_model=PaperResponse)
 async def fetch_papers(request: PaperRequest, http_request: Request):
