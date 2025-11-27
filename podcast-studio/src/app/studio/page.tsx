@@ -43,6 +43,50 @@ interface SelectedPaper {
   formattedPublishedDate?: string;
 }
 
+// --- Web Speech API Types ---
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+
+interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  isFinal: boolean;
+  length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: (() => void) | null;
+}
+
+// Extend Window interface to support vendor-prefixed SpeechRecognition
+declare global {
+  interface Window {
+    SpeechRecognition?: { new(): SpeechRecognition };
+    webkitSpeechRecognition?: { new(): SpeechRecognition };
+  }
+}
+
 type Speaker = "host" | "ai";
 
 type ConnectionPhase = "idle" | "preparing" | "live" | "stopping";
@@ -240,7 +284,8 @@ const StudioPage: React.FC = () => {
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
   const aiAudioChunksRef = useRef<Uint8Array[]>([]);
   const hostAudioChunksRef = useRef<Uint8Array[]>([]);
-  const MAX_AUDIO_CHUNKS = 10000;
+  // Increased to support ~2.5 hours of conversation (2048 bytes per 42ms chunk -> ~85k chunks/hour)
+  const MAX_AUDIO_CHUNKS = 250000;
   const hasCapturedAudioRef = useRef(false);
   const latestConversationRef = useRef<StoredConversation | null>(null);
   const aiPlaybackTimeRef = useRef(0);
@@ -261,6 +306,11 @@ const StudioPage: React.FC = () => {
   const aiTypingIntervalRef = useRef<number | null>(null);
 
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Optimistic Transcription Refs
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const isUsingSpeechRecognitionRef = useRef(false);
+  const localTranscriptBufferRef = useRef("");
 
   // --- Helpers for Transcript Management ---
 
@@ -386,6 +436,18 @@ const StudioPage: React.FC = () => {
 
       if (speaker === "host") {
         setIsHostSpeaking(false);
+        // Important: When server finalizes host segment, reset our local optimistic buffer
+        // so the next segment starts fresh.
+        localTranscriptBufferRef.current = "";
+        
+        // Restarting recognition ensures we clear any stuck 'interim' state
+        if (isUsingSpeechRecognitionRef.current && recognitionRef.current) {
+           try {
+              recognitionRef.current.abort();
+              // onend handler will restart it
+           } catch {}
+        }
+
       } else {
         setIsAiSpeaking(false);
       }
@@ -405,6 +467,8 @@ const StudioPage: React.FC = () => {
       if (!hostActiveIdRef.current) {
         const id = startSegment("host");
         setIsHostSpeaking(true);
+        // Reset local buffer when starting a new host segment
+        localTranscriptBufferRef.current = "";
         return id;
       }
       setIsHostSpeaking(true);
@@ -418,6 +482,96 @@ const StudioPage: React.FC = () => {
     setIsAiSpeaking(true);
     return aiActiveIdRef.current;
   }, [startSegment, finalizeSegment]);
+
+  const startSpeechRecognition = useCallback(() => {
+    if (typeof window === "undefined") return;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.log("[INFO] Web Speech API not supported in this browser");
+      return;
+    }
+
+    // Cleanup existing
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        // Echo Cancellation for Visuals:
+        // If the AI is currently playing audio, ignore local recognition results.
+        // This prevents the "visual echo" where the AI's voice is transcribed as the user's text.
+        if (aiPlaybackSourcesRef.current.length > 0) {
+          return;
+        }
+
+        let interimTranscript = "";
+        let finalChunk = "";
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalChunk += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        // If we have a final chunk, commit it to our local buffer
+        if (finalChunk) {
+           localTranscriptBufferRef.current += finalChunk + " ";
+        }
+
+        const display = (localTranscriptBufferRef.current + interimTranscript).trim();
+
+        if (display) {
+          // Immediately update the UI
+          const activeId = ensureSegment("host");
+          updateEntryText(activeId, () => display);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        // Benign errors like 'no-speech' happen often
+        if (event.error !== 'no-speech') {
+           console.warn("[WARN] Speech recognition error:", event.error);
+        }
+      };
+
+      // Auto-restart if it stops unexpectedly while we are 'live'
+      recognition.onend = () => {
+         if (phaseRef.current === "live" && isUsingSpeechRecognitionRef.current) {
+            try {
+               recognition.start();
+            } catch { /* ignore */ }
+         }
+      };
+
+      recognition.start();
+      recognitionRef.current = recognition;
+      isUsingSpeechRecognitionRef.current = true;
+      localTranscriptBufferRef.current = ""; // Reset buffer on fresh start
+      console.log("[INFO] Optimistic speech recognition started");
+
+    } catch (e) {
+      console.error("[ERROR] Failed to start speech recognition", e);
+      isUsingSpeechRecognitionRef.current = false;
+    }
+  }, [ensureSegment, updateEntryText]);
+
+  const stopSpeechRecognition = useCallback(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    isUsingSpeechRecognitionRef.current = false;
+  }, []);
 
   const drainPending = useCallback(
     (speaker: Speaker, flushAll: boolean) => {
@@ -696,7 +850,9 @@ const StudioPage: React.FC = () => {
     });
 
     userTranscriptSource.addEventListener("delta", (event: MessageEvent) => {
-      if (event.data) {
+      // If we are using optimistic local transcription, ignore server deltas to prevent
+      // fighting/duplication. We only accept the 'complete' event to overwrite.
+      if (event.data && !isUsingSpeechRecognitionRef.current) {
         appendToSegment("host", event.data);
       }
     });
@@ -832,17 +988,21 @@ const StudioPage: React.FC = () => {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current = null;
     }
+    stopSpeechRecognition();
     setIsRecording(false);
-  }, []);
+  }, [stopSpeechRecognition]);
 
   const startMicrophonePipeline = useCallback(async () => {
     try {
+      startSpeechRecognition();
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: 24000,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true, // Helps normalize volume levels and prevent feedback loops
         },
       });
 
@@ -948,7 +1108,7 @@ const StudioPage: React.FC = () => {
       setError("Failed to access microphone. Please check permissions.");
       return false;
     }
-  }, [sessionId, uint8ArrayToBase64]);
+  }, [sessionId, uint8ArrayToBase64, startSpeechRecognition]);
 
   const teardownRealtime = useCallback(async () => {
     stopMicrophonePipeline();
