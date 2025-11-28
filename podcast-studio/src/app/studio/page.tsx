@@ -18,6 +18,7 @@ import {
   saveConversationToSession,
   type StoredConversation,
 } from "@/lib/conversationStorage";
+import { createZipArchive } from "@/lib/zip";
 import {
   Brain,
   Download,
@@ -25,8 +26,11 @@ import {
   Headphones,
   Mic,
   MicOff,
+  Pause,
+  Play,
   Radio,
   Sparkles,
+  Square,
   Video,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,6 +45,7 @@ interface SelectedPaper {
   primaryAuthor?: string;
   hasAdditionalAuthors?: boolean;
   formattedPublishedDate?: string;
+  fullText?: string;
 }
 
 // --- Web Speech API Types ---
@@ -102,154 +107,19 @@ interface TranscriptEntry {
   sequence: number;
 }
 
-const nextWordChunk = (text: string): [string, string] => {
-  if (!text) {
-    return ["", ""];
-  }
-
-  const match = text.match(/^[^\s]+\s*/);
-  if (match && match[0].length > 0) {
-    const chunk = match[0];
-    return [chunk, text.slice(chunk.length)];
-  }
-
-  return [text.charAt(0), text.slice(1)];
-};
-
-const CRC32_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let index = 0; index < 256; index++) {
-    let value = index;
-    for (let bit = 0; bit < 8; bit++) {
-      if ((value & 1) !== 0) {
-        value = 0xedb88320 ^ (value >>> 1);
-      } else {
-        value >>>= 1;
-      }
+  const nextWordChunk = (text: string): [string, string] => {
+    if (!text) {
+      return ["", ""];
     }
-    table[index] = value >>> 0;
-  }
-  return table;
-})();
-
-function crc32(data: Uint8Array): number {
-  let crc = 0 ^ -1;
-  for (let index = 0; index < data.length; index++) {
-    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ data[index]) & 0xff];
-  }
-  return (crc ^ -1) >>> 0;
-}
-
-function getDosDateTime(date: Date) {
-  let year = date.getFullYear();
-  if (year < 1980) {
-    year = 1980;
-  }
-  const dosTime = ((date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2)) & 0xffff;
-  const dosDate = (((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()) & 0xffff;
-  return { time: dosTime, date: dosDate };
-}
-
-function createZipArchive(files: Array<{ name: string; data: Uint8Array }>): Uint8Array {
-  const encoder = new TextEncoder();
-
-  let totalLocalSize = 0;
-  let totalCentralSize = 0;
-
-  const entries = files.map((file) => {
-    const nameBytes = encoder.encode(file.name);
-    const data = file.data;
-    const crc = crc32(data);
-    const size = data.length;
-    const { time, date } = getDosDateTime(new Date());
-
-    totalLocalSize += 30 + nameBytes.length + size;
-    totalCentralSize += 46 + nameBytes.length;
-
-    return { nameBytes, data, crc, size, time, date };
-  });
-
-  const archive = new Uint8Array(totalLocalSize + totalCentralSize + 22);
-  const view = new DataView(archive.buffer);
-  let offset = 0;
-
-  const centralEntries: Array<{
-    nameBytes: Uint8Array;
-    crc: number;
-    size: number;
-    time: number;
-    date: number;
-    offset: number;
-  }> = [];
-
-  for (const entry of entries) {
-    const localHeaderOffset = offset;
-
-    view.setUint32(offset, 0x04034b50, true); offset += 4;
-    view.setUint16(offset, 20, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint16(offset, entry.time, true); offset += 2;
-    view.setUint16(offset, entry.date, true); offset += 2;
-    view.setUint32(offset, entry.crc >>> 0, true); offset += 4;
-    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
-    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
-    view.setUint16(offset, entry.nameBytes.length, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-
-    archive.set(entry.nameBytes, offset);
-    offset += entry.nameBytes.length;
-    archive.set(entry.data, offset);
-    offset += entry.size;
-
-    centralEntries.push({
-      nameBytes: entry.nameBytes,
-      crc: entry.crc,
-      size: entry.size,
-      time: entry.time,
-      date: entry.date,
-      offset: localHeaderOffset,
-    });
-  }
-
-  const centralDirectoryOffset = offset;
-
-  for (const entry of centralEntries) {
-    view.setUint32(offset, 0x02014b50, true); offset += 4;
-    view.setUint16(offset, 20, true); offset += 2;
-    view.setUint16(offset, 20, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint16(offset, entry.time, true); offset += 2;
-    view.setUint16(offset, entry.date, true); offset += 2;
-    view.setUint32(offset, entry.crc >>> 0, true); offset += 4;
-    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
-    view.setUint32(offset, entry.size >>> 0, true); offset += 4;
-    view.setUint16(offset, entry.nameBytes.length, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint16(offset, 0, true); offset += 2;
-    view.setUint32(offset, 0, true); offset += 4;
-    view.setUint32(offset, entry.offset >>> 0, true); offset += 4;
-
-    archive.set(entry.nameBytes, offset);
-    offset += entry.nameBytes.length;
-  }
-
-  const centralDirectorySize = offset - centralDirectoryOffset;
-
-  view.setUint32(offset, 0x06054b50, true); offset += 4;
-  view.setUint16(offset, 0, true); offset += 2;
-  view.setUint16(offset, 0, true); offset += 2;
-  view.setUint16(offset, centralEntries.length, true); offset += 2;
-  view.setUint16(offset, centralEntries.length, true); offset += 2;
-  view.setUint32(offset, centralDirectorySize >>> 0, true); offset += 4;
-  view.setUint32(offset, centralDirectoryOffset >>> 0, true); offset += 4;
-  view.setUint16(offset, 0, true); offset += 2;
-
-  return archive;
-}
+  
+    const match = text.match(/^[^\s]+\s*/);
+    if (match && match[0].length > 0) {
+      const chunk = match[0];
+      return [chunk, text.slice(chunk.length)];
+    }
+  
+    return [text.charAt(0), text.slice(1)];
+  };
 
 const formatTime = (seconds: number) => {
   const mins = Math.floor(seconds / 60);
@@ -277,10 +147,35 @@ const StudioPage: React.FC = () => {
   const [hasCapturedAudio, setHasCapturedAudio] = useState(false);
   const [isHostSpeaking, setIsHostSpeaking] = useState(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const isAiInterruptedRef = useRef(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isApiKeyMissing, setIsApiKeyMissing] = useState(false);
+  const [isContextLoading, setIsContextLoading] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
+  const getAudioContext = useCallback(async () => {
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      return audioContextRef.current;
+    }
+    
+    const AudioContextConstructor =
+      window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextConstructor) {
+      throw new Error("Web Audio API is not supported in this browser.");
+    }
+    
+    const ctx = new AudioContextConstructor({ sampleRate: 24000 });
+    audioContextRef.current = ctx;
+    return ctx;
+  }, []);
+
   const mediaRecorderRef = useRef<{ stop: () => void } | null>(null);
   const aiAudioChunksRef = useRef<Uint8Array[]>([]);
   const hostAudioChunksRef = useRef<Uint8Array[]>([]);
@@ -306,6 +201,8 @@ const StudioPage: React.FC = () => {
   const aiTypingIntervalRef = useRef<number | null>(null);
 
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [scrollTrigger, setScrollTrigger] = useState(0); // Increment to trigger scroll
 
   // Optimistic Transcription Refs
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -335,6 +232,8 @@ const StudioPage: React.FC = () => {
           : entry,
       ),
     );
+    // Trigger scroll on every text update
+    setScrollTrigger((prev) => prev + 1);
   }, []);
 
   const markEntryFinal = useCallback((id: string) => {
@@ -616,9 +515,7 @@ const StudioPage: React.FC = () => {
     },
     [ensureSegment, updateEntryText],
   );
-
-  // Remove duplicate stopTypingInterval definition that was here
-
+    
   const ensureTypingInterval = useCallback(
     (speaker: Speaker) => {
       const ref = speaker === "host" ? hostTypingIntervalRef : aiTypingIntervalRef;
@@ -685,11 +582,14 @@ const StudioPage: React.FC = () => {
     hostActiveIdRef.current = null;
     aiActiveIdRef.current = null;
     hostPendingRef.current = "";
+    isAiInterruptedRef.current = false; // Reset interrupt flag on new session
     aiPendingRef.current = "";
     stopTypingInterval("host");
     stopTypingInterval("ai");
     setIsHostSpeaking(false);
     setIsAiSpeaking(false);
+    setIsMuted(false); // Reset mute state on new session
+    setIsPaused(false); // Reset pause state on new session
     setEntries([]);
     entrySequenceRef.current = 0;
   }, [stopTypingInterval]);
@@ -731,7 +631,8 @@ const StudioPage: React.FC = () => {
 
   const playAiAudioChunk = useCallback(
     async (chunk: Uint8Array) => {
-      if (chunk.length === 0) {
+      if (chunk.length === 0 || isAiInterruptedRef.current) {
+        console.log("[DEBUG] Skipping audio chunk - empty or interrupted");
         return;
       }
 
@@ -739,26 +640,22 @@ const StudioPage: React.FC = () => {
         return;
       }
 
-      let context = audioContextRef.current;
-      if (!context) {
-        const AudioContextConstructor =
-          window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AudioContextConstructor) {
-          console.warn("[WARN] Web Audio API not available for AI playback");
-          return;
-        }
-        context = new AudioContextConstructor({ sampleRate: 24000 });
-        audioContextRef.current = context;
-      }
-
-      if (context.state === "suspended") {
-        await context.resume().catch(() => undefined);
+      let context: AudioContext;
+      try {
+        context = await getAudioContext();
+        console.log("[DEBUG] Got audio context, state:", context.state);
+      } catch (e) {
+        console.warn("[WARN] Failed to get audio context for playback", e);
+        return;
       }
 
       const frameCount = Math.floor(chunk.length / 2);
       if (frameCount <= 0) {
+        console.log("[DEBUG] Skipping audio chunk - no frames");
         return;
       }
+
+      console.log("[DEBUG] Playing audio chunk:", chunk.length, "bytes,", frameCount, "frames");
 
       const audioBuffer = context.createBuffer(1, frameCount, 24000);
       const channel = audioBuffer.getChannelData(0);
@@ -776,6 +673,7 @@ const StudioPage: React.FC = () => {
       aiPlaybackSourcesRef.current.push(source);
       aiPlaybackTimeRef.current = startAt + audioBuffer.duration;
       setIsAudioPlaying(true);
+      console.log("[DEBUG] Audio scheduled at:", startAt, "duration:", audioBuffer.duration);
 
       source.onended = () => {
         aiPlaybackSourcesRef.current = aiPlaybackSourcesRef.current.filter((node) => node !== source);
@@ -801,7 +699,16 @@ const StudioPage: React.FC = () => {
     audioSource.onmessage = (event) => {
       if (event.data) {
         try {
+          console.log("[DEBUG] Received SSE audio data, length:", event.data.length);
           const bytes = base64ToUint8Array(event.data);
+          console.log("[DEBUG] Decoded audio bytes:", bytes.length);
+          
+          // Reset interrupt flag when we receive audio - the AI is actively responding
+          if (isAiInterruptedRef.current) {
+            console.log("[DEBUG] Resetting interrupt flag - AI is responding with audio");
+            isAiInterruptedRef.current = false;
+          }
+          
           if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
             aiAudioChunksRef.current.push(bytes);
           }
@@ -822,6 +729,12 @@ const StudioPage: React.FC = () => {
     // AI transcript stream
     const transcriptSource = new EventSource(`/api/rt/transcripts?sessionId=${sessionId}`);
     transcriptStreamRef.current = transcriptSource;
+
+    transcriptSource.addEventListener("start", () => {
+       // New turn started by AI (response.created equivalent)
+       console.log("[DEBUG] AI response started - resetting interrupt flag");
+       isAiInterruptedRef.current = false;
+    });
 
     transcriptSource.onmessage = (event) => {
       if (event.data) {
@@ -859,11 +772,30 @@ const StudioPage: React.FC = () => {
 
     userTranscriptSource.addEventListener("speech-started", () => {
       setIsHostSpeaking(true);
+      isAiInterruptedRef.current = true; // Mark interruption active
       ensureSegment("host");
+      
+      // INTERRUPTION FIX: Stop all AI audio immediately when user starts speaking.
+      // This handles the client-side "barge-in" so we don't hear the AI talk over us.
+      if (audioContextRef.current) {
+        const currentTime = audioContextRef.current.currentTime;
+        aiPlaybackSourcesRef.current.forEach((source) => {
+          try {
+            source.stop();
+          } catch { /* ignore if already stopped */ }
+        });
+        aiPlaybackSourcesRef.current = [];
+        // Reset playback time so next chunk starts fresh
+        aiPlaybackTimeRef.current = currentTime;
+        setIsAudioPlaying(false);
+        setIsAiSpeaking(false);
+      }
     });
 
     userTranscriptSource.addEventListener("speech-stopped", () => {
       setIsHostSpeaking(false);
+      // We don't reset isAiInterruptedRef here immediately; 
+      // we wait for the AI to start a new response turn.
     });
 
     userTranscriptSource.onerror = () => {
@@ -935,6 +867,46 @@ const StudioPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const fetchPaperContext = async () => {
+      // If no paper, or no URL, or text already loaded, skip
+      if (!currentPaper?.arxiv_url || currentPaper.fullText || isContextLoading) {
+        return;
+      }
+
+      setIsContextLoading(true);
+      try {
+        console.log("[INFO] Prefetching paper full text...");
+        const res = await fetch("/api/papers/fetch-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ arxivUrl: currentPaper.arxiv_url }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.text) {
+            setCurrentPaper((prev) => (prev ? { ...prev, fullText: data.text } : null));
+            console.log("[INFO] Paper text loaded successfully.");
+          } else {
+             console.warn("[WARN] Paper text response was empty (likely processing failed gracefully)");
+          }
+        } else {
+          // Gracefully handle 4xx/5xx by just logging and letting the user proceed without text
+          console.warn("[WARN] Failed to prefetch paper text:", res.status);
+        }
+      } catch (err) {
+        console.error("[ERROR] Failed to fetch paper context", err);
+      } finally {
+        setIsContextLoading(false);
+      }
+    };
+
+    if (currentPaper?.id) {
+      fetchPaperContext();
+    }
+  }, [currentPaper?.id, currentPaper?.arxiv_url]);
+
+  useEffect(() => {
     let interval: number | undefined;
     if (phase === "live") {
       interval = window.setInterval(() => {
@@ -957,31 +929,35 @@ const StudioPage: React.FC = () => {
       return;
     }
 
-    window.requestAnimationFrame(() => {
+    // Use requestAnimationFrame to ensure DOM is updated
+    requestAnimationFrame(() => {
       const root = transcriptScrollRef.current;
       if (!root) {
         return;
       }
+      
+      // Find the ScrollArea viewport (Radix UI component)
       const viewport = root.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]');
-      if (viewport) {
-        const scrollOptions: ScrollToOptions = {
-          top: viewport.scrollHeight,
-          behavior: "smooth",
-        };
-        if (typeof viewport.scrollTo === "function") {
-          viewport.scrollTo(scrollOptions);
-        } else {
-          viewport.scrollTop = viewport.scrollHeight;
-        }
+      if (!viewport) {
         return;
       }
-      root.scrollIntoView({ behavior: "smooth", block: "end" });
+
+      // Scroll to the very bottom - use instant scroll for real-time updates
+      // This ensures the latest message is always visible within the Live Feed component
+      const maxScroll = viewport.scrollHeight - viewport.clientHeight;
+      if (maxScroll > 0) {
+        viewport.scrollTop = maxScroll;
+      }
     });
   }, []);
 
   useEffect(() => {
+    // Scroll immediately
     scrollToLatest();
-  }, [entries, isHostSpeaking, isAiSpeaking, scrollToLatest]);
+    // Also scroll after a short delay to catch any late DOM updates
+    const timeoutId = setTimeout(scrollToLatest, 100);
+    return () => clearTimeout(timeoutId);
+  }, [entries, isHostSpeaking, isAiSpeaking, scrollTrigger, scrollToLatest]);
 
   const stopMicrophonePipeline = useCallback(() => {
     if (mediaRecorderRef.current) {
@@ -990,7 +966,99 @@ const StudioPage: React.FC = () => {
     }
     stopSpeechRecognition();
     setIsRecording(false);
+    mediaStreamRef.current = null;
   }, [stopSpeechRecognition]);
+
+  const toggleMute = useCallback(() => {
+    const stream = mediaStreamRef.current;
+    if (!stream) {
+      console.log("[WARN] No media stream available to mute");
+      return;
+    }
+    
+    const audioTrack = stream.getAudioTracks()[0];
+    if (audioTrack) {
+      // Toggle: if currently enabled (not muted), disable it (mute)
+      const willBeMuted = audioTrack.enabled;
+      audioTrack.enabled = !willBeMuted;
+      setIsMuted(willBeMuted);
+      
+      // Also stop/start speech recognition to prevent transcript from appearing
+      if (willBeMuted) {
+        // Muting - stop speech recognition
+        stopSpeechRecognition();
+        setIsHostSpeaking(false);
+      } else {
+        // Unmuting - restart speech recognition
+        startSpeechRecognition();
+      }
+      
+      console.log(`[INFO] Microphone ${willBeMuted ? 'muted' : 'unmuted'}, track.enabled=${audioTrack.enabled}`);
+    } else {
+      console.log("[WARN] No audio track found in stream");
+    }
+  }, [startSpeechRecognition, stopSpeechRecognition]);
+
+  const togglePause = useCallback(() => {
+    if (phase !== "live") {
+      console.log("[WARN] Cannot pause - session not live");
+      return;
+    }
+
+    const stream = mediaStreamRef.current;
+    
+    if (isPaused) {
+      // Resume session
+      console.log("[INFO] Resuming session...");
+      
+      // Re-enable audio track
+      if (stream) {
+        const audioTrack = stream.getAudioTracks()[0];
+        if (audioTrack) {
+          audioTrack.enabled = true;
+        }
+      }
+      
+      // Restart speech recognition
+      startSpeechRecognition();
+      
+      // Resume audio context if suspended
+      if (audioContextRef.current?.state === 'suspended') {
+        audioContextRef.current.resume();
+      }
+      
+      setIsPaused(false);
+      setIsMuted(false);
+      setStatusMessage("Session resumed");
+      
+      // Clear status after 2 seconds
+      setTimeout(() => setStatusMessage(null), 2000);
+    } else {
+      // Pause session
+      console.log("[INFO] Pausing session...");
+      
+      // Disable audio track (stop sending audio)
+      if (stream) {
+        const audioTrack = stream.getAudioTracks()[0];
+        if (audioTrack) {
+          audioTrack.enabled = false;
+        }
+      }
+      
+      // Stop speech recognition
+      stopSpeechRecognition();
+      setIsHostSpeaking(false);
+      
+      // Suspend audio context to stop playback
+      if (audioContextRef.current?.state === 'running') {
+        audioContextRef.current.suspend();
+      }
+      
+      setIsPaused(true);
+      setIsMuted(true);
+      setStatusMessage("Session paused");
+    }
+  }, [phase, isPaused, startSpeechRecognition, stopSpeechRecognition]);
 
   const startMicrophonePipeline = useCallback(async () => {
     try {
@@ -1006,19 +1074,10 @@ const StudioPage: React.FC = () => {
         },
       });
 
-      if (!audioContextRef.current) {
-        const AudioContextConstructor =
-          window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AudioContextConstructor) {
-          throw new Error("Web Audio API is not supported in this browser.");
-        }
-        audioContextRef.current = new AudioContextConstructor({ sampleRate: 24000 });
-      }
-
-      const audioContext = audioContextRef.current;
-      if (audioContext.state === "suspended") {
-        await audioContext.resume();
-      }
+      // Store the stream reference for muting
+      mediaStreamRef.current = stream;
+      
+      const audioContext = await getAudioContext();
 
       const source = audioContext.createMediaStreamSource(stream);
       const scriptProcessor = audioContext.createScriptProcessor(1024, 1, 1);
@@ -1042,7 +1101,7 @@ const StudioPage: React.FC = () => {
         }
         const uint8Array = new Uint8Array(pcm16Buffer.buffer);
         
-        // Store for saving
+        // Store for saving (even when muted, for complete recording)
         if (hostAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
           hostAudioChunksRef.current.push(new Uint8Array(uint8Array));
         }
@@ -1063,15 +1122,19 @@ const StudioPage: React.FC = () => {
           bufferAccumulator.length = 0;
           bufferSize = 0;
 
-          // Send to API
-          const base64 = uint8ArrayToBase64(combined);
-          fetch('/api/rt/audio-append', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ base64, sessionId }),
-          }).catch((err) => {
-            console.error("[ERROR] Failed to send audio chunk:", err);
-          });
+          // Only send to API if not muted
+          // Check the stream tracks to see if muted (more reliable than state)
+          const track = mediaStreamRef.current?.getAudioTracks()[0];
+          if (track && track.enabled) {
+            const base64 = uint8ArrayToBase64(combined);
+            fetch('/api/rt/audio-append', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ base64, sessionId }),
+            }).catch((err) => {
+              console.error("[ERROR] Failed to send audio chunk:", err);
+            });
+          }
         }
 
         if (!hasCapturedAudioRef.current) {
@@ -1238,6 +1301,14 @@ const StudioPage: React.FC = () => {
       setIsApiKeyMissing(false);
 
       // Start the session via API
+      console.log("[DEBUG] Starting session with paper:", {
+        title: currentPaper?.title,
+        hasFullText: !!currentPaper?.fullText,
+        fullTextLength: currentPaper?.fullText?.length ?? 0,
+        hasAbstract: !!currentPaper?.abstract,
+      });
+      
+      const startTime = performance.now();
       const response = await fetch('/api/rt/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1248,6 +1319,9 @@ const StudioPage: React.FC = () => {
           paper: currentPaper,
         }),
       });
+      
+      const elapsed = Math.round(performance.now() - startTime);
+      console.log(`[DEBUG] /api/rt/start responded in ${elapsed}ms with status ${response.status}`);
 
       const result = await response.json();
 
@@ -1472,85 +1546,97 @@ const StudioPage: React.FC = () => {
   }, [base64ToUint8Array, buildConversationPayload, sessionId]);
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="flex">
+    <div className="h-screen bg-black text-white overflow-hidden">
+      <div className="flex h-full">
         <Sidebar
           collapsed={collapsed}
           onToggleCollapse={toggleCollapsed}
           isLiveRecording={phase === "live"}
         />
 
-        <div className="flex-1 flex flex-col min-w-0">
-          <main id="main-content" tabIndex={-1} className="flex-1 p-6 lg:p-10 overflow-y-auto">
-            <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-3 gap-8 h-full">
-              <div className="space-y-8">
+        <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+          <main id="main-content" tabIndex={-1} className="flex-1 p-4 md:p-6 lg:p-8 overflow-hidden flex flex-col min-h-0">
+            <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 flex-1 min-h-0">
+              <div className="lg:col-span-3 xl:col-span-3 2xl:col-span-2 space-y-4 md:space-y-6 overflow-y-auto max-h-full">
                 {/* Current Paper Card */}
                 <Card className="glass-panel border-white/10">
-                  <CardHeader className="pb-4 border-b border-white/5">
-                    <CardTitle className="flex items-center gap-3 text-white">
-                      <div className="size-8 rounded-full bg-white/10 flex items-center justify-center">
-                        <FileText className="size-4 text-white" />
+                  <CardHeader className="pb-3 md:pb-4 border-b border-white/5">
+                    <CardTitle className="flex items-center gap-2 md:gap-3 text-white text-sm md:text-base">
+                      <div className="size-6 md:size-8 rounded-full bg-white/10 flex items-center justify-center">
+                        <FileText className="size-3 md:size-4 text-white" />
                       </div>
                       Current Paper
                     </CardTitle>
+                    {isContextLoading && (
+                      <div className="flex items-center gap-2 text-[10px] md:text-xs text-white/50 animate-pulse">
+                        <span className="size-1.5 md:size-2 rounded-full bg-white/50" />
+                        Loading context…
+                      </div>
+                    )}
+                    {currentPaper?.fullText && !isContextLoading && (
+                      <div className="flex items-center gap-1.5 md:gap-2 text-[10px] md:text-xs text-green-400/80 font-medium bg-green-900/20 px-2 py-1 rounded-full border border-green-900/30">
+                        <span className="size-1.5 rounded-full bg-green-500 shadow-glow-green" />
+                        Context Ready
+                      </div>
+                    )}
                   </CardHeader>
-                  <CardContent className="pt-6 space-y-6">
+                  <CardContent className="pt-4 md:pt-6 space-y-4 md:space-y-6">
                     {paperLoadError ? (
-                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white text-sm font-medium">
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3 md:p-4 text-white text-xs md:text-sm font-medium">
                         {paperLoadError}
                       </div>
                     ) : currentPaper ? (
-                      <div className="space-y-6">
-                        <div className="space-y-3">
-                          <h3 className="font-semibold text-xl text-white leading-tight">
+                      <div className="space-y-4 md:space-y-6">
+                        <div className="space-y-2 md:space-y-3">
+                          <h3 className="font-semibold text-base md:text-xl text-white leading-tight">
                             {currentPaper.title}
                           </h3>
-                          <div className="flex items-center gap-2 text-xs font-bold text-white/50 uppercase tracking-wider">
-                            <span className="bg-white/10 px-2.5 py-1 rounded-md text-white">
+                          <div className="flex items-center gap-2 text-[10px] md:text-xs font-bold text-white/50 uppercase tracking-wider">
+                            <span className="bg-white/10 px-2 md:px-2.5 py-0.5 md:py-1 rounded-md text-white">
                               Published {currentPaper.formattedPublishedDate ?? "Unknown"}
                             </span>
                           </div>
-                          <p className="text-sm text-white/70 font-medium">
+                          <p className="text-xs md:text-sm text-white/70 font-medium">
                             {currentPaper.primaryAuthor
                               ? `${currentPaper.primaryAuthor}${currentPaper.hasAdditionalAuthors ? " et al." : ""}`
                               : currentPaper.authors}
                           </p>
                         </div>
-                        <p className="text-sm leading-relaxed text-white/60 line-clamp-4 font-light">
+                        <p className="text-xs md:text-sm leading-relaxed text-white/60 line-clamp-3 md:line-clamp-4 font-light">
                           {currentPaper.abstract}
                         </p>
                         <div>
                           {currentPaper.arxiv_url ? (
-                            <Button asChild variant="outline" className="w-full justify-center h-12 rounded-xl border-white/20 hover:bg-white/10 hover:text-white hover:border-white/40 transition-all">
+                            <Button asChild variant="outline" className="w-full justify-center h-10 md:h-12 rounded-xl text-xs md:text-sm border-white/20 hover:bg-white/10 hover:text-white hover:border-white/40 transition-all">
                               <a
                                 href={currentPaper.arxiv_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >
-                                <FileText className="mr-2 size-4" />
+                                <FileText className="mr-2 size-3.5 md:size-4" />
                                 View on arXiv
                               </a>
                             </Button>
                           ) : (
-                            <Button variant="outline" className="w-full justify-center h-12 rounded-xl" disabled>
-                              <FileText className="mr-2 size-4" />
+                            <Button variant="outline" className="w-full justify-center h-10 md:h-12 rounded-xl text-xs md:text-sm" disabled>
+                              <FileText className="mr-2 size-3.5 md:size-4" />
                               View on arXiv
                             </Button>
                           )}
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-4 text-center py-8">
-                        <div className="size-14 rounded-full bg-white/5 mx-auto flex items-center justify-center">
-                          <FileText className="size-6 text-white/30" />
+                      <div className="space-y-3 md:space-y-4 text-center py-6 md:py-8">
+                        <div className="size-12 md:size-14 rounded-full bg-white/5 mx-auto flex items-center justify-center">
+                          <FileText className="size-5 md:size-6 text-white/30" />
                         </div>
-                        <div className="space-y-2">
-                          <p className="font-medium text-white">No paper selected</p>
-                          <p className="text-sm text-white/50 max-w-[200px] mx-auto">
+                        <div className="space-y-1.5 md:space-y-2">
+                          <p className="font-medium text-sm md:text-base text-white">No paper selected</p>
+                          <p className="text-xs md:text-sm text-white/50 max-w-[180px] md:max-w-[200px] mx-auto">
                             Select a paper from the Research Hub to start.
                           </p>
                         </div>
-                        <Button variant="secondary" className="mt-2" onClick={() => router.push("/")}>
+                        <Button variant="secondary" className="mt-2 text-xs md:text-sm h-9 md:h-10" onClick={() => router.push("/")}>
                           Go to Research Hub
                         </Button>
                       </div>
@@ -1560,25 +1646,25 @@ const StudioPage: React.FC = () => {
 
                 {/* Session Controls Card */}
                 <Card className="glass-panel border-white/10">
-                  <CardHeader className="pb-4 border-b border-white/5">
-                    <CardTitle className="flex items-center gap-3 text-white">
-                      <div className="size-8 rounded-full bg-white/10 flex items-center justify-center">
-                        <Mic className="size-4 text-white" />
+                  <CardHeader className="pb-3 md:pb-4 border-b border-white/5">
+                    <CardTitle className="flex items-center gap-2 md:gap-3 text-white text-sm md:text-base">
+                      <div className="size-6 md:size-8 rounded-full bg-white/10 flex items-center justify-center">
+                        <Mic className="size-3 md:size-4 text-white" />
                       </div>
                       Session Controls
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="pt-6 space-y-6">
+                  <CardContent className="pt-4 md:pt-6 space-y-4 md:space-y-6">
                     {error && (
-                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
-                        <div className="text-sm text-white/90 font-medium">
-                          <span className="block mb-1 text-xs uppercase tracking-wide opacity-50">Error</span>
+                      <div className="rounded-lg md:rounded-xl border border-white/10 bg-white/5 p-3 md:p-4 space-y-2 md:space-y-3">
+                        <div className="text-xs md:text-sm text-white/90 font-medium">
+                          <span className="block mb-1 text-[10px] md:text-xs uppercase tracking-wide opacity-50">Error</span>
                           {error}
                         </div>
                         {isApiKeyMissing && (
                           <Button
                             onClick={() => setSettingsOpen(true)}
-                            className="w-full bg-white text-black hover:bg-gray-200 rounded-xl h-10 font-medium"
+                            className="w-full bg-white text-black hover:bg-gray-200 rounded-lg md:rounded-xl h-9 md:h-10 text-xs md:text-sm font-medium"
                           >
                             Open Settings
                           </Button>
@@ -1586,78 +1672,119 @@ const StudioPage: React.FC = () => {
                       </div>
                     )}
                     {!error && statusMessage && (
-                      <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-sm text-white/90 font-medium animate-pulse">
+                      <div className="rounded-lg md:rounded-xl border border-white/10 bg-white/5 p-3 md:p-4 text-xs md:text-sm text-white/90 font-medium animate-pulse">
                         {statusMessage}
                       </div>
                     )}
 
-                    <div className="space-y-3">
+                    <div className="space-y-2 md:space-y-3">
                       <Button
                         onClick={startSession}
-                        disabled={phase === "preparing" || phase === "live"}
+                        disabled={phase === "preparing" || phase === "live" || isContextLoading}
                         size="lg"
                         className={cn(
-                          "w-full justify-center h-14 rounded-2xl text-base font-semibold shadow-glass transition-all duration-300",
-                          phase === "live" ? "opacity-50 cursor-not-allowed bg-white/10" : "bg-white text-black hover:scale-[1.02] hover:bg-gray-100"
+                          "w-full justify-center h-12 md:h-14 rounded-2xl text-sm md:text-base font-semibold transition-all duration-300",
+                          phase === "preparing"
+                            ? "bg-blue-500/20 border border-blue-500/50 text-blue-400"
+                            : isContextLoading
+                              ? "opacity-40 cursor-not-allowed bg-white/5 text-white/50 border border-white/10"
+                              : phase === "live"
+                                ? "opacity-30 cursor-not-allowed bg-white/5 text-white/50 border border-white/10"
+                                : "bg-white text-black hover:scale-[1.02] hover:bg-gray-100 shadow-glass"
                         )}
                       >
                         {phase === "preparing" ? (
-                           <>
-                             <span className="size-4 border-2 border-black/30 border-t-black rounded-full animate-spin mr-2"></span>
-                             Connecting…
-                           </>
+                          <>
+                            <span className="size-4 md:size-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin mr-2" />
+                            Connecting…
+                          </>
+                        ) : isContextLoading ? (
+                          <>
+                            <span className="size-4 md:size-5 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                            Loading Context…
+                          </>
                         ) : (
-                           <>
-                             <Mic className="mr-2 size-5" />
-                             Start Live Session
-                           </>
+                          <>
+                            <Mic className="mr-2 size-4 md:size-5" />
+                            Start Session
+                          </>
                         )}
                       </Button>
+                      
+                      {/* Pause/Resume Button */}
+                      <Button
+                        onClick={togglePause}
+                        disabled={phase !== "live"}
+                        size="lg"
+                        className={cn(
+                          "w-full justify-center h-12 md:h-14 rounded-2xl text-sm md:text-base font-semibold transition-all duration-300",
+                          phase !== "live" 
+                            ? "opacity-30 cursor-not-allowed bg-white/5 text-white/50 border border-white/10" 
+                            : isPaused 
+                              ? "bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/30" 
+                              : "bg-amber-500/20 border border-amber-500/50 text-amber-400 hover:bg-amber-500/30"
+                        )}
+                      >
+                        {isPaused ? (
+                          <>
+                            <Play className="mr-2 size-4 md:size-5" />
+                            Resume Session
+                          </>
+                        ) : (
+                          <>
+                            <Pause className="mr-2 size-4 md:size-5" />
+                            Pause Session
+                          </>
+                        )}
+                      </Button>
+                      
+                      {/* End Session Button */}
                       <Button
                         onClick={stopSession}
                         disabled={phase !== "live"}
-                        variant="destructive"
                         size="lg"
                         className={cn(
-                           "w-full justify-center h-14 rounded-2xl text-base font-semibold transition-all border-white/10 hover:bg-white/10",
-                           phase === "live" ? "opacity-100" : "opacity-50"
+                          "w-full justify-center h-12 md:h-14 rounded-2xl text-sm md:text-base font-semibold transition-all duration-300",
+                          phase !== "live"
+                            ? "opacity-30 cursor-not-allowed bg-white/5 text-white/50 border border-white/10"
+                            : "bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30"
                         )}
                       >
-                        <MicOff className="mr-2 size-5" />
+                        <Square className="mr-2 size-4 md:size-5 fill-current" />
                         End Session
                       </Button>
                     </div>
 
-                    <div className="space-y-2 pt-2">
-                      <Button variant="ghost" className="w-full justify-start h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/10" onClick={handleExportTranscript}>
-                        <FileText className="mr-3 size-4" />
+                    <div className="space-y-1.5 md:space-y-2 pt-2">
+                      <Button variant="ghost" className="w-full justify-start h-10 md:h-12 rounded-xl text-xs md:text-sm text-white/60 hover:text-white hover:bg-white/10" onClick={handleExportTranscript}>
+                        <FileText className="mr-2 md:mr-3 size-3.5 md:size-4" />
                         Export Transcript
                       </Button>
-                      <Button variant="ghost" className="w-full justify-start h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/10" onClick={handleDownloadAudio} disabled={!hasCapturedAudio}>
-                        <Download className="mr-3 size-4" />
-                        Download Audio Bundle
+                      <Button variant="ghost" className="w-full justify-start h-10 md:h-12 rounded-xl text-xs md:text-sm text-white/60 hover:text-white hover:bg-white/10" onClick={handleDownloadAudio} disabled={!hasCapturedAudio}>
+                        <Download className="mr-2 md:mr-3 size-3.5 md:size-4" />
+                        Download Audio
                       </Button>
-                      <Button variant="ghost" className="w-full justify-start h-12 rounded-xl text-white/60 hover:text-white hover:bg-white/10" onClick={handleSendToVideoStudio}>
-                        <Video className="mr-3 size-4" />
+                      <Button variant="ghost" className="w-full justify-start h-10 md:h-12 rounded-xl text-xs md:text-sm text-white/60 hover:text-white hover:bg-white/10" onClick={handleSendToVideoStudio}>
+                        <Video className="mr-2 md:mr-3 size-3.5 md:size-4" />
                         Send to Video Studio
                       </Button>
                     </div>
 
-                    <div className="rounded-2xl border border-white/5 bg-white/5 p-5 space-y-3">
-                      <p className="flex items-center gap-2 text-sm font-semibold text-white">
-                        <Radio className="size-4 text-white/80" />
+                    <div className="rounded-xl md:rounded-2xl border border-white/5 bg-white/5 p-3 md:p-5 space-y-2 md:space-y-3">
+                      <p className="flex items-center gap-2 text-xs md:text-sm font-semibold text-white">
+                        <Radio className="size-3.5 md:size-4 text-white/80" />
                         Pro Tips
                       </p>
-                      <ul className="space-y-2">
-                        <li className="text-xs text-white/50 flex items-start gap-2 leading-relaxed">
+                      <ul className="space-y-1.5 md:space-y-2">
+                        <li className="text-[10px] md:text-xs text-white/50 flex items-start gap-2 leading-relaxed">
                           <span className="block size-1 rounded-full bg-white/40 mt-1.5 shrink-0" />
-                          Speak naturally. The AI is listening for context.
+                          Speak naturally. The AI listens for context.
                         </li>
-                        <li className="text-xs text-white/50 flex items-start gap-2 leading-relaxed">
+                        <li className="text-[10px] md:text-xs text-white/50 flex items-start gap-2 leading-relaxed">
                           <span className="block size-1 rounded-full bg-white/40 mt-1.5 shrink-0" />
-                          The feed auto-scrolls to keep you in the flow.
+                          Feed auto-scrolls to keep you in flow.
                         </li>
-                        <li className="text-xs text-white/50 flex items-start gap-2 leading-relaxed">
+                        <li className="text-[10px] md:text-xs text-white/50 flex items-start gap-2 leading-relaxed">
                           <span className="block size-1 rounded-full bg-white/40 mt-1.5 shrink-0" />
                           Don&apos;t forget to download your session assets.
                         </li>
@@ -1667,26 +1794,42 @@ const StudioPage: React.FC = () => {
                 </Card>
               </div>
 
-              <div className="xl:col-span-2 h-full min-h-[600px]">
-                <Card className="h-full flex flex-col overflow-hidden glass-panel border-white/10 shadow-glass">
-                  <CardHeader className="border-b border-white/5 bg-white/5 backdrop-blur-xl py-5 px-8">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-3 text-white">
-                        <div className="size-8 rounded-full bg-white/10 flex items-center justify-center">
-                          <Sparkles className="size-4 text-white" />
+              <div className="lg:col-span-9 xl:col-span-9 2xl:col-span-10 min-h-0 flex flex-col">
+                <Card className="flex-1 flex flex-col overflow-hidden glass-panel border-white/10 shadow-glass min-h-0">
+                  <CardHeader className="border-b border-white/5 bg-white/5 backdrop-blur-xl py-4 px-4 md:px-6 lg:px-8 shrink-0">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <CardTitle className="flex items-center gap-2 md:gap-3 text-white">
+                        <div className="size-7 md:size-8 rounded-full bg-white/10 flex items-center justify-center">
+                          <Sparkles className="size-4" />
                         </div>
-                        Live Feed
+                        <span className="text-base md:text-lg">Live Feed</span>
                       </CardTitle>
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 md:gap-4 flex-wrap">
                         {phase !== "idle" && (
-                          <div className="flex items-center gap-3 text-sm font-mono bg-black/40 px-4 py-2 rounded-xl border border-white/5 shadow-inner">
+                          <div className="flex items-center gap-2 md:gap-3 text-xs md:text-sm font-mono bg-black/40 px-3 md:px-4 py-1.5 md:py-2 rounded-lg md:rounded-xl border border-white/5 shadow-inner">
                             <div className={`size-2 rounded-full transition-all duration-500 ${phase === "live" ? 'bg-red-500 shadow-glow animate-pulse' : 'bg-yellow-500'}`} />
                             <span className="text-white font-medium tracking-wider">
                               {phase === "live" ? formatTime(sessionDuration) : "CONNECTING"}
                             </span>
                           </div>
                         )}
-                        <div className="flex items-center gap-4 text-xs font-medium text-white/60 bg-black/40 px-4 py-2 rounded-full border border-white/5 shadow-inner">
+                        {phase === "live" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={toggleMute}
+                            className={cn(
+                              "rounded-full size-10 p-0 transition-all duration-300",
+                              isMuted 
+                                ? "bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30" 
+                                : "bg-white/10 border border-white/10 text-white hover:bg-white/20"
+                            )}
+                            aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
+                          >
+                            {isMuted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+                          </Button>
+                        )}
+                        <div className="hidden md:flex items-center gap-3 lg:gap-4 text-xs font-medium text-white/60 bg-black/40 px-3 lg:px-4 py-1.5 lg:py-2 rounded-full border border-white/5 shadow-inner">
                           <div className="flex items-center gap-2">
                             <span className="size-2 rounded-full bg-white" /> Host
                           </div>
@@ -1717,9 +1860,9 @@ const StudioPage: React.FC = () => {
                     </div>
                   </CardHeader>
 
-                  <CardContent className="flex-1 flex flex-col p-0 relative bg-gradient-to-b from-transparent to-black/40">
-                    <ScrollArea ref={transcriptScrollRef} className="flex-1 px-8 py-8">
-                      <div className="space-y-8 max-w-4xl mx-auto">
+                  <CardContent className="flex-1 flex flex-col p-0 relative bg-gradient-to-b from-transparent to-black/40 overflow-hidden min-h-0">
+                    <ScrollArea ref={transcriptScrollRef} className="flex-1 px-3 md:px-4 lg:px-6 py-4 md:py-6 h-full">
+                      <div className="space-y-4 md:space-y-6 w-full">
                         {entries.length === 0 && phase !== "live" && (
                           <div className="text-center py-40 space-y-8 opacity-0 animate-in fade-in zoom-in duration-1000 fill-mode-forwards">
                             <div className="size-32 rounded-full bg-gradient-to-br from-white/10 to-transparent mx-auto flex items-center justify-center shadow-glass border border-white/5">
@@ -1751,65 +1894,100 @@ const StudioPage: React.FC = () => {
                           });
 
                           return (
-                            <div key={entry.id} className={cn("flex items-end gap-4 group animate-in fade-in slide-in-from-bottom-4 duration-500", containerClass)}>
-                              <div className={cn(
-                                "size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
-                                isHost ? "bg-white text-black" : "bg-white/10 text-white border border-white/10"
-                              )}>
-                                {isHost ? <Headphones className="size-5" /> : <Sparkles className="size-5" />}
-                              </div>
+                            <div 
+                              key={entry.id} 
+                              className={cn(
+                                "flex items-end gap-2 md:gap-3 group animate-in fade-in slide-in-from-bottom-4 duration-500 w-full",
+                                isHost ? "justify-end" : "justify-start"
+                              )}
+                            >
+                              {/* Avatar - hidden on mobile for AI, shown on left for AI */}
+                              {!isHost && (
+                                <div className={cn(
+                                  "size-8 md:size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
+                                  "bg-white/10 text-white border border-white/10"
+                                )}>
+                                  <Sparkles className="size-4 md:size-5" />
+                                </div>
+                              )}
 
-                              <div className={cn("flex flex-col max-w-[85%]", isHost ? "items-end" : "items-start")}>
-                                <div className="flex items-center gap-3 mb-2 px-2 opacity-60 group-hover:opacity-100 transition-opacity">
-                                  <span className="text-xs font-bold tracking-wide uppercase">
+                              <div className={cn(
+                                "flex flex-col",
+                                "max-w-[85%] sm:max-w-[80%] md:max-w-[75%] lg:max-w-[70%] xl:max-w-[65%]",
+                                isHost ? "items-end" : "items-start"
+                              )}>
+                                <div className={cn(
+                                  "flex items-center gap-2 md:gap-3 mb-1.5 md:mb-2 px-1 md:px-2 opacity-60 group-hover:opacity-100 transition-opacity",
+                                  isHost ? "flex-row-reverse" : "flex-row"
+                                )}>
+                                  <span className="text-[10px] md:text-xs font-bold tracking-wide uppercase">
                                     {isHost ? "You" : "Dr. Sarah"}
                                   </span>
-                                  <span className="text-[10px] font-mono">
+                                  <span className="text-[9px] md:text-[10px] font-mono">
                                     {timestamp}
                                   </span>
                                 </div>
 
                                 <div
-                                  className={cn("px-6 py-4 text-[15px] leading-7 shadow-sm", bubbleClass)}
+                                  className={cn("px-4 md:px-5 lg:px-6 py-3 md:py-4 text-sm md:text-[15px] leading-6 md:leading-7 shadow-sm", bubbleClass)}
                                 >
                                   <span className={cn(isHost ? "text-black" : "text-white")}>
                                     {entry.text || (
-                                       // Debug fallback: show status if empty
                                        <span className="opacity-50 italic text-[10px]">
                                          {entry.status === "streaming" ? "..." : "(empty)"}
                                        </span>
                                     )}
                                   </span>
                                   {entry.status === "streaming" && (
-                                    <span className="inline-flex gap-1.5 ml-2 items-center align-middle">
-                                      <span className={cn("size-1.5 rounded-full animate-bounce [animation-delay:-0.3s]", isHost ? "bg-black" : "bg-current")} />
-                                      <span className={cn("size-1.5 rounded-full animate-bounce [animation-delay:-0.15s]", isHost ? "bg-black" : "bg-current")} />
-                                      <span className={cn("size-1.5 rounded-full animate-bounce", isHost ? "bg-black" : "bg-current")} />
+                                    <span className="inline-flex gap-1 md:gap-1.5 ml-1.5 md:ml-2 items-center align-middle">
+                                      <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce [animation-delay:-0.3s]", isHost ? "bg-black" : "bg-current")} />
+                                      <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce [animation-delay:-0.15s]", isHost ? "bg-black" : "bg-current")} />
+                                      <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce", isHost ? "bg-black" : "bg-current")} />
                                     </span>
                                   )}
                                 </div>
                               </div>
+
+                              {/* Avatar - shown on right for Host */}
+                              {isHost && (
+                                <div className={cn(
+                                  "size-8 md:size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
+                                  "bg-white text-black"
+                                )}>
+                                  <Headphones className="size-4 md:size-5" />
+                                </div>
+                              )}
                             </div>
                           );
                         })}
 
                         {phase === "live" && (
                           <div className="flex justify-center py-8 sticky bottom-0 z-10 pointer-events-none">
-                            <div className="flex items-center gap-3 rounded-full border border-white/10 bg-black/60 backdrop-blur-xl px-6 py-3 text-sm font-medium text-white shadow-apple-floating animate-in slide-in-from-bottom-4 fade-in duration-300">
-                              <div className="relative flex size-3">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-30"></span>
-                                <span className="relative inline-flex rounded-full size-3 bg-white"></span>
+                            <div className="flex flex-col items-center gap-2">
+                              <div className="flex items-center gap-3 rounded-full border border-white/10 bg-black/60 backdrop-blur-xl px-6 py-3 text-sm font-medium text-white shadow-apple-floating animate-in slide-in-from-bottom-4 fade-in duration-300">
+                                <div className="relative flex size-3">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-30"></span>
+                                  <span className="relative inline-flex rounded-full size-3 bg-white"></span>
+                                </div>
+                                <span>
+                                  {isHostSpeaking
+                                    ? "Listening…"
+                                    : isAiSpeaking
+                                      ? "Dr. Sarah is speaking…"
+                                      : "Listening…"}
+                                </span>
                               </div>
-                              <span>
-                                {isHostSpeaking
-                                  ? "Listening…"
-                                  : isAiSpeaking
-                                    ? "Dr. Sarah is speaking…"
-                                    : "Listening…"}
-                              </span>
+                              {currentPaper && (
+                                <div className="text-[10px] text-white/40 font-mono uppercase tracking-wider bg-black/40 px-3 py-1 rounded-full border border-white/5 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-500 delay-150">
+                                  Context: {currentPaper.title.slice(0, 30)}{currentPaper.title.length > 30 ? "…" : ""}
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
+                        
+                        {/* Scroll anchor - always scrolls to keep this in view */}
+                        <div ref={scrollAnchorRef} className="h-px" aria-hidden="true" />
                       </div>
                     </ScrollArea>
 

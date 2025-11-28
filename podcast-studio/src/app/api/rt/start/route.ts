@@ -87,6 +87,20 @@ export async function POST(req: Request) {
     const resolvedModel = (parsed.model ?? getProviderDefaultModel(parsed.provider)).trim();
     const resolvedKey = resolveApiKey(parsed.provider, parsed.apiKey);
     const paperContext = parsed.paperContext ?? null;
+
+    // Log paper context status - we rely on frontend pre-fetching the PDF text
+    if (paperContext) {
+      console.log(`[INFO] Paper context received:`, {
+        title: paperContext.title,
+        hasFullText: !!paperContext.fullText,
+        fullTextLength: paperContext.fullText?.length ?? 0,
+        hasAbstract: !!paperContext.abstract,
+        abstractLength: paperContext.abstract?.length ?? 0,
+      });
+    } else {
+      console.log(`[INFO] No paper context provided - session will use default instructions`);
+    }
+
     const paperContextFields = paperContext
       ? Object.entries(paperContext).filter(([, value]) =>
           typeof value === "boolean" ? value : value != null && value !== "",
@@ -107,6 +121,7 @@ export async function POST(req: Request) {
       configChanged,
       model: resolvedModel,
       hasPaperContext: paperContextFields > 0,
+      paperContextTitle: paperContext?.title, // Log title to verify propagation
       paperContextFields,
     });
 
@@ -194,6 +209,7 @@ interface ParsedPaperContext {
   formattedPublishedDate?: string;
   abstract?: string;
   arxivUrl?: string;
+  fullText?: string;
 }
 
 interface ParsedStartRequest {
@@ -339,6 +355,7 @@ const PAPER_FIELD_LIMITS = {
   primaryAuthor: 200,
   formattedPublishedDate: 120,
   arxivUrl: 500,
+  fullText: 50000,
 } as const;
 
 function parsePaperContext(payload: Record<string, unknown>): ParsedPaperContext | undefined {
@@ -369,6 +386,10 @@ function parsePaperContext(payload: Record<string, unknown>): ParsedPaperContext
         maxLength: PAPER_FIELD_LIMITS.arxivUrl,
         collapseWhitespace: false,
       }),
+    fullText: sanitizeOptionalString(source.fullText, {
+      maxLength: PAPER_FIELD_LIMITS.fullText,
+      collapseWhitespace: true,
+    }),
   };
 
   const hasAnyContext = Boolean(
@@ -379,6 +400,7 @@ function parsePaperContext(payload: Record<string, unknown>): ParsedPaperContext
       parsed.formattedPublishedDate ||
       parsed.abstract ||
       parsed.arxivUrl ||
+      parsed.fullText ||
       parsed.hasAdditionalAuthors,
   );
 

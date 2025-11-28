@@ -308,6 +308,7 @@ interface PaperContext {
   formattedPublishedDate?: string;
   abstract?: string;
   arxivUrl?: string;
+  fullText?: string;
 }
 
 class RTManager extends EventEmitter {
@@ -368,6 +369,18 @@ class RTManager extends EventEmitter {
     if (currentContext !== nextContext) {
       this.paperContext = normalizedContext;
       changed = true;
+      
+      // Log paper context details for debugging
+      if (normalizedContext) {
+        console.log("[INFO] RTManager.configure: Paper context updated", {
+          title: normalizedContext.title,
+          hasFullText: !!normalizedContext.fullText,
+          fullTextLength: normalizedContext.fullText?.length ?? 0,
+          hasAbstract: !!normalizedContext.abstract,
+        });
+      } else {
+        console.log("[INFO] RTManager.configure: Paper context cleared");
+      }
     }
 
     if (changed && this.isActive()) {
@@ -504,6 +517,14 @@ class RTManager extends EventEmitter {
   }
 
   private async establishConnection(): Promise<void> {
+    const startTime = Date.now();
+    console.log("[INFO] establishConnection: Starting...", {
+      provider: this.provider,
+      model: this.model,
+      hasPaperContext: !!this.paperContext,
+      paperTitle: this.paperContext?.title,
+    });
+
     const key = (this.apiKey || "").trim();
     if (!key) {
       throw new RealtimeSessionError(
@@ -525,6 +546,7 @@ class RTManager extends EventEmitter {
     try {
       await new Promise<void>((resolve, reject) => {
         const wsUrl = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(this.model)}`;
+        console.log("[INFO] Connecting to WebSocket:", wsUrl);
         const ws = new WebSocket(wsUrl, {
           headers: {
             Authorization: `Bearer ${key}`,
@@ -549,20 +571,24 @@ class RTManager extends EventEmitter {
         };
 
         this.connectionTimeout = setTimeout(() => {
+          console.error("[ERROR] Connection timeout after 15 seconds");
           settle(() => {
             ws.terminate();
             reject(
               new RealtimeSessionError(
                 "TIMEOUT",
-                "Timed out while establishing realtime connection",
+                "Timed out while establishing realtime connection (15s)",
                 { status: REALTIME_ERROR_STATUS.TIMEOUT },
               ),
             );
           });
-        }, 30_000);
+        }, 15_000); // 15 second timeout - connection should be fast now that PDF is pre-fetched
 
         // Handler for session confirmation or error from OpenAI
         const handleMessage = (data: WebSocket.RawData) => {
+          // Reset connection timeout on any activity from server
+          clearTimeoutIfNeeded();
+          
           try {
             const text = typeof data === "string" ? data : data.toString();
             const payload = JSON.parse(text) as Record<string, unknown>;
@@ -570,9 +596,47 @@ class RTManager extends EventEmitter {
 
             console.log(`[DEBUG] Connection phase event: ${type}`);
 
-            // Session confirmed - connection is truly established
-            if (type === "session.created" || type === "session.updated") {
-              console.log("[INFO] Session confirmed by OpenAI:", type);
+            if (type === "session.created") {
+               console.log("[INFO] Session created. Sending configuration update...");
+               // Push update IMMEDIATELY after creation to ensure instructions are set before any turn
+               let updateSent = false;
+               try {
+                 this.pushSessionUpdate();
+                 updateSent = true;
+                 console.log("[INFO] Session update sent, waiting for confirmation...");
+               } catch (updateError) {
+                 console.error("[ERROR] Failed to push session update after creation:", updateError);
+                 // Don't fail the connection - resolve immediately with default instructions
+                 const elapsed = Date.now() - startTime;
+                 console.warn(`[WARN] Proceeding without custom instructions. Connection established in ${elapsed}ms`);
+                 settle(() => {
+                   cleanup();
+                   this.emit("ready");
+                   resolve();
+                 });
+               }
+               
+               // If update was sent, set a shorter timeout for the session.updated response
+               if (updateSent) {
+                 setTimeout(() => {
+                   if (!settled) {
+                     console.warn("[WARN] No session.updated received within 5s, proceeding anyway...");
+                     const elapsed = Date.now() - startTime;
+                     console.log(`[INFO] Connection established in ${elapsed}ms (without update confirmation)`);
+                     settle(() => {
+                       cleanup();
+                       this.emit("ready");
+                       resolve();
+                     });
+                   }
+                 }, 5000);
+               }
+               return; 
+            }
+
+            if (type === "session.updated") {
+              const elapsed = Date.now() - startTime;
+              console.log(`[INFO] Session configuration confirmed by OpenAI. Connection established in ${elapsed}ms`);
               settle(() => {
                 cleanup();
                 this.emit("ready");
@@ -620,13 +684,24 @@ class RTManager extends EventEmitter {
         };
 
         ws.on("open", () => {
-          console.log("[INFO] WebSocket connected, awaiting session confirmation...");
+          console.log("[INFO] WebSocket connected, awaiting session events...");
           this.ws = ws;
           // Add temporary message handler for connection phase
           ws.on("message", handleMessage);
-          this.pushSessionUpdate();
+          
+          // Use a ping interval to keep the connection alive during heavy processing
+          const pingInterval = setInterval(() => {
+             if (ws.readyState === WebSocket.OPEN) {
+                ws.ping();
+             } else {
+                clearInterval(pingInterval);
+             }
+          }, 5000);
+          
+          // Clean up ping on close
+          ws.once("close", () => clearInterval(pingInterval));
+          
           this.needsNewAudioBuffer = true;
-          // DON'T resolve here - wait for session.created/session.updated
         });
 
         // After settlement, remove the temporary handler
@@ -687,35 +762,45 @@ class RTManager extends EventEmitter {
       return;
     }
 
-    const payload = {
-      type: "session.update",
-      session: {
-        modalities: ["text", "audio"],
-        input_audio_format: { type: "pcm16", sample_rate: 24000 },
-        output_audio_format: { type: "pcm16", sample_rate: 24000 },
-        input_audio_transcription: {
-          // Use whisper-1 for reliable realtime transcription
-          model: "whisper-1",
+    try {
+      const instructions = this.buildInstructions();
+      
+      const payload = {
+        type: "session.update",
+        session: {
+          modalities: ["text", "audio"],
+          input_audio_format: "pcm16",
+          output_audio_format: "pcm16",
+          input_audio_transcription: {
+            model: "whisper-1",
+          },
+          voice: "alloy",
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 500,
+          },
+          instructions: instructions,
         },
-        voice: "alloy",
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 800,
-        },
-        instructions: this.buildInstructions(),
-      },
-    };
+      };
 
-    console.log("[INFO] Pushing session update with transcription and VAD enabled");
-    console.log("[DEBUG] Session update payload:", JSON.stringify(payload, null, 2));
-    this.ws.send(JSON.stringify(payload));
+      console.log("[INFO] Pushing session update...");
+      // Safe preview of instructions
+      const preview = instructions.length > 200 ? instructions.slice(0, 200) + "..." : instructions;
+      console.log(`[DEBUG] Instructions preview: ${preview}`);
+      
+      this.ws.send(JSON.stringify(payload));
+    } catch (e) {
+      console.error("[ERROR] Failed to push session update:", e);
+      // We don't throw here to avoid crashing the connection flow, 
+      // but the session might be in a default state.
+    }
   }
 
   private buildInstructions(): string {
     if (!this.paperContext) {
-      return "You are assisting with a podcast conversation.";
+      return "You are 'Dr. Sarah', an expert researcher and podcast guest. You are here to have a deep, technical, yet accessible conversation about a specific research paper. You should explain complex concepts clearly, answer the host's questions with depth, and treat this as a collaborative deep-dive. Be concise but insightful.";
     }
 
     const segments = [];
@@ -726,13 +811,23 @@ class RTManager extends EventEmitter {
       segments.push(`Authors: ${this.paperContext.authors}`);
     }
     if (this.paperContext.formattedPublishedDate) segments.push(`Published: ${this.paperContext.formattedPublishedDate}`);
-    if (this.paperContext.abstract) segments.push(`Summary: ${this.paperContext.abstract}`);
+    if (this.paperContext.abstract) segments.push(`Abstract: ${this.paperContext.abstract}`);
     if (this.paperContext.arxivUrl) segments.push(`URL: ${this.paperContext.arxivUrl}`);
+    if (this.paperContext.fullText) segments.push(`\nFull Paper Text (Excerpt):\n${this.paperContext.fullText}`);
 
-    const context = segments.join("; ");
-    return context
-      ? `You are assisting with a podcast conversation. Context: ${context}`
-      : "You are assisting with a podcast conversation.";
+    // Force instructions to include title explicitly at the start
+    return `You are 'Dr. Sarah', an expert researcher and podcast guest. You are here to have a deep, technical, yet accessible conversation about the research paper titled "${this.paperContext.title}".
+
+Paper Context:
+${segments.join("\n")}
+
+Instructions:
+1. Act as a knowledgeable expert who has deeply studied this paper.
+2. Engage in a natural, conversational flow. Do not just summarize; answer specific questions and offer insights based on the provided text.
+3. Use the full text provided to answer specific questions about methodology, results, and discussion points.
+4. Keep your responses concise (1-3 sentences) unless asked to elaborate, to maintain a podcast-like rhythm.
+5. Your goal is to help the host (user) unpack the significance of this work.
+6. START IMMEDIATELY by briefly acknowledging the paper topic and welcoming the host's first question.`;
   }
 
   private registerMessageHandlers(ws: WebSocket) {
@@ -751,6 +846,12 @@ class RTManager extends EventEmitter {
         if (type === "session.created" || type === "session.updated") {
           console.log("[INFO] Session ready:", type);
           return;
+        }
+
+        if (type === "response.created") {
+           // Reset interruption flag or notify client of new turn
+           // In a full implementation, we might send a specific event
+           this.emit("response_created");
         }
 
         // Handle AI transcript (text response) - check common event types
