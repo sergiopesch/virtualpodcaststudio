@@ -11,6 +11,12 @@ import React, {
 import { ApiKeySecurity } from "@/lib/apiKeySecurity";
 
 export type LlmProvider = "openai" | "google";
+export type VideoProvider = "openai_sora" | "google_veo";
+
+export const VIDEO_PROVIDER_INFO: Record<VideoProvider, { name: string; description: string; keyProvider: LlmProvider }> = {
+  openai_sora: { name: "OpenAI Sora", description: "OpenAI's video generation model", keyProvider: "openai" },
+  google_veo: { name: "Google Veo 3", description: "Google's Veo 3 video generation (Recommended, ~10-20s)", keyProvider: "google" },
+};
 
 const PROVIDER_DEFAULT_MODELS: Record<LlmProvider, string> = {
   openai: process.env.NEXT_PUBLIC_OPENAI_REALTIME_MODEL ?? "gpt-4o-mini-realtime-preview",
@@ -24,27 +30,32 @@ const PROVIDER_REALTIME_SUPPORT: Record<LlmProvider, boolean> = {
 
 interface ApiConfigContextValue {
   activeProvider: LlmProvider;
+  videoProvider: VideoProvider;
   apiKeys: Record<LlmProvider, string>;
   models: Partial<Record<LlmProvider, string>>;
   defaultModels: Record<LlmProvider, string>;
   setActiveProvider: (provider: LlmProvider) => void;
+  setVideoProvider: (provider: VideoProvider) => void;
   setApiKey: (provider: LlmProvider, key: string) => void;
   clearApiKey: (provider: LlmProvider) => void;
   setModel: (provider: LlmProvider, model: string) => void;
   validateApiKey: (provider: LlmProvider, key: string) => { isValid: boolean; message?: string };
   supportsRealtime: (provider: LlmProvider) => boolean;
+  getVideoApiKey: () => string;
 }
 
 const STORAGE_KEY = "vps:llmConfig";
 
 interface StoredPreferences {
   activeProvider: LlmProvider;
+  videoProvider?: VideoProvider;
   models?: Partial<Record<LlmProvider, string>>;
   apiKeys?: Partial<Record<LlmProvider, string>>;
 }
 
 const defaultPreferences: StoredPreferences = {
   activeProvider: "openai",
+  videoProvider: "google_veo",
   models: {},
 };
 
@@ -57,7 +68,13 @@ interface ApiConfigProviderProps {
 }
 
 function normalizeProvider(value: unknown): LlmProvider {
-  return value === "google" ? "google" : "openai";
+  if (value === "google") return "google";
+  return "openai";
+}
+
+function normalizeVideoProvider(value: unknown): VideoProvider {
+  if (value === "openai_sora") return "openai_sora";
+  return "google_veo"; // Default to Google Veo (recommended)
 }
 
 export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
@@ -75,6 +92,7 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
         const parsed = JSON.parse(stored) as Partial<StoredPreferences>;
         setPreferences({
           activeProvider: normalizeProvider(parsed.activeProvider),
+          videoProvider: normalizeVideoProvider(parsed.videoProvider),
           models: parsed.models ?? {},
         });
         if (parsed.apiKeys) {
@@ -113,6 +131,13 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     }));
   }, []);
 
+  const setVideoProvider = useCallback((provider: VideoProvider) => {
+    setPreferences((previous) => ({
+      ...previous,
+      videoProvider: provider,
+    }));
+  }, []);
+
   const setApiKey = useCallback((provider: LlmProvider, key: string) => {
     setApiKeys((previous) => ({
       ...previous,
@@ -145,18 +170,27 @@ export function ApiConfigProvider({ children }: ApiConfigProviderProps) {
     return PROVIDER_REALTIME_SUPPORT[provider];
   }, []);
 
+  const getVideoApiKey = useCallback(() => {
+    const videoProvider = preferences.videoProvider || "google_veo";
+    const keyProvider = VIDEO_PROVIDER_INFO[videoProvider].keyProvider;
+    return apiKeys[keyProvider] || "";
+  }, [preferences.videoProvider, apiKeys]);
+
   const value = useMemo<ApiConfigContextValue>(() => ({
     activeProvider: preferences.activeProvider,
+    videoProvider: preferences.videoProvider || "google_veo",
     apiKeys,
     models: preferences.models ?? {},
     defaultModels: PROVIDER_DEFAULT_MODELS,
     setActiveProvider,
+    setVideoProvider,
     setApiKey,
     clearApiKey,
     setModel,
     validateApiKey,
     supportsRealtime,
-  }), [preferences, apiKeys, setActiveProvider, setApiKey, clearApiKey, setModel, validateApiKey, supportsRealtime]);
+    getVideoApiKey,
+  }), [preferences, apiKeys, setActiveProvider, setVideoProvider, setApiKey, clearApiKey, setModel, validateApiKey, supportsRealtime, getVideoApiKey]);
 
   return (
     <ApiConfigContext.Provider value={value}>

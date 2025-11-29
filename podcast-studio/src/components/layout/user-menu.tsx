@@ -19,8 +19,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useApiConfig, type LlmProvider } from "@/contexts/api-config-context";
-import { ChevronDown, LogOut, Settings, User } from "lucide-react";
+import { useApiConfig, type LlmProvider, type VideoProvider, VIDEO_PROVIDER_INFO } from "@/contexts/api-config-context";
+import { Check, ChevronDown, LogOut, Mic, MessageSquare, Settings, User, Video, Sparkles } from "lucide-react";
 
 interface UserMenuItem {
   key: UserMenuKey;
@@ -34,6 +34,7 @@ type UserMenuKey = "profile" | "settings";
 
 interface LlmSettingsState {
   activeProvider: LlmProvider;
+  videoProvider: VideoProvider;
   openaiKey: string;
   googleKey: string;
 }
@@ -76,13 +77,16 @@ export function UserMenu() {
   });
   const {
     activeProvider: storedProvider,
+    videoProvider: storedVideoProvider,
     apiKeys,
     setActiveProvider: persistActiveProvider,
+    setVideoProvider: persistVideoProvider,
     setApiKey: persistApiKey,
     validateApiKey,
   } = useApiConfig();
   const [llmSettings, setLlmSettings] = useState<LlmSettingsState>({
     activeProvider: storedProvider,
+    videoProvider: storedVideoProvider,
     openaiKey: apiKeys.openai ?? "",
     googleKey: apiKeys.google ?? "",
   });
@@ -98,10 +102,11 @@ export function UserMenu() {
 
     setLlmSettings({
       activeProvider: storedProvider,
+      videoProvider: storedVideoProvider,
       openaiKey: apiKeys.openai ?? "",
       googleKey: apiKeys.google ?? "",
     });
-  }, [isSheetOpen, activeItem, storedProvider, apiKeys.openai, apiKeys.google]);
+  }, [isSheetOpen, activeItem, storedProvider, storedVideoProvider, apiKeys.openai, apiKeys.google]);
 
   useEffect(() => {
     if (!isSheetOpen) {
@@ -161,6 +166,7 @@ export function UserMenu() {
         setKeyErrors({ openai: null, google: null });
 
         persistActiveProvider(llmSettings.activeProvider);
+        persistVideoProvider(llmSettings.videoProvider);
         persistApiKey("openai", trimmedOpenAiKey);
         persistApiKey("google", trimmedGoogleKey);
 
@@ -173,6 +179,7 @@ export function UserMenu() {
         console.info("Workspace preferences saved", workspacePreferences);
         console.info("LLM provider preferences saved", {
           provider: llmSettings.activeProvider,
+          videoProvider: llmSettings.videoProvider,
           hasOpenAiKey: trimmedOpenAiKey.length > 0,
           hasGoogleKey: trimmedGoogleKey.length > 0,
         });
@@ -188,6 +195,7 @@ export function UserMenu() {
     activeItem,
     llmSettings,
     persistActiveProvider,
+    persistVideoProvider,
     persistApiKey,
     profileSettings,
     validateApiKey,
@@ -327,8 +335,289 @@ export function UserMenu() {
       const openAiConfigured = (apiKeys.openai ?? "").trim().length > 0;
       const googleConfigured = (apiKeys.google ?? "").trim().length > 0;
 
+      // Check if the selected video provider has an API key configured
+      const selectedVideoProviderKeyProvider = VIDEO_PROVIDER_INFO[llmSettings.videoProvider].keyProvider;
+      const videoProviderKeyConfigured = (apiKeys[selectedVideoProviderKeyProvider] ?? "").trim().length > 0;
+
       return (
         <div className="space-y-6 text-sm text-gray-700">
+          {/* AI Providers - Side by Side */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2 pb-2">
+              <Sparkles className="size-5 text-indigo-600" />
+              <div>
+                <p className="text-sm font-semibold text-gray-900">AI Providers</p>
+                <p className="text-xs text-gray-500">Configure your API keys and see what each provider powers</p>
+              </div>
+            </div>
+
+            {/* Side-by-side provider cards */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* OpenAI Card */}
+              <div className={`rounded-xl border-2 p-4 transition-all ${
+                openAiConfigured 
+                  ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50" 
+                  : "border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50"
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 shadow-sm">
+                    <span className="text-xs font-bold text-white">O</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">OpenAI</p>
+                    <p className={`text-[10px] font-medium ${openAiConfigured ? "text-emerald-600" : "text-amber-600"}`}>
+                      {openAiConfigured ? "✓ Connected" : "Key required"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* What OpenAI powers */}
+                <div className="space-y-1.5 mb-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Powers:</p>
+                  <div className="flex items-center gap-1.5">
+                    <Mic className="size-3 text-blue-600" />
+                    <span className="text-xs text-gray-700">Voice Conversations</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <MessageSquare className="size-3 text-emerald-600" />
+                    <span className="text-xs text-gray-700">Text Analysis</span>
+                  </div>
+                  {llmSettings.videoProvider === "openai_sora" && (
+                    <div className="flex items-center gap-1.5">
+                      <Video className="size-3 text-purple-600" />
+                      <span className="text-xs text-gray-700">Video (Sora)</span>
+                      <span className="rounded bg-purple-100 px-1 py-0.5 text-[8px] font-medium text-purple-700">
+                        Selected
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* API Key input */}
+                <div className="space-y-1.5">
+                  <input
+                    id="openai-api-key"
+                    type="password"
+                    autoComplete="off"
+                    value={llmSettings.openaiKey}
+                    onChange={(event) => {
+                      setLlmSettings((prev) => ({ ...prev, openaiKey: event.target.value }));
+                      if (keyErrors.openai) setKeyErrors((prev) => ({ ...prev, openai: null }));
+                    }}
+                    placeholder="sk-..."
+                    className={`w-full rounded-lg border bg-white px-2.5 py-2 text-xs shadow-sm transition focus-visible:outline-none focus-visible:ring-2 ${
+                      keyErrors.openai 
+                        ? "border-red-300 focus-visible:ring-red-200" 
+                        : "border-gray-200 focus-visible:ring-emerald-200"
+                    }`}
+                  />
+                  {keyErrors.openai && (
+                    <p className="text-[10px] text-red-600">{keyErrors.openai}</p>
+                  )}
+                  {llmSettings.openaiKey && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLlmSettings((prev) => ({ ...prev, openaiKey: "" }));
+                        setKeyErrors((prev) => ({ ...prev, openai: null }));
+                      }}
+                      className="text-[10px] text-gray-400 hover:text-red-500 transition"
+                    >
+                      Clear key
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Google Card */}
+              <div className={`rounded-xl border-2 p-4 transition-all ${
+                llmSettings.videoProvider === "google_veo"
+                  ? googleConfigured
+                    ? "border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50"
+                    : "border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50"
+                  : "border-gray-200 bg-gradient-to-br from-gray-50 to-slate-50"
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 shadow-sm">
+                    <span className="text-xs font-bold text-white">G</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">Google AI</p>
+                    <p className={`text-[10px] font-medium ${
+                      llmSettings.videoProvider !== "google_veo"
+                        ? "text-gray-400"
+                        : googleConfigured 
+                          ? "text-blue-600" 
+                          : "text-amber-600"
+                    }`}>
+                      {llmSettings.videoProvider !== "google_veo"
+                        ? "Not selected"
+                        : googleConfigured 
+                          ? "✓ Connected" 
+                          : "Key required"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* What Google powers */}
+                <div className="space-y-1.5 mb-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Powers:</p>
+                  {llmSettings.videoProvider === "google_veo" ? (
+                    <div className="flex items-center gap-1.5">
+                      <Video className="size-3 text-purple-600" />
+                      <span className="text-xs text-gray-700">Video (Veo 2)</span>
+                      <span className="rounded bg-purple-100 px-1 py-0.5 text-[8px] font-medium text-purple-700">
+                        Selected
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400 italic">
+                      Select Veo 2 for video
+                    </p>
+                  )}
+                </div>
+
+                {/* API Key input */}
+                <div className="space-y-1.5">
+                  <input
+                    id="google-api-key"
+                    type="password"
+                    autoComplete="off"
+                    value={llmSettings.googleKey}
+                    onChange={(event) => {
+                      setLlmSettings((prev) => ({ ...prev, googleKey: event.target.value }));
+                      if (keyErrors.google) setKeyErrors((prev) => ({ ...prev, google: null }));
+                    }}
+                    placeholder="AIza..."
+                    className={`w-full rounded-lg border bg-white px-2.5 py-2 text-xs shadow-sm transition focus-visible:outline-none focus-visible:ring-2 ${
+                      keyErrors.google 
+                        ? "border-red-300 focus-visible:ring-red-200" 
+                        : "border-gray-200 focus-visible:ring-blue-200"
+                    }`}
+                  />
+                  {keyErrors.google && (
+                    <p className="text-[10px] text-red-600">{keyErrors.google}</p>
+                  )}
+                  {llmSettings.googleKey && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLlmSettings((prev) => ({ ...prev, googleKey: "" }));
+                        setKeyErrors((prev) => ({ ...prev, google: null }));
+                      }}
+                      className="text-[10px] text-gray-400 hover:text-red-500 transition"
+                    >
+                      Clear key
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-gray-500 text-center">
+              🔒 Keys are stored locally in your browser only
+            </p>
+          </section>
+
+          {/* Video Model Selection */}
+          <section className="space-y-3 rounded-xl border-2 border-purple-200 bg-gradient-to-br from-purple-50/80 to-pink-50/80 p-4">
+            <div className="flex items-center gap-2">
+              <Video className="size-5 text-purple-600" />
+              <div>
+                <p className="text-sm font-semibold text-purple-900">Video Generation Model</p>
+                <p className="text-xs text-purple-600">Choose which AI creates visual explanations</p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2">
+              {/* Google Veo 2 Option */}
+              <label
+                className={`flex cursor-pointer flex-col rounded-xl border-2 p-3 transition-all ${
+                  llmSettings.videoProvider === "google_veo"
+                    ? "border-purple-400 bg-white shadow-md ring-2 ring-purple-200"
+                    : "border-gray-200 bg-white/50 hover:border-purple-200 hover:bg-white"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div
+                    className={`flex size-5 items-center justify-center rounded-full border-2 transition-all ${
+                      llmSettings.videoProvider === "google_veo"
+                        ? "border-purple-500 bg-purple-500"
+                        : "border-gray-300 bg-white"
+                    }`}
+                  >
+                    {llmSettings.videoProvider === "google_veo" && (
+                      <Check className="size-3 text-white" />
+                    )}
+                  </div>
+                  <span className="text-sm font-bold text-gray-900">Veo 2</span>
+                  <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-semibold text-green-700">
+                    Best
+                  </span>
+                </div>
+                <p className="text-[10px] text-gray-500 leading-tight">
+                  Google's latest • 5-8 sec videos
+                </p>
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Uses: Google AI key
+                </p>
+                <input
+                  type="radio"
+                  name="videoProvider"
+                  value="google_veo"
+                  checked={llmSettings.videoProvider === "google_veo"}
+                  onChange={() => setLlmSettings((prev) => ({ ...prev, videoProvider: "google_veo" }))}
+                  className="sr-only"
+                />
+              </label>
+
+              {/* OpenAI Sora Option */}
+              <label
+                className={`flex cursor-pointer flex-col rounded-xl border-2 p-3 transition-all ${
+                  llmSettings.videoProvider === "openai_sora"
+                    ? "border-purple-400 bg-white shadow-md ring-2 ring-purple-200"
+                    : "border-gray-200 bg-white/50 hover:border-purple-200 hover:bg-white"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div
+                    className={`flex size-5 items-center justify-center rounded-full border-2 transition-all ${
+                      llmSettings.videoProvider === "openai_sora"
+                        ? "border-purple-500 bg-purple-500"
+                        : "border-gray-300 bg-white"
+                    }`}
+                  >
+                    {llmSettings.videoProvider === "openai_sora" && (
+                      <Check className="size-3 text-white" />
+                    )}
+                  </div>
+                  <span className="text-sm font-bold text-gray-900">Sora</span>
+                </div>
+                <p className="text-[10px] text-gray-500 leading-tight">
+                  OpenAI • 4 sec videos
+                </p>
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Uses: OpenAI key
+                </p>
+                <input
+                  type="radio"
+                  name="videoProvider"
+                  value="openai_sora"
+                  checked={llmSettings.videoProvider === "openai_sora"}
+                  onChange={() => setLlmSettings((prev) => ({ ...prev, videoProvider: "openai_sora" }))}
+                  className="sr-only"
+                />
+              </label>
+            </div>
+
+            {!videoProviderKeyConfigured && (
+              <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-2 text-center">
+                ⚠️ Add your {llmSettings.videoProvider === "google_veo" ? "Google" : "OpenAI"} API key above to enable video
+              </p>
+            )}
+          </section>
+
+          {/* Appearance */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
               Appearance
@@ -429,141 +718,6 @@ export function UserMenu() {
                 </div>
               </label>
             </div>
-          </section>
-          <section className="space-y-4 rounded-xl border border-gray-200/80 bg-white/90 p-4 shadow-sm">
-            <div className="space-y-3">
-              <div className="flex flex-col space-y-2">
-                <label
-                  htmlFor="openai-api-key"
-                  className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-                >
-                  OpenAI API key
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="openai-api-key"
-                    type="password"
-                    autoComplete="off"
-                    value={llmSettings.openaiKey}
-                    onChange={(event) => {
-                      const { value } = event.target;
-                      setLlmSettings((previous) => ({
-                        ...previous,
-                        openaiKey: value,
-                      }));
-                      if (keyErrors.openai) {
-                        setKeyErrors((previous) => ({
-                          ...previous,
-                          openai: null,
-                        }));
-                      }
-                    }}
-                    placeholder="sk-0123456789…"
-                    className={`${baseFieldClass} flex-1 ${keyErrors.openai ? "border-red-400 focus-visible:border-red-500 focus-visible:ring-red-300" : ""}`}
-                    aria-invalid={keyErrors.openai ? true : undefined}
-                    aria-describedby={keyErrors.openai ? "openai-api-key-error" : undefined}
-                  />
-                  {llmSettings.openaiKey && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setLlmSettings((previous) => ({
-                          ...previous,
-                          openaiKey: "",
-                        }));
-                        if (keyErrors.openai) {
-                          setKeyErrors((previous) => ({
-                            ...previous,
-                            openai: null,
-                          }));
-                        }
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
-                <p
-                  id={keyErrors.openai ? "openai-api-key-error" : undefined}
-                  className={`text-xs ${keyErrors.openai ? "text-red-600" : "text-gray-500"}`}
-                >
-                  {keyErrors.openai
-                    ? keyErrors.openai
-                    : openAiConfigured
-                      ? "Saved locally in this browser."
-                      : "Paste your OpenAI key (starts with \"sk-\")."}
-                </p>
-              </div>
-              <div className="flex flex-col space-y-2">
-                <label
-                  htmlFor="google-api-key"
-                  className="text-xs font-semibold uppercase tracking-wide text-gray-500"
-                >
-                  Google API key
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    id="google-api-key"
-                    type="password"
-                    autoComplete="off"
-                    value={llmSettings.googleKey}
-                    onChange={(event) => {
-                      const { value } = event.target;
-                      setLlmSettings((previous) => ({
-                        ...previous,
-                        googleKey: value,
-                      }));
-                      if (keyErrors.google) {
-                        setKeyErrors((previous) => ({
-                          ...previous,
-                          google: null,
-                        }));
-                      }
-                    }}
-                    placeholder="AIzaSyExample…"
-                    className={`${baseFieldClass} flex-1 ${keyErrors.google ? "border-red-400 focus-visible:border-red-500 focus-visible:ring-red-300" : ""}`}
-                    aria-invalid={keyErrors.google ? true : undefined}
-                    aria-describedby={keyErrors.google ? "google-api-key-error" : undefined}
-                  />
-                  {llmSettings.googleKey && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setLlmSettings((previous) => ({
-                          ...previous,
-                          googleKey: "",
-                        }));
-                        if (keyErrors.google) {
-                          setKeyErrors((previous) => ({
-                            ...previous,
-                            google: null,
-                          }));
-                        }
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
-                <p
-                  id={keyErrors.google ? "google-api-key-error" : undefined}
-                  className={`text-xs ${keyErrors.google ? "text-red-600" : "text-gray-500"}`}
-                >
-                  {keyErrors.google
-                    ? keyErrors.google
-                    : googleConfigured
-                      ? "Saved locally in this browser."
-                      : "Use your Google AI Studio key (starts with \"AIza\")."}
-                </p>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500">
-              API keys stay on this device and are only sent to Virtual Podcast Studio when needed.
-            </p>
           </section>
         </div>
       );

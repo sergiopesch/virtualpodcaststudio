@@ -323,6 +323,9 @@ class RTManager extends EventEmitter {
   private paperContext: PaperContext | null = null;
   private needsNewAudioBuffer = true;
   private currentTurnPcmChunks: Uint8Array[] = [];
+  
+  // Visual context for AI to acknowledge visuals
+  private pendingVisualContext: string | null = null;
 
   constructor(sessionId?: string) {
     super();
@@ -799,24 +802,24 @@ class RTManager extends EventEmitter {
   }
 
   private buildInstructions(): string {
+    let baseInstructions: string;
+    
     if (!this.paperContext) {
-      return "You are 'Dr. Sarah', an expert researcher and podcast guest. You are here to have a deep, technical, yet accessible conversation about a specific research paper. You should explain complex concepts clearly, answer the host's questions with depth, and treat this as a collaborative deep-dive. Be concise but insightful.";
-    }
+      baseInstructions = "You are 'Dr. Sarah', an expert researcher and podcast guest. You are here to have a deep, technical, yet accessible conversation about a specific research paper. You should explain complex concepts clearly, answer the host's questions with depth, and treat this as a collaborative deep-dive. Be concise but insightful.";
+    } else {
+      const segments = [];
+      if (this.paperContext.title) segments.push(`Title: ${this.paperContext.title}`);
+      if (this.paperContext.primaryAuthor) {
+        segments.push(`Authors: ${this.paperContext.primaryAuthor}${this.paperContext.hasAdditionalAuthors ? " et al." : ""}`);
+      } else if (this.paperContext.authors) {
+        segments.push(`Authors: ${this.paperContext.authors}`);
+      }
+      if (this.paperContext.formattedPublishedDate) segments.push(`Published: ${this.paperContext.formattedPublishedDate}`);
+      if (this.paperContext.abstract) segments.push(`Abstract: ${this.paperContext.abstract}`);
+      if (this.paperContext.arxivUrl) segments.push(`URL: ${this.paperContext.arxivUrl}`);
+      if (this.paperContext.fullText) segments.push(`\nFull Paper Text (Excerpt):\n${this.paperContext.fullText}`);
 
-    const segments = [];
-    if (this.paperContext.title) segments.push(`Title: ${this.paperContext.title}`);
-    if (this.paperContext.primaryAuthor) {
-      segments.push(`Authors: ${this.paperContext.primaryAuthor}${this.paperContext.hasAdditionalAuthors ? " et al." : ""}`);
-    } else if (this.paperContext.authors) {
-      segments.push(`Authors: ${this.paperContext.authors}`);
-    }
-    if (this.paperContext.formattedPublishedDate) segments.push(`Published: ${this.paperContext.formattedPublishedDate}`);
-    if (this.paperContext.abstract) segments.push(`Abstract: ${this.paperContext.abstract}`);
-    if (this.paperContext.arxivUrl) segments.push(`URL: ${this.paperContext.arxivUrl}`);
-    if (this.paperContext.fullText) segments.push(`\nFull Paper Text (Excerpt):\n${this.paperContext.fullText}`);
-
-    // Force instructions to include title explicitly at the start
-    return `You are 'Dr. Sarah', an expert researcher and podcast guest. You are here to have a deep, technical, yet accessible conversation about the research paper titled "${this.paperContext.title}".
+      baseInstructions = `You are 'Dr. Sarah', an expert researcher and podcast guest. You are here to have a deep, technical, yet accessible conversation about the research paper titled "${this.paperContext.title}".
 
 Paper Context:
 ${segments.join("\n")}
@@ -828,6 +831,27 @@ Instructions:
 4. Keep your responses concise (1-3 sentences) unless asked to elaborate, to maintain a podcast-like rhythm.
 5. Your goal is to help the host (user) unpack the significance of this work.
 6. START IMMEDIATELY by briefly acknowledging the paper topic and welcoming the host's first question.`;
+    }
+
+    // Append visual context if a visual just appeared
+    if (this.pendingVisualContext) {
+      baseInstructions += `
+
+=== VISUAL NOTIFICATION ===
+An interactive 3D visualization has just appeared on the user's screen to help explain a concept you're discussing.
+
+Visual Details: ${this.pendingVisualContext}
+
+IMPORTANT: In your NEXT response, you MUST briefly acknowledge this visual. Use natural phrases like:
+- "As you can see in the visualization that just appeared..."
+- "The 3D diagram now showing illustrates..."
+- "Looking at the interactive model on screen..."
+
+Be conversational and integrate the visual reference smoothly into your explanation. After acknowledging it once, continue normally.
+=== END VISUAL NOTIFICATION ===`;
+    }
+
+    return baseInstructions;
   }
 
   private registerMessageHandlers(ws: WebSocket) {
@@ -883,6 +907,15 @@ Instructions:
           type === "response.audio_transcript.done"
         ) {
           console.log("[INFO] AI response completed event:", type);
+          
+          // Clear visual context after AI has responded (it should have acknowledged it)
+          if (this.pendingVisualContext) {
+            console.log("[INFO] Clearing visual context after AI response");
+            this.pendingVisualContext = null;
+            // Push updated session without visual notification
+            this.pushSessionUpdate();
+          }
+          
           this.emit("assistant_done");
           return;
         }
@@ -901,7 +934,10 @@ Instructions:
           if (audioDelta) {
             try {
               const bytes = Buffer.from(audioDelta, "base64");
-              console.log(`[DEBUG] AI audio delta received (${type}): ${bytes.length} bytes`);
+              // Reduce log volume for audio deltas to prevent console flooding
+              if (Math.random() < 0.05) {
+                 console.log(`[DEBUG] AI audio delta received (${type}): ${bytes.length} bytes`);
+              }
               this.emit("audio", new Uint8Array(bytes));
             } catch (error) {
               console.error(`[ERROR] Failed to decode audio delta:`, error);
@@ -1162,6 +1198,52 @@ Instructions:
 
     this.ws.send(JSON.stringify(messageEvent));
     this.ws.send(JSON.stringify(responseEvent));
+  }
+
+  /**
+   * Injects context into the conversation without triggering a full response.
+   * This is used by the Visual Agent to notify the AI when a visual is ready,
+   * so the AI can naturally reference it in its ongoing explanation.
+   * 
+   * The context is injected as a "system" message that the AI will incorporate
+   * into its next response or current stream.
+   */
+  /**
+   * Injects visual context into the session instructions.
+   * This updates the AI's system instructions to include information about
+   * the visual that appeared, so the AI naturally references it in its next response.
+   * 
+   * This approach is more reliable than sending user messages because:
+   * 1. It doesn't appear as if the user said something
+   * 2. The AI sees it as part of its core instructions
+   * 3. It persists across the conversation
+   */
+  async injectContext(context: string): Promise<boolean> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("[WARN] Cannot inject context - session not active");
+      return false;
+    }
+
+    try {
+      // Store the visual context
+      this.pendingVisualContext = context;
+      
+      // Push updated session with visual context included in instructions
+      this.pushSessionUpdate();
+      
+      console.log("[INFO] Visual context injected via session update:", context.slice(0, 100) + "...");
+      return true;
+    } catch (error) {
+      console.error("[ERROR] Failed to inject context:", error);
+      return false;
+    }
+  }
+  
+  /**
+   * Clears the pending visual context after it's been acknowledged.
+   */
+  clearVisualContext(): void {
+    this.pendingVisualContext = null;
   }
 
   stop() {

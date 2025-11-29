@@ -22,6 +22,8 @@ import { createZipArchive } from "@/lib/zip";
 import {
   Brain,
   Download,
+  Eye,
+  EyeOff,
   FileText,
   Headphones,
   Mic,
@@ -35,6 +37,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserSettingsDialog } from "@/components/settings/user-settings-dialog";
+import { useVisualAgent } from "@/hooks/useVisualAgent";
+import { VisualCard } from "@/components/visual-agent/VisualCard";
 
 interface SelectedPaper {
   id: string;
@@ -129,7 +133,7 @@ const formatTime = (seconds: number) => {
 
 const StudioPage: React.FC = () => {
   const { collapsed, toggleCollapsed } = useSidebar();
-  const { apiKeys, activeProvider } = useApiConfig();
+  const { apiKeys, activeProvider, videoProvider } = useApiConfig();
   const router = useRouter();
 
   const [sessionId] = useState(() => `session_${Date.now()}`);
@@ -153,6 +157,30 @@ const StudioPage: React.FC = () => {
   const [isContextLoading, setIsContextLoading] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [visualAgentEnabled, setVisualAgentEnabled] = useState(true);
+
+  // Visual Agent hook - analyzes conversation and generates visual explanations
+  // Runs in PARALLEL with AI speaking for faster visual delivery
+  // When visual is ready, injects context to AI so it can reference the visual
+  const {
+    visuals,
+    isAnalyzing: isVisualAgentAnalyzing,
+    isGenerating: isVisualAgentGenerating,
+    analyzeTranscript: analyzeForVisuals,
+    removeVisual,
+    reset: resetVisualAgent,
+  } = useVisualAgent({
+    enabled: visualAgentEnabled && phase === "live",
+    apiKey: apiKeys.openai, // OpenAI for analysis (always use OpenAI for text analysis)
+    sessionId, // Pass sessionId so visual agent can inject context to AI
+    minTranscriptLength: 200, // Analyze after 200 chars of AI text
+    minSecondsBetweenVisuals: 45, // At most 1 visual per 45 seconds (cost control)
+    onlyHighPriority: true, // Only generate for truly complex concepts (cost control)
+    // Multi-provider video settings
+    videoProvider, // User-selected video provider (Google Veo or OpenAI Sora)
+    openaiApiKey: apiKeys.openai, // For Sora & DALL-E fallback
+    googleApiKey: apiKeys.google, // For Veo
+  });
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -592,7 +620,8 @@ const StudioPage: React.FC = () => {
     setIsPaused(false); // Reset pause state on new session
     setEntries([]);
     entrySequenceRef.current = 0;
-  }, [stopTypingInterval]);
+    resetVisualAgent(); // Reset visual agent on new session
+  }, [stopTypingInterval, resetVisualAgent]);
 
   const base64ToUint8Array = useCallback((base64: string): Uint8Array => {
     const sanitized = (base64 || "").replace(/\s+/g, "");
@@ -703,17 +732,23 @@ const StudioPage: React.FC = () => {
           const bytes = base64ToUint8Array(event.data);
           console.log("[DEBUG] Decoded audio bytes:", bytes.length);
           
-          // Reset interrupt flag when we receive audio - the AI is actively responding
-          if (isAiInterruptedRef.current) {
-            console.log("[DEBUG] Resetting interrupt flag - AI is responding with audio");
-            isAiInterruptedRef.current = false;
-          }
-          
-          if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
-            aiAudioChunksRef.current.push(bytes);
-          }
-          void playAiAudioChunk(bytes);
-          setIsAiSpeaking(true);
+      // Reset interrupt flag when we receive audio - the AI is actively responding
+      if (isAiInterruptedRef.current) {
+        console.log("[DEBUG] Resetting interrupt flag - AI is responding with audio");
+        isAiInterruptedRef.current = false;
+      }
+      
+      if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+        aiAudioChunksRef.current.push(bytes);
+      }
+      
+      // Ensure context is running before playing
+      if (audioContextRef.current?.state === 'suspended') {
+        audioContextRef.current.resume().catch(e => console.warn("[WARN] Failed to resume audio context on chunk", e));
+      }
+      
+      void playAiAudioChunk(bytes);
+      setIsAiSpeaking(true);
         } catch (e) {
           console.error("[ERROR] Failed to process AI audio delta", e);
         }
@@ -958,6 +993,65 @@ const StudioPage: React.FC = () => {
     const timeoutId = setTimeout(scrollToLatest, 100);
     return () => clearTimeout(timeoutId);
   }, [entries, isHostSpeaking, isAiSpeaking, scrollTrigger, scrollToLatest]);
+
+  // Visual Agent: Analyze transcript in real-time as AI generates text
+  // This runs in PARALLEL with the AI speaking, so visuals are ready faster
+  const lastAnalyzedAiTextRef = useRef<string>("");
+  
+  useEffect(() => {
+    if (!visualAgentEnabled || phase !== "live") return;
+
+    // Get the current AI message being streamed (or most recent final)
+    const aiEntries = entries.filter((e) => e.speaker === "ai");
+    const currentAiEntry = aiEntries.slice(-1)[0];
+
+    if (!currentAiEntry || !currentAiEntry.text) return;
+
+    const currentText = currentAiEntry.text;
+    
+    // Only analyze if we have enough new content (at least 100 more chars)
+    if (currentText.length - lastAnalyzedAiTextRef.current.length < 100) {
+      return;
+    }
+
+    // Analyze when we have a substantial chunk of text
+    // This happens WHILE the AI is still speaking
+    if (currentText.length >= 200) {
+      lastAnalyzedAiTextRef.current = currentText;
+      const isStillStreaming = currentAiEntry.status === "streaming";
+
+      // Find the user's question that prompted this AI response
+      // Look for the most recent host entry before this AI entry
+      const currentAiIndex = entries.findIndex((e) => e.id === currentAiEntry.id);
+      const hostEntries = entries.slice(0, currentAiIndex).filter((e) => e.speaker === "host");
+      const userQuestion = hostEntries.slice(-1)[0]?.text || "";
+
+      // Build conversation history from recent entries
+      const recentEntries = entries.slice(-6); // Last 3 exchanges
+      const conversationHistory = recentEntries
+        .map((e) => `${e.speaker === "host" ? "User" : "AI"}: ${e.text.slice(0, 200)}`)
+        .join("\n");
+
+      // Pass full context to the visual agent
+      analyzeForVisuals(
+        {
+          userQuestion,
+          aiResponse: currentText,
+          conversationHistory,
+          paperTitle: currentPaper?.title,
+          paperTopic: currentPaper?.abstract?.slice(0, 200),
+        },
+        isStillStreaming
+      );
+    }
+  }, [entries, phase, visualAgentEnabled, analyzeForVisuals, currentPaper]);
+
+  // Reset the analysis ref when conversation resets
+  useEffect(() => {
+    if (entries.length === 0) {
+      lastAnalyzedAiTextRef.current = "";
+    }
+  }, [entries.length]);
 
   const stopMicrophonePipeline = useCallback(() => {
     if (mediaRecorderRef.current) {
@@ -1290,12 +1384,17 @@ const StudioPage: React.FC = () => {
     hasCapturedAudioRef.current = false;
     setHasCapturedAudio(false);
     setIsAudioPlaying(false);
+    aiPlaybackSourcesRef.current = [];
+    aiPlaybackTimeRef.current = 0;
 
     try {
-      const apiKey = apiKeys[activeProvider];
+      // Realtime voice conversations ONLY support OpenAI - always use OpenAI
+      // (Video generation uses the separate videoProvider setting)
+      const realtimeProvider = "openai" as const;
+      const apiKey = apiKeys.openai;
       if (!apiKey) {
         setIsApiKeyMissing(true);
-        setError(`Please add your ${activeProvider === 'openai' ? 'OpenAI' : 'Google'} API key in Settings.`);
+        setError("Please add your OpenAI API key in Settings. (Required for voice conversations)");
         return;
       }
       setIsApiKeyMissing(false);
@@ -1314,7 +1413,7 @@ const StudioPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
-          provider: activeProvider,
+          provider: realtimeProvider,
           apiKey,
           paper: currentPaper,
         }),
@@ -1351,7 +1450,7 @@ const StudioPage: React.FC = () => {
       setPhase("idle");
       closeSseStreams();
     }
-  }, [phase, resetConversation, sessionId, currentPaper, setupSseStreams, startMicrophonePipeline, closeSseStreams, activeProvider, apiKeys]);
+  }, [phase, resetConversation, sessionId, currentPaper, setupSseStreams, startMicrophonePipeline, closeSseStreams, apiKeys]);
 
   const stopSession = useCallback(async () => {
     if (phase === "idle" || phase === "stopping") {
@@ -1398,13 +1497,13 @@ const StudioPage: React.FC = () => {
     stopSessionRef.current = stopSession;
   }, [stopSession]);
 
-  // Clear API key missing error when API key is added
+  // Clear API key missing error when OpenAI API key is added (required for realtime)
   useEffect(() => {
-    if (isApiKeyMissing && apiKeys[activeProvider]) {
+    if (isApiKeyMissing && apiKeys.openai) {
       setIsApiKeyMissing(false);
       setError(null);
     }
-  }, [apiKeys, activeProvider, isApiKeyMissing]);
+  }, [apiKeys.openai, isApiKeyMissing]);
 
   useEffect(() => {
     return () => {
@@ -1814,20 +1913,37 @@ const StudioPage: React.FC = () => {
                           </div>
                         )}
                         {phase === "live" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={toggleMute}
-                            className={cn(
-                              "rounded-full size-10 p-0 transition-all duration-300",
-                              isMuted 
-                                ? "bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30" 
-                                : "bg-white/10 border border-white/10 text-white hover:bg-white/20"
-                            )}
-                            aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
-                          >
-                            {isMuted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-                          </Button>
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={toggleMute}
+                              className={cn(
+                                "rounded-full size-10 p-0 transition-all duration-300",
+                                isMuted 
+                                  ? "bg-red-500/20 border border-red-500/50 text-red-400 hover:bg-red-500/30" 
+                                  : "bg-white/10 border border-white/10 text-white hover:bg-white/20"
+                              )}
+                              aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
+                            >
+                              {isMuted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setVisualAgentEnabled(!visualAgentEnabled)}
+                              className={cn(
+                                "rounded-full size-10 p-0 transition-all duration-300",
+                                visualAgentEnabled 
+                                  ? "bg-purple-500/20 border border-purple-500/50 text-purple-400 hover:bg-purple-500/30" 
+                                  : "bg-white/10 border border-white/10 text-white/50 hover:bg-white/20"
+                              )}
+                              aria-label={visualAgentEnabled ? "Disable visual agent" : "Enable visual agent"}
+                              title={visualAgentEnabled ? "Visual Agent: ON" : "Visual Agent: OFF"}
+                            >
+                              {visualAgentEnabled ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+                            </Button>
+                          </>
                         )}
                         <div className="hidden md:flex items-center gap-3 lg:gap-4 text-xs font-medium text-white/60 bg-black/40 px-3 lg:px-4 py-1.5 lg:py-2 rounded-full border border-white/5 shadow-inner">
                           <div className="flex items-center gap-2">
@@ -1877,88 +1993,112 @@ const StudioPage: React.FC = () => {
                           </div>
                         )}
 
-                        {entries.map((entry) => {
-                          const isHost = entry.speaker === "host";
-                          
-                          const bubbleClass = isHost
-                            ? "bg-white !text-black border border-black/10 rounded-[1.5rem] rounded-tr-sm shadow-glass-sm"
-                            : "bg-white/10 border border-white/10 text-white rounded-[1.5rem] rounded-tl-sm backdrop-blur-md";
+                        {/* Render entries with visuals inline below AI messages */}
+                        {entries.map((entry, entryIndex) => {
+                            const isHost = entry.speaker === "host";
+                            
+                            const bubbleClass = isHost
+                              ? "bg-white !text-black border border-black/10 rounded-[1.5rem] rounded-tr-sm shadow-glass-sm"
+                              : "bg-white/10 border border-white/10 text-white rounded-[1.5rem] rounded-tl-sm backdrop-blur-md";
 
-                          const containerClass = isHost ? "flex-row-reverse" : "flex-row";
+                            const timestamp = new Date(entry.startedAt).toLocaleTimeString("en-US", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                              hour12: false,
+                            });
 
-                          const timestamp = new Date(entry.startedAt).toLocaleTimeString("en-US", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            second: "2-digit",
-                            hour12: false,
-                          });
+                            // Find visuals that should appear after this AI message
+                            // A visual belongs to an AI message if its timestamp is after this message
+                            // and before the next message (or if this is the last AI message)
+                            const nextEntry = entries[entryIndex + 1];
+                            const entryVisuals = !isHost ? visuals.filter(v => {
+                              const afterThis = v.timestamp >= entry.startedAt;
+                              const beforeNext = !nextEntry || v.timestamp < nextEntry.startedAt;
+                              return afterThis && beforeNext;
+                            }) : [];
 
-                          return (
-                            <div 
-                              key={entry.id} 
-                              className={cn(
-                                "flex items-end gap-2 md:gap-3 group animate-in fade-in slide-in-from-bottom-4 duration-500 w-full",
-                                isHost ? "justify-end" : "justify-start"
-                              )}
-                            >
-                              {/* Avatar - hidden on mobile for AI, shown on left for AI */}
-                              {!isHost && (
-                                <div className={cn(
-                                  "size-8 md:size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
-                                  "bg-white/10 text-white border border-white/10"
-                                )}>
-                                  <Sparkles className="size-4 md:size-5" />
-                                </div>
-                              )}
-
-                              <div className={cn(
-                                "flex flex-col",
-                                "max-w-[85%] sm:max-w-[80%] md:max-w-[75%] lg:max-w-[70%] xl:max-w-[65%]",
-                                isHost ? "items-end" : "items-start"
-                              )}>
-                                <div className={cn(
-                                  "flex items-center gap-2 md:gap-3 mb-1.5 md:mb-2 px-1 md:px-2 opacity-60 group-hover:opacity-100 transition-opacity",
-                                  isHost ? "flex-row-reverse" : "flex-row"
-                                )}>
-                                  <span className="text-[10px] md:text-xs font-bold tracking-wide uppercase">
-                                    {isHost ? "You" : "Dr. Sarah"}
-                                  </span>
-                                  <span className="text-[9px] md:text-[10px] font-mono">
-                                    {timestamp}
-                                  </span>
-                                </div>
-
-                                <div
-                                  className={cn("px-4 md:px-5 lg:px-6 py-3 md:py-4 text-sm md:text-[15px] leading-6 md:leading-7 shadow-sm", bubbleClass)}
+                            return (
+                              <div key={entry.id} className="animate-in fade-in slide-in-from-bottom-4 duration-500 w-full">
+                                <div 
+                                  className={cn(
+                                    "flex items-end gap-2 md:gap-3 group w-full",
+                                    isHost ? "justify-end" : "justify-start"
+                                  )}
                                 >
-                                  <span className={cn(isHost ? "text-black" : "text-white")}>
-                                    {entry.text || (
-                                       <span className="opacity-50 italic text-[10px]">
-                                         {entry.status === "streaming" ? "..." : "(empty)"}
-                                       </span>
+                                  {/* Avatar - hidden on mobile for AI, shown on left for AI */}
+                                  {!isHost && (
+                                    <div className={cn(
+                                      "size-8 md:size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
+                                      "bg-white/10 text-white border border-white/10"
+                                    )}>
+                                      <Sparkles className="size-4 md:size-5" />
+                                    </div>
+                                  )}
+
+                                  <div className={cn(
+                                    "flex flex-col",
+                                    "max-w-[85%] sm:max-w-[80%] md:max-w-[75%] lg:max-w-[70%] xl:max-w-[65%]",
+                                    isHost ? "items-end" : "items-start"
+                                  )}>
+                                    <div className={cn(
+                                      "flex items-center gap-2 md:gap-3 mb-1.5 md:mb-2 px-1 md:px-2 opacity-60 group-hover:opacity-100 transition-opacity",
+                                      isHost ? "flex-row-reverse" : "flex-row"
+                                    )}>
+                                      <span className="text-[10px] md:text-xs font-bold tracking-wide uppercase">
+                                        {isHost ? "You" : "Dr. Sarah"}
+                                      </span>
+                                      <span className="text-[9px] md:text-[10px] font-mono">
+                                        {timestamp}
+                                      </span>
+                                    </div>
+
+                                    <div
+                                      className={cn("px-4 md:px-5 lg:px-6 py-3 md:py-4 text-sm md:text-[15px] leading-6 md:leading-7 shadow-sm", bubbleClass)}
+                                    >
+                                      <span className={cn(isHost ? "text-black" : "text-white")}>
+                                        {entry.text || (
+                                           <span className="opacity-50 italic text-[10px]">
+                                             {entry.status === "streaming" ? "..." : "(empty)"}
+                                           </span>
+                                        )}
+                                      </span>
+                                      {entry.status === "streaming" && (
+                                        <span className="inline-flex gap-1 md:gap-1.5 ml-1.5 md:ml-2 items-center align-middle">
+                                          <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce [animation-delay:-0.3s]", isHost ? "bg-black" : "bg-current")} />
+                                          <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce [animation-delay:-0.15s]", isHost ? "bg-black" : "bg-current")} />
+                                          <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce", isHost ? "bg-black" : "bg-current")} />
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Render visuals inline below AI message */}
+                                    {entryVisuals.length > 0 && (
+                                      <div className="mt-3 space-y-2 w-full max-w-md">
+                                        {entryVisuals.map(visual => (
+                                          <VisualCard
+                                            key={visual.id}
+                                            visual={visual}
+                                            onDismiss={() => removeVisual(visual.id)}
+                                            compact
+                                          />
+                                        ))}
+                                      </div>
                                     )}
-                                  </span>
-                                  {entry.status === "streaming" && (
-                                    <span className="inline-flex gap-1 md:gap-1.5 ml-1.5 md:ml-2 items-center align-middle">
-                                      <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce [animation-delay:-0.3s]", isHost ? "bg-black" : "bg-current")} />
-                                      <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce [animation-delay:-0.15s]", isHost ? "bg-black" : "bg-current")} />
-                                      <span className={cn("size-1 md:size-1.5 rounded-full animate-bounce", isHost ? "bg-black" : "bg-current")} />
-                                    </span>
+                                  </div>
+
+                                  {/* Avatar - shown on right for Host */}
+                                  {isHost && (
+                                    <div className={cn(
+                                      "size-8 md:size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
+                                      "bg-white text-black"
+                                    )}>
+                                      <Headphones className="size-4 md:size-5" />
+                                    </div>
                                   )}
                                 </div>
                               </div>
-
-                              {/* Avatar - shown on right for Host */}
-                              {isHost && (
-                                <div className={cn(
-                                  "size-8 md:size-10 rounded-full flex items-center justify-center shadow-sm shrink-0 mb-1 transition-transform hover:scale-110 duration-300",
-                                  "bg-white text-black"
-                                )}>
-                                  <Headphones className="size-4 md:size-5" />
-                                </div>
-                              )}
-                            </div>
-                          );
+                            );
                         })}
 
                         {phase === "live" && (
@@ -1991,14 +2131,41 @@ const StudioPage: React.FC = () => {
                       </div>
                     </ScrollArea>
 
-                    <div className="border-t border-white/5 bg-black/20 backdrop-blur-md px-8 py-4 flex items-center justify-between text-xs font-medium text-white/50">
-                      <div className="flex items-center gap-2">
-                        <div className={cn("size-2 rounded-full transition-colors duration-500", isRecording ? "bg-white animate-pulse shadow-glow" : "bg-white/20")} />
-                        {phase === "live"
-                          ? isRecording
-                            ? "Microphone Active"
-                            : "Microphone Idle"
-                          : "Session Idle"}
+                    <div className="border-t border-white/5 bg-black/20 backdrop-blur-md px-4 md:px-8 py-3 md:py-4 flex items-center justify-between text-xs font-medium text-white/50">
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <div className={cn("size-2 rounded-full transition-colors duration-500", isRecording ? "bg-white animate-pulse shadow-glow" : "bg-white/20")} />
+                          <span className="hidden sm:inline">
+                            {phase === "live"
+                              ? isRecording
+                                ? "Microphone Active"
+                                : "Microphone Idle"
+                              : "Session Idle"}
+                          </span>
+                        </div>
+                        {visualAgentEnabled && phase === "live" && (
+                          <div className="flex items-center gap-2">
+                            <div className={cn(
+                              "size-2 rounded-full transition-colors duration-500",
+                              isVisualAgentGenerating
+                                ? "bg-purple-500 animate-pulse shadow-[0_0_8px_rgba(168,85,247,0.5)]"
+                                : isVisualAgentAnalyzing 
+                                  ? "bg-purple-400 animate-pulse" 
+                                  : visuals.length > 0 
+                                    ? "bg-purple-400" 
+                                    : "bg-purple-500/30"
+                            )} />
+                            <span className="hidden sm:inline">
+                              {isVisualAgentGenerating
+                                ? "Generating…"
+                                : isVisualAgentAnalyzing 
+                                  ? "Analyzing…" 
+                                  : visuals.length > 0 
+                                    ? `${visuals.length} visual${visuals.length > 1 ? 's' : ''}` 
+                                    : "Visual Agent"}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       <div className="font-mono bg-white/5 px-3 py-1.5 rounded-lg border border-white/5 text-white/80">
                         {formatTime(sessionDuration)}
