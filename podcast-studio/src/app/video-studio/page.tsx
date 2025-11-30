@@ -73,22 +73,23 @@ export default function VideoStudio() {
     }
   };
 
-  const handleStop = () => {
+  // These handlers are defined for future track controls UI
+  const _handleStop = () => {
     setIsPlaying(false);
     setCurrentTime(0);
   };
 
-  const handleZoomIn = () => setZoomLevel((previous) => Math.min(previous * 1.5, 200));
-  const handleZoomOut = () => setZoomLevel((previous) => Math.max(previous / 1.5, 10));
+  const _handleZoomIn = () => setZoomLevel((previous) => Math.min(previous * 1.5, 200));
+  const _handleZoomOut = () => setZoomLevel((previous) => Math.max(previous / 1.5, 10));
 
-  const handleSkip = (deltaSeconds: number) => {
+  const _handleSkip = (deltaSeconds: number) => {
     const maxDuration = Math.max(60, ...project.clips.map(c => c.startTime + c.duration));
     setCurrentTime((previous) =>
       Math.max(0, Math.min(previous + deltaSeconds, maxDuration)),
     );
   };
 
-  const handleTrackNameChange = (track: number, name: string) => {
+  const _handleTrackNameChange = (track: number, name: string) => {
     setProject(prev => ({
       ...prev,
       trackSettings: {
@@ -98,7 +99,7 @@ export default function VideoStudio() {
     }));
   };
 
-  const handleTrackVolumeChange = (track: number, volume: number) => {
+  const _handleTrackVolumeChange = (track: number, volume: number) => {
     setProject(prev => ({
       ...prev,
       trackSettings: {
@@ -108,7 +109,7 @@ export default function VideoStudio() {
     }));
   };
 
-  const toggleTrackMute = (track: number) => {
+  const _toggleTrackMute = (track: number) => {
     setProject(prev => ({
       ...prev,
       trackSettings: {
@@ -118,7 +119,7 @@ export default function VideoStudio() {
     }));
   };
 
-  const handleAddTrack = () => {
+  const _handleAddTrack = () => {
     setProject(prev => {
       const numericKeys = Object.keys(prev.trackSettings).map(Number);
       const nextId = numericKeys.length > 0 ? Math.max(...numericKeys) + 1 : 1;
@@ -132,7 +133,7 @@ export default function VideoStudio() {
     });
   };
 
-  const handleRemoveTrack = (track: number) => {
+  const _handleRemoveTrack = (track: number) => {
     setProject(prev => {
       if (!prev.trackSettings[track] || Object.keys(prev.trackSettings).length <= 1) {
         return prev;
@@ -145,6 +146,17 @@ export default function VideoStudio() {
       };
     });
   };
+
+  // Export for future use
+  void _handleStop;
+  void _handleZoomIn;
+  void _handleZoomOut;
+  void _handleSkip;
+  void _handleTrackNameChange;
+  void _handleTrackVolumeChange;
+  void _toggleTrackMute;
+  void _handleAddTrack;
+  void _handleRemoveTrack;
 
   // Keyboard Shortcuts
   useEffect(() => {

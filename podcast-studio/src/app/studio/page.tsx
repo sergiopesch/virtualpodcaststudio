@@ -133,7 +133,7 @@ const formatTime = (seconds: number) => {
 
 const StudioPage: React.FC = () => {
   const { collapsed, toggleCollapsed } = useSidebar();
-  const { apiKeys, activeProvider, videoProvider } = useApiConfig();
+  const { apiKeys, videoProvider } = useApiConfig();
   const router = useRouter();
 
   const [sessionId] = useState(() => `session_${Date.now()}`);
@@ -194,7 +194,7 @@ const StudioPage: React.FC = () => {
     }
     
     const AudioContextConstructor =
-      window.AudioContext || (window as any).webkitAudioContext;
+      window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextConstructor) {
       throw new Error("Web Audio API is not supported in this browser.");
     }
@@ -464,7 +464,7 @@ const StudioPage: React.FC = () => {
         }
       };
 
-      recognition.onerror = (event: any) => {
+      recognition.onerror = (event: Event & { error?: string }) => {
         // Benign errors like 'no-speech' happen often
         if (event.error !== 'no-speech') {
            console.warn("[WARN] Speech recognition error:", event.error);
@@ -715,7 +715,7 @@ const StudioPage: React.FC = () => {
         }
       };
     },
-    [setIsAudioPlaying],
+    [getAudioContext],
   );
 
   // --- SSE Stream Setup ---
@@ -939,6 +939,7 @@ const StudioPage: React.FC = () => {
     if (currentPaper?.id) {
       fetchPaperContext();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchPaperContext checks these internally to avoid re-fetching
   }, [currentPaper?.id, currentPaper?.arxiv_url]);
 
   useEffect(() => {
@@ -1265,7 +1266,7 @@ const StudioPage: React.FC = () => {
       setError("Failed to access microphone. Please check permissions.");
       return false;
     }
-  }, [sessionId, uint8ArrayToBase64, startSpeechRecognition]);
+  }, [sessionId, uint8ArrayToBase64, startSpeechRecognition, getAudioContext]);
 
   const teardownRealtime = useCallback(async () => {
     stopMicrophonePipeline();

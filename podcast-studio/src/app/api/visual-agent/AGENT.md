@@ -1,17 +1,19 @@
 # Visual Agent API Routes – Agent Guide
 
 ## Overview
+
 The Visual Agent is a background system that analyzes conversations and generates **video visualizations**
-using AI video providers to help users understand complex concepts. Videos are rendered inline 
+using AI video providers to help users understand complex concepts. Videos are rendered inline
 below the AI's text response.
 
 **Supported Video Providers:**
+
 - **Google Veo 3.1** (Recommended) - High-quality video generation via Gemini API
 - **OpenAI Sora** - OpenAI's video generation model
 
 All providers fall back to **DALL-E 3** for static image generation when video fails.
 
-```
+```text
 src/app/api/visual-agent/
 ├── analyze/route.ts           # Analyzes transcript to detect visual opportunities
 ├── generate-video/route.ts    # Multi-provider video generation
@@ -20,7 +22,7 @@ src/app/api/visual-agent/
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              CONVERSATION FLOW                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
@@ -63,9 +65,10 @@ The selected video provider determines which API key is used for video generatio
 The Visual Agent uses a **two-stage context-aware prompting system**:
 
 ### Stage 1: Analysis (GPT-4o-mini)
+
 Analyzes the full conversation context to decide if a visual is needed:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │ CONTEXT PASSED TO ANALYSIS                                  │
 ├─────────────────────────────────────────────────────────────┤
@@ -78,9 +81,10 @@ Analyzes the full conversation context to decide if a visual is needed:
 ```
 
 ### Stage 2: Video Generation
+
 The prompt from analysis is enhanced with context:
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │ VIDEO PROMPT INCLUDES                                       │
 ├─────────────────────────────────────────────────────────────┤
@@ -128,6 +132,7 @@ Analyzes transcript with full conversation context.
 Generates a video using the selected provider with DALL-E 3 fallback.
 
 **Request:**
+
 ```typescript
 {
   "prompt": "Educational diagram animation explaining attention mechanism...",
@@ -139,6 +144,7 @@ Generates a video using the selected provider with DALL-E 3 fallback.
 ```
 
 **Response (Video success):**
+
 ```typescript
 {
   "success": true,
@@ -153,6 +159,7 @@ Generates a video using the selected provider with DALL-E 3 fallback.
 ```
 
 **Response (DALL-E 3 fallback):**
+
 ```typescript
 {
   "success": true,
@@ -181,6 +188,7 @@ Generates a video using the selected provider with DALL-E 3 fallback.
 **API Endpoint:** `https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:predictLongRunning`
 
 **Features:**
+
 - High-quality video output
 - Supports person generation controls
 - Long-running operation with polling
@@ -207,6 +215,7 @@ Generates a video using the selected provider with DALL-E 3 fallback.
 | Analysis (GPT-4o-mini) | ~$0.001 | N/A | ~1-2s |
 
 **Cost Controls in `useVisualAgent`:**
+
 - `minSecondsBetweenVisuals`: 45 seconds (rate limiting)
 - `onlyHighPriority`: true (only generate for complex concepts)
 - Concept deduplication (avoid regenerating similar visuals)
@@ -228,6 +237,7 @@ import { VisualCard } from "@/components/visual-agent/VisualCard";
 ```
 
 Features:
+
 - **Auto-play on loop** - Videos play automatically like GIFs
 - Video playback with play/pause controls
 - Mute/unmute toggle
@@ -329,6 +339,7 @@ IMPORTANT: In your NEXT response, briefly acknowledge this visual.
 ## Troubleshooting
 
 ### Video not playing
+
 - Check browser console for media errors
 - Verify the video URL is accessible
 - Check if the browser supports the video format
@@ -336,26 +347,31 @@ IMPORTANT: In your NEXT response, briefly acknowledge this visual.
 ### Provider-specific issues
 
 **Google Veo:**
+
 - Ensure you have Gemini API access with video generation enabled
 - Check your Google AI Studio API key is valid
 - Check for `google_veo` in server logs
 
 **OpenAI Sora:**
+
 - Sora API may not be available to all accounts yet
 - Check for "Sora API not available" in logs
 - Falls back to DALL-E 3 automatically
 
 ### Fallback to image
+
 - All providers may fall back to DALL-E 3 if video generation fails
 - The `fallback: true` flag indicates image mode
 - DALL-E requires an OpenAI API key
 
 ### AI doesn't reference the visual
+
 - Check server logs for context injection
 - Verify `sessionId` is passed to `useVisualAgent`
 - Look for `[VISUAL NOTIFICATION]` in AI instructions
 
 ### Generation takes too long
+
 - Google Veo 3 typically generates in 10-20 seconds
 - If taking longer, check your API key has Veo access enabled
 - The UI shows "Generating video..." during this time
