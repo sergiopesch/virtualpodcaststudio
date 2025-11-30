@@ -5,14 +5,12 @@ export const runtime = "nodejs";
 export const maxDuration = 15;
 
 interface AnalyzeRequest {
-  // New context-aware fields
-  userQuestion: string;       // What the user asked
-  aiResponse: string;         // The AI's current response
-  conversationHistory?: string; // Recent conversation
-  paperTitle?: string;        // Paper being discussed
-  paperTopic?: string;        // Main topic
+  userQuestion: string;
+  aiResponse: string;
+  conversationHistory?: string;
+  paperTitle?: string;
+  paperTopic?: string;
   apiKey?: string;
-  // Legacy support
   transcript?: string;
   recentContext?: string;
 }
@@ -26,82 +24,120 @@ interface VisualSuggestion {
   priority: "high" | "medium" | "low" | null;
 }
 
-// Improved system prompt with context-awareness
-const SYSTEM_PROMPT = `You are an Expert Visual Explanation Designer. Your job is to identify when a visual animation would SIGNIFICANTLY help explain a complex concept that an AI tutor is describing to a user.
+// System prompt focused on creating visuals that DIRECTLY ENHANCE understanding
+// Optimized for SELECTIVE, HIGH-VALUE visual generation
+const SYSTEM_PROMPT = `You are a Visual Education Director for a science podcast. Your job is to identify the RARE moments when a visual would dramatically enhance understanding.
 
-## Your Role
-You analyze conversations between a user and an AI tutor discussing research papers. When the AI explains something complex, you design a visual animation that would help the user understand.
+## STRICT Criteria - Only Generate When:
 
-## When to Suggest Visuals (BE SELECTIVE)
-✅ GENERATE for:
-- Multi-step processes or algorithms (e.g., backpropagation, attention mechanism, diffusion process)
-- System architectures (e.g., transformer layers, encoder-decoder, neural network structure)
-- Data flow and transformations (e.g., how embeddings are created, how gradients flow)
-- Mathematical relationships that benefit from geometric visualization
-- Comparisons between 3+ components that are hard to track mentally
-- Spatial/structural concepts (e.g., latent spaces, attention patterns, feature maps)
+✅ GENERATE for these HIGH-VALUE moments:
+1. **Complex Mechanisms** - The AI explains HOW something works step-by-step (e.g., "the virus binds to the receptor, then...")
+2. **Spatial/Structural Concepts** - Architecture, molecular structures, neural networks, flow diagrams
+3. **Dynamic Processes** - Things that change over time, feedback loops, cascading effects
+4. **Counter-intuitive Ideas** - When the explanation might be confusing without a visual aid
+5. **Rich Metaphors Used by AI** - If the AI says "like a lock and key" or "imagine a waterfall" - visualize it!
 
-❌ DO NOT GENERATE for:
-- Simple definitions or explanations
-- Lists or enumerations  
-- Concepts that are already intuitive
-- General overviews or introductions
-- Anything easily understood from text alone
-- Concepts already visualized earlier in the conversation
+❌ NEVER Generate for:
+- Simple facts or definitions ("X is defined as...")
+- Historical context or background info
+- Opinions, conclusions, or summaries
+- When the AI is just agreeing or asking questions
+- Concepts that are inherently abstract with no visual form
+- Short responses under 100 words (not enough substance)
 
-## Priority Levels (BE STRICT)
-- "high": Complex concept that is VERY difficult to understand without visualization (e.g., how attention weights are computed across tokens)
-- "medium": Complex but could be understood with effort from text (e.g., basic neural network forward pass)
-- "low": Nice to have but not essential
+## Quality Prompt Guidelines
 
-## Visual Prompt Design
-When suggesting a visual, create a DETAILED prompt that:
-1. Identifies the KEY ELEMENTS from the AI's explanation
-2. Describes SPECIFIC shapes/icons for each concept mentioned
-3. Specifies HOW elements connect and flow based on what was explained
-4. Describes ANIMATION that shows the process step-by-step
-5. Uses COLOR CODING to distinguish different types of elements
-6. References SPECIFIC TERMS from the user's question and AI's answer
+Write prompts that are:
+1. **SPECIFIC** - Describe exactly what appears on screen, not vague concepts
+2. **CINEMATIC** - Camera movements, lighting, atmosphere
+3. **MOTION-FOCUSED** - Use verbs: flowing, expanding, connecting, transforming
+4. **CONCISE** - Under 60 words for fastest generation
+5. **NO TEXT** - Never ask for labels, titles, or words in the visual
 
-Respond ONLY in JSON format.`;
+Style: High-end documentary, photorealistic CGI, or elegant 3D scientific visualization.
+
+EXAMPLE:
+AI says: "The CRISPR system works like molecular scissors - the guide RNA finds the target DNA sequence, then Cas9 cuts both strands"
+→ shouldGenerate: true
+→ concept: "CRISPR Mechanism"  
+→ prompt: "Photorealistic molecular animation: A glowing RNA strand (guide) winds through a double helix until it locks onto a matching sequence. A Cas9 protein scissors mechanism opens and precisely cuts through both DNA strands. Blue bioluminescent glow, cinematic macro lens."
+→ priority: "high"
+
+Respond ONLY with valid JSON. Be SELECTIVE - most explanations do NOT need visuals.`;
 
 export async function POST(request: NextRequest) {
   try {
     const body: AnalyzeRequest = await request.json();
     
-    // Support both new context-aware format and legacy format
     const userQuestion = body.userQuestion || "";
     const aiResponse = body.aiResponse || body.transcript || "";
-    const conversationHistory = body.conversationHistory || body.recentContext || "";
     const paperTitle = body.paperTitle || "";
-    const paperTopic = body.paperTopic || "";
-    const apiKey = body.apiKey;
+    const apiKey = body.apiKey || process.env.OPENAI_API_KEY;
 
-    if (!aiResponse || aiResponse.trim().length < 100) {
+    // Need substantial content to analyze - short responses rarely need visuals
+    if (!aiResponse || aiResponse.trim().length < 120) {
       return NextResponse.json({
         shouldGenerate: false,
-        reason: "AI response too short for analysis",
+        reason: "Response too short for meaningful visual",
       });
     }
 
-    const key = apiKey || process.env.OPENAI_API_KEY;
-    if (!key) {
-      return NextResponse.json(
-        { error: "OpenAI API key required" },
-        { status: 400 }
-      );
+    // Quick heuristic checks before calling LLM
+    const lowerResponse = aiResponse.toLowerCase();
+    
+    // Skip if it's just agreement or meta-commentary
+    const skipPatterns = [
+      /^(yes|no|exactly|right|correct|i agree|that's right)/i,
+      /^(great question|good point|let me|i think)/i,
+      /what (else )?would you like/i,
+      /any (other )?questions/i,
+    ];
+    
+    if (skipPatterns.some(p => p.test(aiResponse.trim()))) {
+      return NextResponse.json({
+        shouldGenerate: false,
+        reason: "Meta-commentary or simple response",
+      });
     }
 
-    const openai = new OpenAI({ apiKey: key });
+    // Boost priority for explanations with visual/spatial language
+    const hasVisualLanguage = /\b(structure|mechanism|process|flow|layer|connect|bind|transform|split|merge|network|pathway|cycle)\b/i.test(lowerResponse);
+    const hasMetaphor = /\b(like a|imagine|think of it as|similar to|acts as|works like)\b/i.test(lowerResponse);
 
-    // Build a rich, context-aware user prompt
-    const userPrompt = buildContextAwarePrompt({
-      userQuestion,
-      aiResponse,
-      conversationHistory,
-      paperTitle,
-      paperTopic,
-    });
+    if (!apiKey) {
+      return NextResponse.json({ error: "API key required" }, { status: 400 });
+    }
+
+    const openai = new OpenAI({ apiKey });
+
+    // Build focused prompt with context hints
+    const contextHints = [];
+    if (hasVisualLanguage) contextHints.push("Contains spatial/structural language");
+    if (hasMetaphor) contextHints.push("Contains metaphor that could be visualized");
+    
+    const userPrompt = `## Context
+${paperTitle ? `Paper: "${paperTitle}"` : ''}
+${contextHints.length > 0 ? `Hints: ${contextHints.join(", ")}` : ''}
+
+## User Question
+"${userQuestion || 'Continuing the discussion...'}"
+
+## AI Explanation (analyze this)
+${aiResponse.slice(-500)}
+
+## Decision Required
+Is this explanation COMPLEX ENOUGH to benefit from a visual? 
+Most explanations do NOT need visuals. Only say yes for mechanisms, processes, structures, or vivid metaphors.
+
+Respond with JSON:
+{
+  "shouldGenerate": true/false,
+  "concept": "2-4 word concept name" or null,
+  "visualType": "animation",
+  "prompt": "Cinematic description with MOTION. Under 60 words." or null,
+  "reason": "Why this visual helps (or why not needed)",
+  "priority": "high" (essential) | "medium" (helpful) | "low" (nice-to-have)
+}`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -110,8 +146,8 @@ export async function POST(request: NextRequest) {
         { role: "user", content: userPrompt },
       ],
       response_format: { type: "json_object" },
-      temperature: 0.2,
-      max_tokens: 500,
+      temperature: 0.2, // Lower temperature for more consistent decisions
+      max_tokens: 250,  // Reduced for faster response
     });
 
     const content = response.choices[0]?.message?.content;
@@ -124,88 +160,19 @@ export async function POST(request: NextRequest) {
 
     const suggestion: VisualSuggestion = JSON.parse(content);
     
-    // Log for monitoring
+    // Log decision
     if (suggestion.shouldGenerate) {
-      console.log("[VISUAL-AGENT] ✓ Visual suggested:", {
-        concept: suggestion.concept,
-        priority: suggestion.priority,
-        visualType: suggestion.visualType,
-        userQuestion: userQuestion.slice(0, 50),
-      });
+      console.log(`[VISUAL] ✓ Creating visual: "${suggestion.concept}" (${suggestion.priority})`);
     } else {
-      console.log("[VISUAL-AGENT] ✗ No visual needed:", suggestion.reason?.slice(0, 50));
+      console.log(`[VISUAL] ✗ Skipped: ${suggestion.reason?.slice(0, 50)}`);
     }
 
     return NextResponse.json(suggestion);
   } catch (error) {
-    console.error("[VISUAL-AGENT] Analysis error:", error);
+    console.error("[VISUAL] Analysis error:", error);
     return NextResponse.json(
-      { error: "Failed to analyze transcript", shouldGenerate: false },
+      { error: "Analysis failed", shouldGenerate: false },
       { status: 500 }
     );
   }
-}
-
-/**
- * Build a context-aware prompt that includes:
- * - What the user asked
- * - What the AI is explaining
- * - The paper context
- * - Previous conversation for continuity
- */
-function buildContextAwarePrompt(context: {
-  userQuestion: string;
-  aiResponse: string;
-  conversationHistory: string;
-  paperTitle: string;
-  paperTopic: string;
-}): string {
-  const { userQuestion, aiResponse, conversationHistory, paperTitle, paperTopic } = context;
-
-  let prompt = "";
-
-  // Add paper context if available
-  if (paperTitle || paperTopic) {
-    prompt += `## Research Context\n`;
-    if (paperTitle) prompt += `Paper: "${paperTitle}"\n`;
-    if (paperTopic) prompt += `Topic: ${paperTopic}\n`;
-    prompt += `\n`;
-  }
-
-  // Add conversation history if available
-  if (conversationHistory && conversationHistory.length > 50) {
-    prompt += `## Previous Conversation\n`;
-    prompt += `${conversationHistory.slice(-500)}\n\n`;
-  }
-
-  // Add the current exchange
-  prompt += `## Current Exchange\n`;
-  
-  if (userQuestion) {
-    prompt += `**User's Question:** "${userQuestion}"\n\n`;
-  }
-  
-  prompt += `**AI's Explanation:**\n${aiResponse}\n\n`;
-
-  // Add analysis instructions
-  prompt += `## Your Task
-Analyze this AI explanation in context of what the user asked. Determine if a visual animation would SIGNIFICANTLY help the user understand.
-
-If you suggest a visual:
-1. The CONCEPT should be the specific thing from the AI's explanation that needs visualization
-2. The PROMPT should describe an animation that directly illustrates what the AI is explaining
-3. Reference SPECIFIC TERMS and PROCESSES mentioned in the explanation
-4. Design the visual to answer the USER'S QUESTION visually
-
-Respond in JSON:
-{
-  "shouldGenerate": boolean,
-  "concept": "specific concept from the explanation" or null,
-  "visualType": "diagram"|"illustration"|"chart"|"animation" or null,
-  "prompt": "detailed visual description referencing specific terms from the explanation" or null,
-  "reason": "why this visual would (or wouldn't) help answer the user's question",
-  "priority": "high"|"medium"|"low" or null
-}`;
-
-  return prompt;
 }

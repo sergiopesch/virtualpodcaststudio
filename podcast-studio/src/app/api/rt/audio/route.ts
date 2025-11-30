@@ -50,18 +50,17 @@ export async function GET(req: Request) {
 
         const send = (audioData: Uint8Array) => {
           try {
-            // Send audio as base64 in Server-Sent Events format
+            // Send audio as base64 in Server-Sent Events format - skip logging for performance
             const base64 = Buffer.from(audioData).toString('base64');
             const message = `data: ${base64}\n\n`;
             controller.enqueue(message);
-            console.log(`[DEBUG] Sent audio data`, { sessionId, size: audioData.length });
           } catch (error) {
             console.error(`[ERROR] Failed to send audio`, { sessionId, error });
           }
         };
         
         const onAudio = (audioData: Uint8Array) => {
-          console.log(`[DEBUG] Received audio event`, { sessionId, size: audioData.length });
+          // Skip per-chunk logging for performance
           send(audioData);
         };
         

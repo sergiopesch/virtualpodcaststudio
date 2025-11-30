@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserSettingsDialog } from "@/components/settings/user-settings-dialog";
-import { useVisualAgent, type PregeneratedVisual, type VideoProvider as VisualVideoProvider } from "@/hooks/useVisualAgent";
+import { useVisualAgent, type VideoProvider as VisualVideoProvider } from "@/hooks/useVisualAgent";
 import { VisualCard } from "@/components/visual-agent/VisualCard";
 
 interface SelectedPaper {
@@ -158,13 +158,9 @@ const StudioPage: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [visualAgentEnabled, setVisualAgentEnabled] = useState(true);
-  const [pregeneratedVisuals, setPregeneratedVisuals] = useState<PregeneratedVisual[]>([]);
-  const [isPregenerating, setIsPregenerating] = useState(false);
 
   // Visual Agent hook - analyzes conversation and generates visual explanations
-  // Runs in PARALLEL with AI speaking for faster visual delivery
-  // When visual is ready, injects context to AI so it can reference the visual
-  // Pre-generated visuals are shown INSTANTLY when matched
+  // OPTIMIZED: Only triggers for substantial explanations to reduce noise
   const {
     visuals,
     isAnalyzing: isVisualAgentAnalyzing,
@@ -174,17 +170,15 @@ const StudioPage: React.FC = () => {
     reset: resetVisualAgent,
   } = useVisualAgent({
     enabled: visualAgentEnabled && phase === "live",
-    apiKey: apiKeys.openai, // OpenAI for analysis (always use OpenAI for text analysis)
+    apiKey: apiKeys.openai, // OpenAI for analysis
     sessionId, // Pass sessionId so visual agent can inject context to AI
-    minTranscriptLength: 100, // Lowered: Analyze after 100 chars of AI text
-    minSecondsBetweenVisuals: 20, // Lowered: At most 1 visual per 20 seconds
-    onlyHighPriority: false, // Changed: Generate for all priorities
+    minTranscriptLength: 150, // Wait for substantial content before analyzing
+    minSecondsBetweenVisuals: 20, // 20s between visuals to prevent fatigue
+    onlyHighPriority: true, // Only generate for truly valuable visual opportunities
     // Multi-provider video settings
-    videoProvider: videoProvider as VisualVideoProvider, // User-selected video provider (Google Veo or OpenAI Sora)
-    openaiApiKey: apiKeys.openai, // For Sora & DALL-E fallback
-    googleApiKey: apiKeys.google, // For Veo
-    // Pre-generated visuals for instant display
-    pregeneratedVisuals,
+    videoProvider: videoProvider as VisualVideoProvider,
+    openaiApiKey: apiKeys.openai,
+    googleApiKey: apiKeys.google,
   });
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -489,7 +483,6 @@ const StudioPage: React.FC = () => {
       recognitionRef.current = recognition;
       isUsingSpeechRecognitionRef.current = true;
       localTranscriptBufferRef.current = ""; // Reset buffer on fresh start
-      console.log("[INFO] Optimistic speech recognition started");
 
     } catch (e) {
       console.error("[ERROR] Failed to start speech recognition", e);
@@ -555,7 +548,9 @@ const StudioPage: React.FC = () => {
       if (ref.current != null) {
         return;
       }
-      const tick = speaker === "host" ? 36 : 28;
+      // OPTIMIZED: Faster typing intervals for snappier text display
+      // 20ms for AI gives ~50 words/second display rate
+      const tick = speaker === "host" ? 25 : 20;
       ref.current = window.setInterval(() => {
         drainPending(speaker, false);
       }, tick);
@@ -665,8 +660,8 @@ const StudioPage: React.FC = () => {
 
   const playAiAudioChunk = useCallback(
     async (chunk: Uint8Array) => {
+      // Fast path: skip empty chunks or interrupted state
       if (chunk.length === 0 || isAiInterruptedRef.current) {
-        console.log("[DEBUG] Skipping audio chunk - empty or interrupted");
         return;
       }
 
@@ -677,7 +672,6 @@ const StudioPage: React.FC = () => {
       let context: AudioContext;
       try {
         context = await getAudioContext();
-        console.log("[DEBUG] Got audio context, state:", context.state);
       } catch (e) {
         console.warn("[WARN] Failed to get audio context for playback", e);
         return;
@@ -685,15 +679,15 @@ const StudioPage: React.FC = () => {
 
       const frameCount = Math.floor(chunk.length / 2);
       if (frameCount <= 0) {
-        console.log("[DEBUG] Skipping audio chunk - no frames");
         return;
       }
 
-      console.log("[DEBUG] Playing audio chunk:", chunk.length, "bytes,", frameCount, "frames");
-
+      // Create and fill audio buffer efficiently
       const audioBuffer = context.createBuffer(1, frameCount, 24000);
       const channel = audioBuffer.getChannelData(0);
       const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      
+      // Batch decode PCM16 to float32 for better performance
       for (let index = 0; index < frameCount; index++) {
         channel[index] = view.getInt16(index * 2, true) / 32767;
       }
@@ -702,18 +696,22 @@ const StudioPage: React.FC = () => {
       source.buffer = audioBuffer;
       source.connect(context.destination);
 
-      const startAt = Math.max(context.currentTime, aiPlaybackTimeRef.current);
+      // OPTIMIZED: Tight scheduling with small buffer to reduce latency
+      // Use a tiny lookahead (10ms) to prevent gaps while minimizing delay
+      const LOOKAHEAD = 0.01; // 10ms lookahead
+      const minStartTime = context.currentTime + LOOKAHEAD;
+      const startAt = Math.max(minStartTime, aiPlaybackTimeRef.current);
+      
       source.start(startAt);
       aiPlaybackSourcesRef.current.push(source);
       aiPlaybackTimeRef.current = startAt + audioBuffer.duration;
       setIsAudioPlaying(true);
-      console.log("[DEBUG] Audio scheduled at:", startAt, "duration:", audioBuffer.duration);
 
       source.onended = () => {
         aiPlaybackSourcesRef.current = aiPlaybackSourcesRef.current.filter((node) => node !== source);
         if (aiPlaybackSourcesRef.current.length === 0) {
           const remaining = aiPlaybackTimeRef.current - context!.currentTime;
-          if (remaining <= 0.05) {
+          if (remaining <= 0.02) {
             setIsAudioPlaying(false);
             aiPlaybackTimeRef.current = context!.currentTime;
           }
@@ -733,27 +731,24 @@ const StudioPage: React.FC = () => {
     audioSource.onmessage = (event) => {
       if (event.data) {
         try {
-          console.log("[DEBUG] Received SSE audio data, length:", event.data.length);
           const bytes = base64ToUint8Array(event.data);
-          console.log("[DEBUG] Decoded audio bytes:", bytes.length);
           
-      // Reset interrupt flag when we receive audio - the AI is actively responding
-      if (isAiInterruptedRef.current) {
-        console.log("[DEBUG] Resetting interrupt flag - AI is responding with audio");
-        isAiInterruptedRef.current = false;
-      }
-      
-      if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
-        aiAudioChunksRef.current.push(bytes);
-      }
-      
-      // Ensure context is running before playing
-      if (audioContextRef.current?.state === 'suspended') {
-        audioContextRef.current.resume().catch(e => console.warn("[WARN] Failed to resume audio context on chunk", e));
-      }
-      
-      void playAiAudioChunk(bytes);
-      setIsAiSpeaking(true);
+          // Reset interrupt flag when we receive audio - the AI is actively responding
+          if (isAiInterruptedRef.current) {
+            isAiInterruptedRef.current = false;
+          }
+          
+          if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+            aiAudioChunksRef.current.push(bytes);
+          }
+          
+          // Ensure context is running before playing
+          if (audioContextRef.current?.state === 'suspended') {
+            audioContextRef.current.resume().catch(() => {});
+          }
+          
+          void playAiAudioChunk(bytes);
+          setIsAiSpeaking(true);
         } catch (e) {
           console.error("[ERROR] Failed to process AI audio delta", e);
         }
@@ -772,7 +767,6 @@ const StudioPage: React.FC = () => {
 
     transcriptSource.addEventListener("start", () => {
        // New turn started by AI (response.created equivalent)
-       console.log("[DEBUG] AI response started - resetting interrupt flag");
        isAiInterruptedRef.current = false;
     });
 
@@ -947,164 +941,6 @@ const StudioPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchPaperContext checks these internally to avoid re-fetching
   }, [currentPaper?.id, currentPaper?.arxiv_url]);
 
-  // Pre-generate visuals when paper context is loaded
-  // This happens in the background before the session starts
-  useEffect(() => {
-    const pregenerateVisuals = async () => {
-      // Only run if we have a paper with text loaded
-      if (!currentPaper?.title || !currentPaper?.abstract) {
-        console.log("[PREGENERATE] No paper loaded, skipping pre-generation");
-        return;
-      }
-
-      // Only run if API key is available
-      if (!apiKeys.openai) {
-        console.log("[PREGENERATE] No OpenAI API key, skipping pre-generation");
-        return;
-      }
-
-      // Only run if visual agent is enabled
-      if (!visualAgentEnabled) {
-        console.log("[PREGENERATE] Visual agent disabled, skipping pre-generation");
-        return;
-      }
-
-      // Don't re-run if already done for this paper
-      if (pregeneratedVisuals.length > 0) {
-        console.log("[PREGENERATE] Already have pre-generated visuals, skipping");
-        return;
-      }
-
-      // Don't run if already in progress
-      if (isPregenerating) {
-        return;
-      }
-
-      setIsPregenerating(true);
-      console.log("[PREGENERATE] Starting pre-generation for:", currentPaper.title.slice(0, 50));
-
-      try {
-        // Step 1: Analyze paper to identify key concepts
-        const analyzeResponse = await fetch("/api/visual-agent/pregenerate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            paperTitle: currentPaper.title,
-            paperAbstract: currentPaper.abstract,
-            paperFullText: currentPaper.fullText,
-            apiKey: apiKeys.openai,
-            maxConcepts: 3, // Pre-generate top 3 concepts
-          }),
-        });
-
-        if (!analyzeResponse.ok) {
-          console.warn("[PREGENERATE] Analysis failed:", analyzeResponse.status);
-          return;
-        }
-
-        const analysisResult = await analyzeResponse.json();
-        
-        if (!analysisResult.success || !analysisResult.concepts?.length) {
-          console.log("[PREGENERATE] No concepts identified for pre-generation");
-          return;
-        }
-
-        console.log("[PREGENERATE] Identified concepts:", analysisResult.concepts.map((c: { concept: string }) => c.concept));
-
-        // Step 2: Initialize pre-generated visuals with "generating" status
-        const initialVisuals: PregeneratedVisual[] = analysisResult.concepts.map((concept: { concept: string; keywords: string[]; prompt: string }) => ({
-          concept: concept.concept,
-          keywords: concept.keywords,
-          prompt: concept.prompt,
-          status: "generating" as const,
-        }));
-
-        setPregeneratedVisuals(initialVisuals);
-
-        // Step 3: Generate videos for each concept in parallel
-        const videoProvider = apiKeys.google ? "google_veo" : "openai_sora";
-        
-        const generatePromises = analysisResult.concepts.map(async (concept: { concept: string; keywords: string[]; prompt: string }, index: number) => {
-          try {
-            console.log(`[PREGENERATE] Generating video ${index + 1}/${analysisResult.concepts.length}: "${concept.concept}"`);
-            
-            const videoResponse = await fetch("/api/visual-agent/generate-video", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                prompt: concept.prompt,
-                concept: concept.concept,
-                videoProvider,
-                openaiApiKey: apiKeys.openai,
-                googleApiKey: apiKeys.google,
-                paperTitle: currentPaper.title,
-              }),
-            });
-
-            const videoResult = await videoResponse.json();
-
-            if (videoResult.success && videoResult.videoUrl) {
-              console.log(`[PREGENERATE] ✓ Video ready for: "${concept.concept}" (${((videoResult.generationTime || 0) / 1000).toFixed(1)}s)`);
-              
-              // Update the specific visual in state
-              setPregeneratedVisuals((prev) =>
-                prev.map((v) =>
-                  v.concept === concept.concept
-                    ? {
-                        ...v,
-                        status: "ready" as const,
-                        videoUrl: videoResult.videoUrl,
-                        thumbnailUrl: videoResult.thumbnailUrl,
-                        isVideo: !videoResult.fallback,
-                        generationTime: videoResult.generationTime,
-                        provider: videoResult.provider,
-                      }
-                    : v
-                )
-              );
-            } else {
-              console.warn(`[PREGENERATE] ✗ Failed for: "${concept.concept}"`, videoResult.error);
-              setPregeneratedVisuals((prev) =>
-                prev.map((v) =>
-                  v.concept === concept.concept
-                    ? { ...v, status: "error" as const, error: videoResult.error }
-                    : v
-                )
-              );
-            }
-          } catch (error) {
-            console.error(`[PREGENERATE] Error generating video for: "${concept.concept}"`, error);
-            setPregeneratedVisuals((prev) =>
-              prev.map((v) =>
-                v.concept === concept.concept
-                  ? { ...v, status: "error" as const, error: "Generation failed" }
-                  : v
-              )
-            );
-          }
-        });
-
-        // Wait for all videos to complete
-        await Promise.all(generatePromises);
-        console.log("[PREGENERATE] ✓ Pre-generation complete");
-
-      } catch (error) {
-        console.error("[PREGENERATE] Error:", error);
-      } finally {
-        setIsPregenerating(false);
-      }
-    };
-
-    // Trigger pre-generation when paper is loaded and has text
-    // Use a small delay to not block the initial render
-    const timeoutId = setTimeout(() => {
-      pregenerateVisuals();
-    }, 1000);
-
-    return () => clearTimeout(timeoutId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only run when paper changes or visual agent toggles
-  }, [currentPaper?.id, currentPaper?.fullText, apiKeys.openai, apiKeys.google, visualAgentEnabled]);
-
   useEffect(() => {
     let interval: number | undefined;
     if (phase === "live") {
@@ -1159,7 +995,7 @@ const StudioPage: React.FC = () => {
   }, [entries, isHostSpeaking, isAiSpeaking, scrollTrigger, scrollToLatest]);
 
   // Visual Agent: Analyze transcript in real-time as AI generates text
-  // This runs in PARALLEL with the AI speaking, so visuals are ready faster
+  // Triggers EARLY so video generation starts while AI is still speaking
   const lastAnalyzedAiTextRef = useRef<string>("");
   
   useEffect(() => {
@@ -1173,30 +1009,29 @@ const StudioPage: React.FC = () => {
 
     const currentText = currentAiEntry.text;
     
-    // Only analyze if we have enough new content (at least 100 more chars)
+    // Wait for meaningful change before re-analyzing (100 new chars)
     if (currentText.length - lastAnalyzedAiTextRef.current.length < 100) {
       return;
     }
 
-    // Analyze when we have a substantial chunk of text
-    // This happens WHILE the AI is still speaking
-    if (currentText.length >= 200) {
+    // Only analyze once we have substantial content (150+ chars)
+    // This prevents premature analysis and ensures quality visual decisions
+    if (currentText.length >= 150) {
       lastAnalyzedAiTextRef.current = currentText;
       const isStillStreaming = currentAiEntry.status === "streaming";
 
       // Find the user's question that prompted this AI response
-      // Look for the most recent host entry before this AI entry
       const currentAiIndex = entries.findIndex((e) => e.id === currentAiEntry.id);
       const hostEntries = entries.slice(0, currentAiIndex).filter((e) => e.speaker === "host");
       const userQuestion = hostEntries.slice(-1)[0]?.text || "";
 
       // Build conversation history from recent entries
-      const recentEntries = entries.slice(-6); // Last 3 exchanges
+      const recentEntries = entries.slice(-6);
       const conversationHistory = recentEntries
         .map((e) => `${e.speaker === "host" ? "User" : "AI"}: ${e.text.slice(0, 200)}`)
         .join("\n");
 
-      // Pass full context to the visual agent
+      // Trigger visual agent EARLY - video will be ready faster
       analyzeForVisuals(
         {
           userQuestion,
@@ -1251,7 +1086,7 @@ const StudioPage: React.FC = () => {
         startSpeechRecognition();
       }
       
-      console.log(`[INFO] Microphone ${willBeMuted ? 'muted' : 'unmuted'}, track.enabled=${audioTrack.enabled}`);
+      // Mute state changed - no need to log every toggle
     } else {
       console.log("[WARN] No audio track found in stream");
     }
@@ -1342,12 +1177,13 @@ const StudioPage: React.FC = () => {
       const silentGain = audioContext.createGain();
       silentGain.gain.value = 0;
 
-      // Capture mic and send to API
+      // Capture mic and send to API with minimal latency
       const bufferAccumulator: Uint8Array[] = [];
       let bufferSize = 0;
-      // Accumulate roughly 100ms of audio (24000 * 0.1 = 2400 samples)
-      // 1024 * 3 = 3072 samples (~128ms)
-      const SEND_THRESHOLD_BYTES = 1024 * 2 * 3; 
+      // OPTIMIZED: Send audio every ~50ms (1024 samples = ~42ms at 24kHz, 2 buffers = ~85ms)
+      // Lower threshold = faster responsiveness, but more network requests
+      // Balance: 2048 bytes = ~42ms latency per chunk
+      const SEND_THRESHOLD_BYTES = 2048; 
 
       scriptProcessor.onaudioprocess = (event) => {
         const inputData = event.inputBuffer.getChannelData(0);
@@ -1842,18 +1678,6 @@ const StudioPage: React.FC = () => {
                         Context Ready
                       </div>
                     )}
-                    {visualAgentEnabled && isPregenerating && (
-                      <div className="flex items-center gap-1.5 md:gap-2 text-[10px] md:text-xs text-cyan-400/80 font-medium bg-cyan-900/20 px-2 py-1 rounded-full border border-cyan-900/30 animate-pulse">
-                        <span className="size-1.5 rounded-full bg-cyan-500" />
-                        Pre-generating visuals…
-                      </div>
-                    )}
-                    {visualAgentEnabled && !isPregenerating && pregeneratedVisuals.filter(v => v.status === "ready").length > 0 && (
-                      <div className="flex items-center gap-1.5 md:gap-2 text-[10px] md:text-xs text-cyan-400/80 font-medium bg-cyan-900/20 px-2 py-1 rounded-full border border-cyan-900/30">
-                        <span className="size-1.5 rounded-full bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.5)]" />
-                        {pregeneratedVisuals.filter(v => v.status === "ready").length} visuals ready
-                      </div>
-                    )}
                   </CardHeader>
                   <CardContent className="pt-4 md:pt-6 space-y-4 md:space-y-6">
                     {paperLoadError ? (
@@ -2319,34 +2143,26 @@ const StudioPage: React.FC = () => {
                               : "Session Idle"}
                           </span>
                         </div>
-                        {visualAgentEnabled && (
+                        {visualAgentEnabled && phase === "live" && (
                           <div className="flex items-center gap-2">
                             <div className={cn(
                               "size-2 rounded-full transition-colors duration-500",
-                              isPregenerating
-                                ? "bg-cyan-500 animate-pulse shadow-[0_0_8px_rgba(6,182,212,0.5)]"
-                                : isVisualAgentGenerating
-                                  ? "bg-purple-500 animate-pulse shadow-[0_0_8px_rgba(168,85,247,0.5)]"
-                                  : isVisualAgentAnalyzing 
-                                    ? "bg-purple-400 animate-pulse" 
-                                    : pregeneratedVisuals.filter(v => v.status === "ready").length > 0
-                                      ? "bg-cyan-400"
-                                      : visuals.length > 0 
-                                        ? "bg-purple-400" 
-                                        : "bg-purple-500/30"
+                              isVisualAgentGenerating
+                                ? "bg-purple-500 animate-pulse shadow-[0_0_8px_rgba(168,85,247,0.5)]"
+                                : isVisualAgentAnalyzing 
+                                  ? "bg-purple-400 animate-pulse" 
+                                  : visuals.length > 0 
+                                    ? "bg-purple-400" 
+                                    : "bg-purple-500/30"
                             )} />
                             <span className="hidden sm:inline">
-                              {isPregenerating
-                                ? `Pre-generating ${pregeneratedVisuals.filter(v => v.status === "generating").length}/${pregeneratedVisuals.length}…`
-                                : isVisualAgentGenerating
-                                  ? "Generating…"
-                                  : isVisualAgentAnalyzing 
-                                    ? "Analyzing…" 
-                                    : pregeneratedVisuals.filter(v => v.status === "ready").length > 0
-                                      ? `${pregeneratedVisuals.filter(v => v.status === "ready").length} ready`
-                                      : visuals.length > 0 
-                                        ? `${visuals.length} visual${visuals.length > 1 ? 's' : ''}` 
-                                        : "Visual Agent"}
+                              {isVisualAgentGenerating
+                                ? "Creating visual…"
+                                : isVisualAgentAnalyzing 
+                                  ? "Analyzing…" 
+                                  : visuals.length > 0 
+                                    ? `${visuals.length} visual${visuals.length > 1 ? 's' : ''}` 
+                                    : "Visual Agent"}
                             </span>
                           </div>
                         )}

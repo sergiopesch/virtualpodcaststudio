@@ -43,8 +43,7 @@ export async function POST(req: Request) {
     }
     
     const buf = Buffer.from(base64, "base64");
-    console.log(`[DEBUG] Appending audio chunk`, { sessionId, size: buf.length });
-    
+    // Skip per-chunk logging - too noisy, slows down audio pipeline
     await manager.appendPcm16(new Uint8Array(buf));
     
     return NextResponse.json({ 

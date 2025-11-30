@@ -27,9 +27,6 @@ export interface VisualData {
   error?: string;
   generationTime?: number;
   provider?: VideoProvider;
-  // Pre-generation metadata
-  pregenerated?: boolean;
-  matchedFromCache?: boolean;
 }
 
 // Conversation context for better visual generation
@@ -39,20 +36,6 @@ export interface ConversationContext {
   conversationHistory: string; // Recent conversation for context
   paperTitle?: string;       // The paper being discussed (if any)
   paperTopic?: string;       // Main topic of the paper
-}
-
-// Pre-generated visual from paper analysis
-export interface PregeneratedVisual {
-  concept: string;
-  keywords: string[]; // Keywords to match in transcript
-  prompt: string;
-  videoUrl?: string;
-  thumbnailUrl?: string;
-  isVideo?: boolean;
-  generationTime?: number;
-  provider?: VideoProvider;
-  status: "pending" | "generating" | "ready" | "error";
-  error?: string;
 }
 
 interface VisualAgentConfig {
@@ -67,8 +50,6 @@ interface VisualAgentConfig {
   videoProvider?: VideoProvider;
   openaiApiKey?: string;
   googleApiKey?: string;
-  // Pre-generated visuals cache
-  pregeneratedVisuals?: PregeneratedVisual[];
 }
 
 interface AnalysisResult {
@@ -116,14 +97,13 @@ export function useVisualAgent(config: VisualAgentConfig) {
     enabled,
     apiKey,
     sessionId,
-    minTranscriptLength = 100, // Lowered from 200 for faster triggering
-    minSecondsBetweenVisuals = 20, // Lowered from 60 for more visuals
-    onlyHighPriority = false, // Changed to false to allow more visuals
+    minTranscriptLength = 150, // Wait for substantial explanation before analyzing
+    minSecondsBetweenVisuals = 20, // Prevent visual fatigue - 20s between visuals
+    onlyHighPriority = true, // Default to high priority only for cost control
     onVisualReady,
     videoProvider = "google_veo",
     openaiApiKey,
     googleApiKey,
-    pregeneratedVisuals = [],
   } = config;
 
   const [visuals, setVisuals] = useState<VisualData[]>([]);
@@ -136,7 +116,6 @@ export function useVisualAgent(config: VisualAgentConfig) {
   const generatedConceptsRef = useRef<string[]>([]);
   const pendingAnalysisRef = useRef<AbortController | null>(null);
   const conversationHistoryRef = useRef<string>("");
-  const usedPregeneratedRef = useRef<Set<string>>(new Set());
 
   // Log config on mount
   useEffect(() => {
@@ -149,9 +128,8 @@ export function useVisualAgent(config: VisualAgentConfig) {
       hasApiKey: !!apiKey,
       hasOpenaiKey: !!openaiApiKey,
       hasGoogleKey: !!googleApiKey,
-      pregeneratedCount: pregeneratedVisuals.length,
     });
-  }, [enabled, minTranscriptLength, minSecondsBetweenVisuals, onlyHighPriority, videoProvider, apiKey, openaiApiKey, googleApiKey, pregeneratedVisuals.length]);
+  }, [enabled, minTranscriptLength, minSecondsBetweenVisuals, onlyHighPriority, videoProvider, apiKey, openaiApiKey, googleApiKey]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -237,35 +215,6 @@ export function useVisualAgent(config: VisualAgentConfig) {
 
     return { skip: false };
   }, [minSecondsBetweenVisuals]);
-
-  // Check if a pre-generated visual matches the current concept
-  const findPregeneratedMatch = useCallback((text: string): PregeneratedVisual | null => {
-    if (pregeneratedVisuals.length === 0) return null;
-
-    const lowerText = text.toLowerCase();
-    
-    for (const pregenVisual of pregeneratedVisuals) {
-      // Skip if already used
-      if (usedPregeneratedRef.current.has(pregenVisual.concept)) continue;
-      
-      // Skip if not ready
-      if (pregenVisual.status !== "ready" || !pregenVisual.videoUrl) continue;
-      
-      // Check if any keyword matches
-      const matched = pregenVisual.keywords.some(keyword => 
-        lowerText.includes(keyword.toLowerCase())
-      );
-      
-      if (matched) {
-        debugLog("PREGEN_MATCH", `Found pre-generated visual for: ${pregenVisual.concept}`, {
-          matchedKeywords: pregenVisual.keywords.filter(k => lowerText.includes(k.toLowerCase())),
-        });
-        return pregenVisual;
-      }
-    }
-    
-    return null;
-  }, [pregeneratedVisuals]);
 
   const generateVisual = useCallback(
     async (concept: string, visualType: VisualType, prompt: string, context?: ConversationContext) => {
@@ -376,39 +325,9 @@ export function useVisualAgent(config: VisualAgentConfig) {
     [apiKey, videoProvider, openaiApiKey, googleApiKey, shouldSkipGeneration, addVisual, updateVisual, injectVisualContext, onVisualReady]
   );
 
-  // Show a pre-generated visual instantly
-  const showPregeneratedVisual = useCallback((pregenVisual: PregeneratedVisual) => {
-    const id = `pregen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    
-    // Mark as used
-    usedPregeneratedRef.current.add(pregenVisual.concept);
-    generatedConceptsRef.current.push(pregenVisual.concept);
-    lastVisualTimeRef.current = Date.now();
-    
-    const visual: VisualData = {
-      id,
-      concept: pregenVisual.concept,
-      visualType: "video",
-      status: "ready",
-      timestamp: Date.now(),
-      videoUrl: pregenVisual.videoUrl,
-      thumbnailUrl: pregenVisual.thumbnailUrl,
-      isVideo: pregenVisual.isVideo,
-      generationTime: pregenVisual.generationTime,
-      provider: pregenVisual.provider,
-      pregenerated: true,
-      matchedFromCache: true,
-    };
-    
-    addVisual(visual);
-    debugLog("PREGEN_SHOW", `Instantly showing pre-generated visual: "${pregenVisual.concept}"`);
-    
-    // Inject context to AI
-    injectVisualContext(pregenVisual.concept, `Pre-generated visual showing ${pregenVisual.concept}`);
-  }, [addVisual, injectVisualContext]);
-
   /**
    * Analyze transcript with full conversation context
+   * Generates LIVE educational visuals that enhance the AI's explanation
    * @param context - Full conversation context including user question and AI response
    * @param isStreaming - Whether the AI is still generating the response
    */
@@ -439,24 +358,30 @@ export function useVisualAgent(config: VisualAgentConfig) {
         return;
       }
 
-      // FIRST: Check for pre-generated visual match (instant display!)
-      const pregeneratedMatch = findPregeneratedMatch(aiResponse);
-      if (pregeneratedMatch) {
-        debugLog("PREGEN_HIT", `Found pre-generated match: "${pregeneratedMatch.concept}"`);
-        showPregeneratedVisual(pregeneratedMatch);
-        return; // Don't also trigger real-time generation
-      }
-
       // Create a hash of the transcript to avoid re-analyzing the same text
-      const hash = aiResponse.slice(-500) + userQuestion.slice(0, 100);
+      const hash = aiResponse.slice(-400) + userQuestion.slice(0, 80);
       if (hash === lastAnalyzedHashRef.current) {
         debugLog("ANALYZE_SKIP", "Already analyzed this text");
         return;
       }
 
-      // If still streaming and transcript is short, wait for more content
+      // If still streaming, wait for more substantial content before analyzing
+      // This prevents premature analysis and wasted API calls
       if (isStreaming && aiResponse.length < minTranscriptLength * 1.5) {
         debugLog("ANALYZE_SKIP", `Still streaming, waiting for more content: ${aiResponse.length} < ${minTranscriptLength * 1.5}`);
+        return;
+      }
+      
+      // Quick pre-filter: skip if response looks like simple agreement or question
+      const trimmed = aiResponse.trim().toLowerCase();
+      if (trimmed.length < 100 || 
+          trimmed.startsWith("yes") || 
+          trimmed.startsWith("no,") ||
+          trimmed.startsWith("exactly") ||
+          trimmed.startsWith("that's right") ||
+          trimmed.includes("what would you like") ||
+          trimmed.includes("any other questions")) {
+        debugLog("ANALYZE_SKIP", "Simple response - no visual needed");
         return;
       }
 
@@ -473,7 +398,7 @@ export function useVisualAgent(config: VisualAgentConfig) {
       setIsAnalyzing(true);
 
       try {
-        debugLog("ANALYZE_START", `Analyzing transcript`, {
+        debugLog("ANALYZE_START", `Analyzing transcript for visual opportunity`, {
           question: userQuestion.slice(0, 50),
           responseLength: aiResponse.length,
         });
@@ -482,7 +407,7 @@ export function useVisualAgent(config: VisualAgentConfig) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            // Full context for better analysis
+            // Full context for better, more creative analysis
             userQuestion,
             aiResponse,
             conversationHistory: conversationHistory || conversationHistoryRef.current,
@@ -519,8 +444,8 @@ export function useVisualAgent(config: VisualAgentConfig) {
           result.visualType &&
           result.prompt
         ) {
-          debugLog("ANALYZE_TRIGGER", `Triggering generation for: "${result.concept}"`);
-          // Start generation with full context
+          debugLog("ANALYZE_TRIGGER", `🎬 Creating dreamy visual for: "${result.concept}"`);
+          // Start generation with full context for enhanced, educational visuals
           generateVisual(result.concept, result.visualType, result.prompt, context);
         } else {
           debugLog("ANALYZE_NO_VISUAL", `No visual needed: ${result.reason?.slice(0, 50)}`);
@@ -540,7 +465,7 @@ export function useVisualAgent(config: VisualAgentConfig) {
         pendingAnalysisRef.current = null;
       }
     },
-    [enabled, apiKey, minTranscriptLength, onlyHighPriority, generateVisual, findPregeneratedMatch, showPregeneratedVisual]
+    [enabled, apiKey, minTranscriptLength, onlyHighPriority, generateVisual]
   );
 
   const reset = useCallback(() => {

@@ -780,9 +780,9 @@ class RTManager extends EventEmitter {
           voice: "alloy",
           turn_detection: {
             type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500,
+            threshold: 0.6,          // Slightly higher threshold for less false triggers
+            prefix_padding_ms: 200,  // Reduced from 300ms for faster response
+            silence_duration_ms: 350, // Reduced from 500ms for snappier turn-taking
           },
           instructions: instructions,
         },
@@ -864,8 +864,12 @@ Be conversational and integrate the visual reference smoothly into your explanat
           return;
         }
 
-        // Log all events for debugging with full payload
-        console.log(`[DEBUG] Received realtime event: ${type}`, JSON.stringify(payload, null, 2));
+        // Log events - skip high-frequency audio deltas to reduce overhead
+        const isHighFrequency = type.includes("audio.delta") || type.includes("output_audio");
+        if (!isHighFrequency) {
+          console.log(`[DEBUG] Received realtime event: ${type}`);
+
+        } // Close the isHighFrequency check
 
         if (type === "session.created" || type === "session.updated") {
           console.log("[INFO] Session ready:", type);
@@ -934,10 +938,7 @@ Be conversational and integrate the visual reference smoothly into your explanat
           if (audioDelta) {
             try {
               const bytes = Buffer.from(audioDelta, "base64");
-              // Reduce log volume for audio deltas to prevent console flooding
-              if (Math.random() < 0.05) {
-                 console.log(`[DEBUG] AI audio delta received (${type}): ${bytes.length} bytes`);
-              }
+              // Skip logging audio deltas entirely - too noisy
               this.emit("audio", new Uint8Array(bytes));
             } catch (error) {
               console.error(`[ERROR] Failed to decode audio delta:`, error);
@@ -1115,7 +1116,7 @@ Be conversational and integrate the visual reference smoothly into your explanat
       audio: base64Audio,
     };
 
-    console.log(`[DEBUG] Appending ${chunk.length} bytes (${this.currentTurnPcmChunks.length} chunks accumulated)`);
+    // Skip per-chunk logging - too noisy, slows down audio pipeline
     this.ws.send(JSON.stringify(event));
   }
 

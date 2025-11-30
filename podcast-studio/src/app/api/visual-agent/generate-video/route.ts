@@ -2,22 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
 export const runtime = "nodejs";
-export const maxDuration = 120; // Reduced to 2 minutes - Veo 3 Fast is quick
-
-type VideoProvider = "openai_sora" | "google_veo";
+export const maxDuration = 60; // Reduced for faster timeouts - we want quick fallback to DALL-E
 
 interface GenerateVideoRequest {
   prompt: string;
   concept: string;
   apiKey?: string;
-  videoProvider?: VideoProvider;
   openaiApiKey?: string;
   googleApiKey?: string;
-  // Conversation context for better prompts
   userQuestion?: string;
   aiResponse?: string;
   paperTitle?: string;
-  useFastModel?: boolean; // Use Veo 3 Fast for faster generation
 }
 
 interface VideoGenerationResult {
@@ -29,887 +24,494 @@ interface VideoGenerationResult {
   generationTime?: number;
   error?: string;
   fallback?: boolean;
-  provider?: VideoProvider;
-  isProxied?: boolean; // Indicates if URL is proxied through our server (base64)
+  provider?: string;
+  isProxied?: boolean;
   modelUsed?: string;
 }
 
-// Google Veo 3 Model Configuration
-// Prioritize Veo 3.1 Fast for best speed (~10-20s generation)
-// Falls back through available models if primary fails
-const VEO_MODELS = {
-  // Primary: Veo 3.1 Fast - fastest generation (~10-20s)
-  fast: process.env.GOOGLE_VEO_FAST_MODEL ?? "veo-3.1-fast-generate-preview",
-  // Secondary: Veo 3.1 Standard - higher quality but slower
-  standard: process.env.GOOGLE_VEO_MODEL ?? "veo-3.1-generate-preview",
-  // Fallback: Veo 3.0 stable if previews unavailable
-  stable: process.env.GOOGLE_VEO_STABLE_MODEL ?? "veo-3.0-generate-preview",
-} as const;
-
-const VIDEO_CONFIG = {
-  veo: {
-    duration: 5, // 5 seconds is optimal for speed - balances quality and generation time
-    aspectRatio: "16:9",
-    models: VEO_MODELS,
-    // Aggressive polling for faster completion detection
-    pollIntervalFast: 800, // 800ms for fast model
-    pollIntervalStandard: 1200, // 1.2s for standard
-    maxPollAttempts: 90, // ~72-108 seconds max wait
-  },
-  sora: {
-    duration: 4, // Sora can do 4 seconds
-    resolution: "480p",
-  },
-} as const;
-
-// Debug logging helper
-function debugLog(stage: string, message: string, data?: any) {
-  const timestamp = new Date().toISOString();
-  console.log(`[VISUAL-AGENT-VIDEO] [${timestamp}] [${stage}] ${message}`, data ? JSON.stringify(data, null, 2) : '');
+// Debug logging
+function log(stage: string, message: string, data?: Record<string, unknown>) {
+  console.log(`[VEO3] [${stage}] ${message}`, data ? JSON.stringify(data) : '');
 }
 
 /**
- * Generate a short educational video using the selected AI video provider
- * 
- * Supported providers:
- * - Google Veo 3.1 (Recommended) - Via Gemini API
- * - OpenAI Sora - Via OpenAI API
- * 
- * Falls back to DALL-E 3 for static image generation if video fails.
- * 
- * Cost optimization:
- * - Duration: 6 seconds max (plays on loop)
- * - Resolution: 720p (Veo standard)
+ * Generate educational videos using Google Veo 3
+ * Falls back to DALL-E 3 images if Veo fails
  */
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   
   try {
-    debugLog("START", "Received video generation request");
-    
     const body: GenerateVideoRequest = await request.json();
-    const { 
-      prompt, 
-      concept, 
-      apiKey,
-      videoProvider = "google_veo",
-      openaiApiKey,
-      googleApiKey,
-      userQuestion,
-      aiResponse,
-      paperTitle,
-    } = body;
-
-    // Default to fast model for speed
-    const useFastModel = body.useFastModel !== false; // true by default
-
-    debugLog("REQUEST", "Parsed request body", {
-      concept,
-      videoProvider,
-      useFastModel,
-      hasOpenaiKey: !!openaiApiKey,
-      hasGoogleKey: !!googleApiKey,
-      hasUserQuestion: !!userQuestion,
-      promptLength: prompt?.length,
-    });
+    const { prompt, concept, apiKey, openaiApiKey, googleApiKey, aiResponse } = body;
 
     if (!prompt || !concept) {
-      debugLog("ERROR", "Missing required fields");
-      return NextResponse.json(
-        { error: "Prompt and concept are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Prompt and concept required" }, { status: 400 });
     }
 
-    // Determine which API key to use based on provider
-    const providerApiKey = videoProvider === "google_veo" 
-      ? (googleApiKey || process.env.GOOGLE_API_KEY)
-      : (openaiApiKey || apiKey || process.env.OPENAI_API_KEY);
+    log("START", `Generating visual for: "${concept}"`);
 
-    debugLog("API_KEY", `Provider: ${videoProvider}, Has key: ${!!providerApiKey}`);
+    // Build a video prompt that DIRECTLY illustrates the AI's explanation
+    const videoPrompt = buildEducationalPrompt(concept, prompt);
 
-    if (!providerApiKey) {
-      debugLog("ERROR", `No API key for provider: ${videoProvider}`);
-      return NextResponse.json(
-        { error: `API key required for ${videoProvider}` },
-        { status: 400 }
-      );
-    }
-
-    // Craft an educational video prompt with conversation context
-    const videoPrompt = buildVideoPrompt(concept, prompt, videoProvider, {
-      userQuestion,
-      aiResponse,
-      paperTitle,
-    });
-
-    debugLog("PROMPT", "Built video prompt", { promptLength: videoPrompt.length });
-
-    let videoUrl: string | undefined;
-    let thumbnailUrl: string | undefined;
-    let success = false;
-
-    // Try the selected provider
-    debugLog("GENERATION", `Attempting ${videoProvider} video generation...`);
+    // Try Google Veo 3 first
+    const googleKey = googleApiKey || process.env.GOOGLE_API_KEY;
     
-    let modelUsed: string | undefined;
-    
-    if (videoProvider === "google_veo") {
-      const result = await generateWithGoogleVeo(providerApiKey, videoPrompt, useFastModel);
-      success = result.success;
-      videoUrl = result.videoUrl;
-      thumbnailUrl = result.thumbnailUrl;
-      modelUsed = result.modelUsed;
-      debugLog("GOOGLE_VEO", "Result", { success, hasVideoUrl: !!videoUrl, modelUsed });
-    } else {
-      const result = await generateWithOpenAISora(providerApiKey, videoPrompt);
-      success = result.success;
-      videoUrl = result.videoUrl;
-      thumbnailUrl = result.thumbnailUrl;
-      modelUsed = "sora";
-      debugLog("OPENAI_SORA", "Result", { success, hasVideoUrl: !!videoUrl });
-    }
-
-    // If video generation succeeded, return the video
-    if (success && videoUrl) {
+    if (googleKey) {
+      log("VEO3", "Attempting Veo 3 video generation...");
+      
+      const veoResult = await generateWithVeo3(googleKey, videoPrompt);
+      
+      if (veoResult.success && veoResult.videoUrl) {
       const elapsed = Date.now() - startTime;
-      debugLog("SUCCESS", `Video generated in ${elapsed}ms using ${videoProvider} (${modelUsed})`);
-
-      // Generate a summary for AI context
-      const visualSummary = await generateVisualSummary(
-        openaiApiKey || apiKey || process.env.OPENAI_API_KEY,
-        concept,
-        prompt
-      );
-
-      // Check if the video URL is a data URL (already proxied/downloaded)
-      const isProxied = videoUrl.startsWith("data:");
+        log("VEO3_SUCCESS", `Video ready in ${(elapsed/1000).toFixed(1)}s`);
 
       return NextResponse.json({
         success: true,
-        videoUrl,
-        thumbnailUrl,
+          videoUrl: veoResult.videoUrl,
         concept,
-        visualSummary,
+          visualSummary: `Animated visualization: ${concept}`,
         generationTime: elapsed,
         fallback: false,
-        provider: videoProvider,
-        isProxied,
-        modelUsed,
+          provider: "google_veo",
+          isProxied: veoResult.videoUrl.startsWith("data:"),
+          modelUsed: veoResult.modelUsed || "veo-3",
       } as VideoGenerationResult);
     }
 
-    // Fallback: Use DALL-E 3 for static image
-    debugLog("FALLBACK", "Video generation failed, falling back to DALL-E 3");
+      log("VEO3_FAIL", `Veo failed: ${veoResult.error}`);
+    }
     
+    // Fallback to DALL-E 3 images
     const dalleKey = openaiApiKey || apiKey || process.env.OPENAI_API_KEY;
-    if (!dalleKey) {
-      debugLog("ERROR", "No OpenAI key available for DALL-E fallback");
-      return NextResponse.json(
-        { error: "Video generation failed and no OpenAI key available for fallback" },
-        { status: 500 }
-      );
-    }
-
-    const fallbackResult = await generateDallEFallback(dalleKey, concept, prompt);
     
-    if (!fallbackResult.success) {
-      debugLog("ERROR", "DALL-E fallback also failed", { error: fallbackResult.error });
-      return NextResponse.json(
-        { error: fallbackResult.error || "Failed to generate visual" },
-        { status: 500 }
-      );
-    }
-
+    if (dalleKey) {
+      log("DALLE", "Falling back to DALL-E 3...");
+      
+      const dalleResult = await generateWithDallE(dalleKey, concept, prompt, aiResponse || "");
+      
+      if (dalleResult.success) {
     const elapsed = Date.now() - startTime;
-    debugLog("FALLBACK_SUCCESS", `DALL-E fallback generated in ${elapsed}ms`);
+        log("DALLE_SUCCESS", `Image ready in ${(elapsed/1000).toFixed(1)}s`);
 
     return NextResponse.json({
       success: true,
-      videoUrl: fallbackResult.imageUrl,
+          videoUrl: dalleResult.imageUrl,
       concept,
-      visualSummary: fallbackResult.summary,
+          visualSummary: dalleResult.summary,
       generationTime: elapsed,
       fallback: true,
-      provider: videoProvider,
-      isProxied: fallbackResult.isProxied,
+          provider: "dall-e-3",
+          isProxied: true,
+          modelUsed: "dall-e-3",
     } as VideoGenerationResult);
+      }
+    }
 
-  } catch (error: any) {
-    debugLog("FATAL_ERROR", "Unhandled error in video generation", {
-      message: error?.message,
-      stack: error?.stack?.slice(0, 500),
-    });
     return NextResponse.json(
-      { error: "Failed to generate visual", details: error?.message },
+      { error: "No API keys available for visual generation" },
       { status: 500 }
     );
+
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    log("ERROR", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
 /**
- * Build an optimized video prompt for educational content
- * CRITICAL: Keep prompts SHORT and FOCUSED for fast generation
- * Veo 3 generates faster with concise, direct prompts (under 200 chars ideal)
+ * Build a prompt that DIRECTLY illustrates what the AI is explaining
  */
-function buildVideoPrompt(
-  concept: string, 
-  prompt: string,
-  provider: VideoProvider,
-  _context?: {
-    userQuestion?: string;
-    aiResponse?: string;
-    paperTitle?: string;
+function buildEducationalPrompt(concept: string, basePrompt: string): string {
+  // Use the high-quality prompt from the analysis step directly
+  // Just ensure it has high quality flags if not present
+  let prompt = basePrompt;
+
+  // Append technical quality constraints if they aren't already there
+  if (!prompt.toLowerCase().includes("high quality")) {
+    prompt += ", high quality, 4k, cinematic lighting";
   }
-): string {
-  // Extract the core visual description from the prompt (first 150 chars)
-  const corePrompt = prompt.slice(0, 150).replace(/\.+$/, '');
+
+  // Ensure it's not too long for the API
+  return prompt.slice(0, 400); 
+}
+
+/**
+ * Extract key technical terms from the AI's explanation
+ */
+function extractKeyTerms(text: string): string {
+  if (!text || text.length < 50) return "";
   
-  // ULTRA-CONCISE prompt format for maximum speed
-  // Veo 3 responds best to direct, visual descriptions without excessive instructions
-  return `${concept}: ${corePrompt}. Animated diagram, dark background, glowing elements, smooth motion, looping.`;
-}
-
-/**
- * Download a video from URL and convert to base64 data URL
- * This is necessary because Google Veo video URLs require authentication
- */
-async function downloadVideoAsBase64(
-  videoUrl: string,
-  apiKey: string
-): Promise<{ success: boolean; dataUrl?: string; error?: string }> {
-  try {
-    debugLog("DOWNLOAD", `Downloading video from: ${videoUrl.slice(0, 100)}...`);
-    
-    if (videoUrl.startsWith("data:")) {
-      return { success: true, dataUrl: videoUrl };
+  // Find technical/scientific terms (capitalized words, compound terms)
+  const words = text.split(/\s+/);
+  const keyTerms: string[] = [];
+  
+  for (let i = 0; i < words.length && keyTerms.length < 5; i++) {
+    const word = words[i].replace(/[^a-zA-Z0-9-]/g, '');
+    // Look for technical terms (longer words, capitalized, hyphenated)
+    if (word.length > 6 || word.includes('-') || (word[0] === word[0].toUpperCase() && word.length > 4)) {
+      if (!['However', 'Although', 'Because', 'Therefore', 'Moreover'].includes(word)) {
+        keyTerms.push(word.toLowerCase());
+      }
     }
-
-    const authorizedResponse = await fetch(videoUrl, {
-      headers: {
-        Accept: "video/mp4,video/*,*/*",
-        "x-goog-api-key": apiKey,
-      },
-    });
-
-    const response = authorizedResponse.ok
-      ? authorizedResponse
-      : await fetch(videoUrl, {
-          headers: { Accept: "video/mp4,video/*,*/*" },
-        });
-
-    if (!response.ok) {
-      debugLog("DOWNLOAD", `Failed to download video: ${response.status}`);
-      return { success: false, error: `Failed to download video: ${response.status}` };
-    }
-
-    const buffer = await response.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    const contentType = response.headers.get("content-type") || "video/mp4";
-    
-    debugLog("DOWNLOAD", `Video downloaded successfully: ${buffer.byteLength} bytes`);
-    return { success: true, dataUrl: `data:${contentType};base64,${base64}` };
-  } catch (error: any) {
-    debugLog("DOWNLOAD", `Error downloading video: ${error.message}`);
-    return { success: false, error: error.message };
   }
+  
+  return [...new Set(keyTerms)].slice(0, 4).join(', ');
 }
 
 /**
- * Generate video using Google Veo 3 via Gemini API
- * Uses stable production model for reliability
- * Returns video as base64 data URL for CORS-free playback
+ * Generate video using Google Veo 3 via Generative Language API
+ * Uses the latest Veo 3 models for fast, high-quality video generation
  */
-async function generateWithGoogleVeo(
+async function generateWithVeo3(
   apiKey: string, 
-  prompt: string,
-  useFastModel: boolean = true
-): Promise<{ success: boolean; videoUrl?: string; thumbnailUrl?: string; error?: string; modelUsed?: string }> {
-  // Model priority: fast preview first, then quality, then stable fallback
-  const modelsToTry = [
-    VIDEO_CONFIG.veo.models.fast,
-    VIDEO_CONFIG.veo.models.standard,
-    VIDEO_CONFIG.veo.models.stable,
-  ].filter((model, index, self) => self.indexOf(model) === index); // Remove duplicates
-
-  let lastError: string | undefined;
-
-  for (const model of modelsToTry) {
-    const pollInterval = VIDEO_CONFIG.veo.pollIntervalFast;
-    debugLog("GOOGLE_VEO", `Trying model: ${model}`);
-    
-    const result = await requestVeoModel({ 
-      apiKey, 
-      prompt, 
-      model, 
-      pollInterval,
-      maxAttempts: VIDEO_CONFIG.veo.maxPollAttempts,
-    });
-    
-    if (result.success) {
-      debugLog("GOOGLE_VEO", `Success with model: ${model}`);
-      return { ...result, modelUsed: model };
+  prompt: string
+): Promise<{ success: boolean; videoUrl?: string; error?: string; modelUsed?: string }> {
+  
+  // Prioritize speed over quality for real-time educational content
+  // Veo 3 models with fastest generation times first
+  const endpoints = [
+    // Imagen Video / Veo 3 via generateContent (newest API pattern)
+    {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-preview:generateContent`,
+      model: "veo-3.0-generate-preview",
+      useGenerateContent: true
+    },
+    // Veo 3 Long Running Operation (standard pattern)
+    {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-preview:predictLongRunning`,
+      model: "veo-3.0-generate-preview",
+      useInstances: true
+    },
+    // Veo 2 as fallback (more widely available)
+    {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/veo-2.0-generate-001:predictLongRunning`,
+      model: "veo-2.0-generate-001",
+      useInstances: true
+    },
+    // Imagen 3 for image fallback (very fast)
+    {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict`,
+      model: "imagen-3.0-generate-001",
+      useInstances: true,
+      isImage: true
     }
-    
-    lastError = result.error;
-    
-    // If the error is about model not found or access denied, try next model
-    if (lastError?.includes("not found") || lastError?.includes("403") || lastError?.includes("404")) {
-      debugLog("GOOGLE_VEO", `Model ${model} not available, trying next...`);
-      continue;
-    }
-    
-    // For other errors, log and continue to next model
-    debugLog("GOOGLE_VEO", `Model ${model} failed: ${lastError}`);
-  }
+  ];
 
-  return { success: false, error: lastError || "Veo generation failed - check your Google API key has Veo access" };
-}
+  for (const endpoint of endpoints) {
+    try {
+      log("VEO3_TRY", `Trying ${endpoint.model}...`);
+      
+      let payload: Record<string, unknown>;
+      
+      if ((endpoint as { useGenerateContent?: boolean }).useGenerateContent) {
+        // generateContent format for newer models
+        payload = {
+          contents: [{
+            parts: [{ text: prompt }]
+          }],
+          generationConfig: {
+            responseModalities: ["VIDEO"],
+            videoConfig: {
+              aspectRatio: "16:9",
+              durationSeconds: 3, // Shorter = faster generation
+            }
+          }
+        };
+      } else if ((endpoint as { isImage?: boolean }).isImage) {
+        // Imagen format
+        payload = {
+          instances: [{ prompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: "16:9",
+          }
+        };
+      } else if (endpoint.useInstances) {
+        // Standard Veo instances format
+        payload = {
+          instances: [{ prompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: "16:9",
+            durationSeconds: 3, // 3s for faster generation
+            personGeneration: "allow_adult",
+          }
+        };
+      } else {
+        payload = {
+          prompt,
+          config: {
+            aspectRatio: "16:9",
+            durationSeconds: 3,
+          }
+        };
+      }
 
-interface VeoModelAttempt {
-  apiKey: string;
-  prompt: string;
-  model: string;
-  pollInterval: number;
-  maxAttempts?: number;
-}
-
-async function requestVeoModel({
-  apiKey,
-  prompt,
-  model,
-  pollInterval,
-  maxAttempts = 90,
-}: VeoModelAttempt): Promise<{ success: boolean; videoUrl?: string; thumbnailUrl?: string; error?: string }> {
-  try {
-    debugLog("GOOGLE_VEO", `Starting Veo generation with model: ${model}`);
-
-    // Optimized payload for speed
-    const payload = {
-      instances: [{ prompt }],
-      parameters: {
-        aspectRatio: VIDEO_CONFIG.veo.aspectRatio,
-        durationSeconds: VIDEO_CONFIG.veo.duration,
-        // Request direct video bytes when possible (faster than URL)
-        outputOptions: {
-          mimeType: "video/mp4",
-        },
-      },
-    };
-
-    debugLog("GOOGLE_VEO", "Request", { model, promptLength: prompt.length });
-
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${apiKey}`;
-
-    let response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    // Retry with minimal payload if parameters are rejected (400)
-    if (!response.ok && response.status === 400) {
-      debugLog("GOOGLE_VEO", "Retrying with minimal payload...");
-      response = await fetch(endpoint, {
+      const response = await fetch(`${endpoint.url}?key=${apiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instances: [{ prompt }] }),
+        body: JSON.stringify(payload),
       });
-    }
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      debugLog("GOOGLE_VEO", `API error: ${response.status}`, { error: errorText.slice(0, 300) });
-      try {
-        const errorJson = JSON.parse(errorText);
-        const errorMessage = errorJson?.error?.message || `API error ${response.status}`;
-        return { success: false, error: errorMessage };
-      } catch {
-        return { success: false, error: `API error ${response.status}` };
-      }
-    }
-
-    const data = await response.json();
-    debugLog("GOOGLE_VEO", "Response received", { hasName: !!data.name, keys: Object.keys(data) });
-
-    // Long-running operation - need to poll
-    if (data.name) {
-      const pollResult = await pollGoogleOperation(apiKey, data.name, pollInterval, maxAttempts);
-      
-      // If we got a URL, download it (for CORS-free playback)
-      if (pollResult.success && pollResult.videoUrl && !pollResult.videoUrl.startsWith("data:")) {
-        debugLog("GOOGLE_VEO", "Converting video to base64 for playback...");
-        const downloadResult = await downloadVideoAsBase64(pollResult.videoUrl, apiKey);
-        if (downloadResult.success && downloadResult.dataUrl) {
-          return {
-            success: true,
-            videoUrl: downloadResult.dataUrl,
-            thumbnailUrl: pollResult.thumbnailUrl,
-          };
+      if (!response.ok) {
+        const errorText = await response.text();
+        const status = response.status;
+        log("VEO3_ERROR", `${status}: ${errorText.slice(0, 150)}`);
+        
+        if (status === 403 || status === 404) {
+          // Skip to next endpoint quickly
+          continue;
         }
-        // Fallback to direct URL if download fails
-        debugLog("GOOGLE_VEO", "Download failed, using direct URL");
-        return pollResult;
+        continue;
       }
-      return pollResult;
-    }
 
-    // Direct response (no polling needed)
-    const directVideo = findVideoInResponse(data);
+      const data = await response.json();
+      log("VEO3_RESPONSE", "Got response", { keys: Object.keys(data) });
 
-    if (directVideo?.bytesBase64Encoded) {
-      debugLog("GOOGLE_VEO", "Got direct base64 video");
-      return {
-        success: true,
-        videoUrl: `data:video/mp4;base64,${directVideo.bytesBase64Encoded}`,
-      };
-    }
-
-    if (directVideo?.uri) {
-      debugLog("GOOGLE_VEO", "Got direct video URI, downloading...");
-      const downloadResult = await downloadVideoAsBase64(directVideo.uri, apiKey);
-      if (downloadResult.success && downloadResult.dataUrl) {
-        return { success: true, videoUrl: downloadResult.dataUrl };
+      // Check for long-running operation
+      if (data.name) {
+        log("VEO3_PENDING", `Operation started: ${data.name}`);
+        // Use faster polling for real-time app
+        const pollResult = await pollOperation(apiKey, data.name, 30); // 30 max attempts = ~45s timeout
+        if (pollResult.success) {
+          return { ...pollResult, modelUsed: endpoint.model };
+        }
+        if (pollResult.error) {
+          log("VEO3_POLL_ERR", pollResult.error);
+        }
+        continue;
       }
-      return { success: true, videoUrl: directVideo.uri };
-    }
 
-    debugLog("GOOGLE_VEO", "No video in response", { responseKeys: Object.keys(data) });
-    return { success: false, error: "No video in response" };
-  } catch (error: any) {
-    debugLog("GOOGLE_VEO", `Exception: ${error.message}`);
-    return { success: false, error: error.message };
+      // Check for direct video/image response
+      const mediaUrl = findVideoUrl(data) || findImageUrl(data);
+      if (mediaUrl) {
+        const base64 = await downloadAsBase64(mediaUrl, apiKey);
+        return {
+          success: true,
+          videoUrl: base64 || mediaUrl,
+          modelUsed: endpoint.model 
+        };
+      }
+
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Unknown";
+      log("VEO3_EXCEPTION", msg);
+    }
   }
+
+  return { success: false, error: "Veo 3 not available - ensure your Google API key has video generation access" };
 }
 
 /**
- * Helper to find video data in various response formats
+ * Poll a long-running operation for completion
+ * Optimized for faster feedback in real-time apps
  */
-function findVideoInResponse(data: any): { uri?: string; bytesBase64Encoded?: string } | null {
-  const paths = [
-    data?.response?.generateVideoResponse?.generatedSamples?.[0]?.video,
-    data?.generatedSamples?.[0]?.video,
-    data?.response?.generatedSamples?.[0]?.video,
-    data?.generatedVideos?.[0]?.video,
-    data?.generatedVideos?.[0],
-    data?.videos?.[0],
-  ];
-  
-  for (const video of paths) {
-    if (video?.uri || video?.bytesBase64Encoded) {
-      return video;
-    }
-  }
-  return null;
-}
-
-/**
- * Poll Google long-running operation for completion
- * Aggressive polling for fast completion detection
- */
-async function pollGoogleOperation(
+async function pollOperation(
   apiKey: string,
   operationName: string,
-  pollInterval: number = 800,
-  maxAttempts: number = 90
-): Promise<{ success: boolean; videoUrl?: string; thumbnailUrl?: string; error?: string }> {
-  const startTime = Date.now();
-  
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    // Wait before polling (except first attempt)
-    if (attempt > 0) {
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-    }
-    
+  maxAttempts: number = 45
+): Promise<{ success: boolean; videoUrl?: string; error?: string }> {
+  const pollInterval = 1500; // 1.5 seconds - faster polling for responsiveness
+
+  for (let i = 0; i < maxAttempts; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, pollInterval));
+
     try {
-      const statusResponse = await fetch(
+      const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${apiKey}`
       );
       
-      if (!statusResponse.ok) {
-        if (statusResponse.status === 404) {
-          debugLog("GOOGLE_POLL", "Operation not found - may have expired");
-          return { success: false, error: "Operation not found" };
-        }
-        continue; // Retry on transient errors
-      }
+      if (!response.ok) continue;
       
-      const statusData = await statusResponse.json();
-      
-      if (statusData.done) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        
-        // Check for errors first
-        if (statusData.error) {
-          debugLog("GOOGLE_POLL", `Failed after ${elapsed}s`, { error: statusData.error.message });
-          return { success: false, error: statusData.error.message || "Video generation failed" };
-        }
-
-        // Find video in response (handles multiple response formats)
-        const responseData = statusData.response || statusData.result || statusData;
-        const videoData = findVideoInPollResponse(responseData);
-
-        if (videoData) {
-          const videoUri = videoData.uri || videoData.url;
-          const videoBytes = videoData.bytesBase64Encoded || videoData.bytes;
-          
-          debugLog("GOOGLE_POLL", `Video ready in ${elapsed}s!`, { 
-            hasUri: !!videoUri, 
-            hasBytes: !!videoBytes,
-          });
-          
-          let videoUrl: string;
-          if (videoBytes) {
-            // Direct base64 - fastest path
-            videoUrl = `data:video/mp4;base64,${videoBytes}`;
-          } else if (videoUri) {
-            videoUrl = videoUri;
-          } else {
-            return { success: false, error: "Video data incomplete" };
-          }
-          
-          // Get thumbnail if available
-          const thumbnailData = findThumbnailInResponse(responseData);
-          
-          return {
-            success: true,
-            videoUrl,
-            thumbnailUrl: thumbnailData,
-          };
-        }
-        
-        // Operation done but no video found
-        debugLog("GOOGLE_POLL", "No video in completed response", { 
-          responseKeys: responseData ? Object.keys(responseData).slice(0, 5) : [],
-        });
-        return { success: false, error: "No video returned" };
-      }
-      
-      // Log progress every 15 attempts (~12 seconds)
-      if (attempt > 0 && attempt % 15 === 0) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
-        debugLog("GOOGLE_POLL", `Still generating... (${elapsed}s)`);
-      }
-    } catch (error: any) {
-      // Network errors - retry silently
-      if (attempt % 10 === 0) {
-        debugLog("GOOGLE_POLL", `Network error, retrying: ${error.message}`);
-      }
-    }
-  }
-
-  const totalTime = ((Date.now() - startTime) / 1000).toFixed(0);
-  debugLog("GOOGLE_POLL", `Timeout after ${totalTime}s`);
-  return { success: false, error: `Generation timed out after ${totalTime}s` };
-}
-
-/**
- * Find video data in poll response (handles various formats)
- */
-function findVideoInPollResponse(data: any): { uri?: string; url?: string; bytesBase64Encoded?: string; bytes?: string } | null {
-  if (!data) return null;
-  
-  const paths = [
-    // Veo 3 paths
-    data?.generateVideoResponse?.generatedSamples?.[0]?.video,
-    data?.generatedSamples?.[0]?.video,
-    // Alternative paths
-    data?.videos?.[0],
-    // Veo 2 paths
-    data?.generatedVideos?.[0]?.video,
-    data?.generatedVideos?.[0],
-  ];
-  
-  for (const video of paths) {
-    if (video && (video.uri || video.url || video.bytesBase64Encoded || video.bytes)) {
-      return video;
-    }
-  }
-  return null;
-}
-
-/**
- * Find thumbnail URL in response
- */
-function findThumbnailInResponse(data: any): string | undefined {
-  const paths = [
-    data?.generateVideoResponse?.generatedSamples?.[0]?.thumbnail,
-    data?.generatedSamples?.[0]?.thumbnail,
-    data?.generatedVideos?.[0]?.thumbnail,
-  ];
-  
-  for (const thumb of paths) {
-    if (thumb?.uri || thumb?.url) {
-      return thumb.uri || thumb.url;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Alternative: Try Imagen 3 for image generation
- */
-async function tryGeminiImagenVideo(
-  apiKey: string,
-  prompt: string
-): Promise<{ success: boolean; videoUrl?: string; thumbnailUrl?: string; error?: string }> {
-  try {
-    debugLog("IMAGEN", "Trying Gemini Imagen fallback...");
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-        instances: [{ prompt }],
-        parameters: {
-          sampleCount: 1,
-          aspectRatio: VIDEO_CONFIG.veo.aspectRatio,
-        },
-        }),
-      }
-    );
-
-    if (response.ok) {
       const data = await response.json();
-      if (data.predictions?.[0]?.bytesBase64Encoded) {
-        debugLog("IMAGEN", "Generated image successfully");
-        return {
-          success: true,
-          videoUrl: `data:image/png;base64,${data.predictions[0].bytesBase64Encoded}`,
-        };
-      }
-    } else {
-      const errorText = await response.text();
-      debugLog("IMAGEN", `Error: ${response.status}`, { errorText: errorText.slice(0, 300) });
-    }
-
-    return { success: false, error: "Imagen generation failed" };
-  } catch (error: any) {
-    debugLog("IMAGEN", `Exception: ${error.message}`);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Generate video using OpenAI Sora
- */
-async function generateWithOpenAISora(
-  apiKey: string, 
-  prompt: string
-): Promise<{ success: boolean; videoUrl?: string; thumbnailUrl?: string; error?: string }> {
-  try {
-    debugLog("SORA", "Starting OpenAI Sora video generation...");
-
-    const response = await fetch("https://api.openai.com/v1/videos/generations", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "sora",
-        prompt,
-        n: 1,
-        size: VIDEO_CONFIG.sora.resolution,
-        duration: VIDEO_CONFIG.sora.duration,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      debugLog("SORA", `API error: ${response.status}`, { error: errorData?.error?.message });
-      return { success: false, error: errorData?.error?.message || `HTTP ${response.status}` };
-    }
-
-    const data = await response.json();
-    debugLog("SORA", "Initial response", { hasData: !!data?.data, hasId: !!data?.id });
-    
-    // Direct response with video URL
-    if (data?.data?.[0]?.url) {
-      debugLog("SORA", "Video completed immediately");
-      return {
-        success: true,
-        videoUrl: data.data[0].url,
-        thumbnailUrl: data.data[0].thumbnail_url,
-      };
-    }
-    
-    // Async job - poll for completion
-    if (data?.id) {
-      return await pollSoraJob(apiKey, data.id);
-    }
-
-    debugLog("SORA", "Unexpected response format");
-    return { success: false, error: "Unexpected response format" };
-  } catch (error: any) {
-    debugLog("SORA", `Exception: ${error.message}`);
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Poll OpenAI Sora job for completion
- */
-async function pollSoraJob(
-  apiKey: string,
-  jobId: string
-): Promise<{ success: boolean; videoUrl?: string; thumbnailUrl?: string; error?: string }> {
-  const maxAttempts = 90;
-  
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    try {
-      const statusResponse = await fetch(
-        `https://api.openai.com/v1/videos/generations/${jobId}`,
-        { headers: { "Authorization": `Bearer ${apiKey}` } }
-      );
       
-      if (!statusResponse.ok) {
-        debugLog("SORA_POLL", `Status check failed: ${statusResponse.status}`);
-        continue;
-      }
-      
-      const statusData = await statusResponse.json();
-      
-      if (statusData?.status === "succeeded" || statusData?.status === "completed") {
-        const videoUrl = statusData.data?.[0]?.url || statusData.output?.url || statusData.url;
-        if (videoUrl) {
-          debugLog("SORA_POLL", "Video completed!");
-          return {
-            success: true,
-            videoUrl,
-            thumbnailUrl: statusData.data?.[0]?.thumbnail_url || statusData.thumbnail_url,
-          };
+      if (data.done) {
+        if (data.error) {
+          return { success: false, error: data.error.message };
         }
-      } else if (statusData?.status === "failed") {
-        debugLog("SORA_POLL", "Generation failed", { error: statusData.error?.message });
-        return { success: false, error: statusData.error?.message || "Video generation failed" };
+        
+        const videoUrl = findVideoUrl(data.response || data.result || data);
+        if (videoUrl) {
+          const base64 = await downloadAsBase64(videoUrl, apiKey);
+          return { success: true, videoUrl: base64 || videoUrl };
+        }
+        
+        return { success: false, error: "No video in completed response" };
       }
       
-      if (attempt % 10 === 0) {
-        debugLog("SORA_POLL", `Attempt ${attempt + 1}/${maxAttempts}, status: ${statusData?.status}`);
+      if (i > 0 && i % 10 === 0) {
+        log("POLL", `Still waiting... (${i}s)`);
       }
-    } catch (error: any) {
-      debugLog("SORA_POLL", `Poll error: ${error.message}`);
+    } catch {
+      // Retry on network errors
     }
   }
 
-  debugLog("SORA_POLL", "Timed out waiting for video");
   return { success: false, error: "Video generation timed out" };
 }
 
 /**
- * Generate DALL-E 3 fallback image
- * Downloads the image and returns as base64 to avoid CORS issues
+ * Find video URL in various response formats
  */
-async function generateDallEFallback(
+function findVideoUrl(data: Record<string, unknown>): string | null {
+  if (!data) return null;
+  
+  // Debug log the data keys to help diagnosis
+  console.log("[VEO_DEBUG] Response keys:", Object.keys(data));
+  
+  // Check various paths where video data might be
+  const paths = [
+    // Standard LRO response
+    (data as Record<string, unknown>)?.video,
+    
+    // Vertex AI Prediction format
+    ((data as Record<string, unknown>)?.predictions as Array<Record<string, unknown>>)?.[0]?.video,
+    ((data as Record<string, unknown>)?.predictions as Array<Record<string, unknown>>)?.[0],
+    
+    // Gemini/Generative Language formats
+    ((data as Record<string, unknown>)?.generatedSamples as Array<Record<string, unknown>>)?.[0]?.video,
+    ((data as Record<string, unknown>)?.videos as Array<Record<string, unknown>>)?.[0],
+    ((data as Record<string, unknown>)?.generateVideoResponse as Record<string, unknown>)?.generatedSamples,
+    
+    // Result wrapper
+    ((data as Record<string, unknown>)?.result as Record<string, unknown>)?.video,
+  ];
+
+  for (const item of paths) {
+    if (!item) continue;
+    
+    const video = item as Record<string, unknown>;
+    
+    // Check for base64 data
+    if (video.bytesBase64Encoded) {
+      return `data:video/mp4;base64,${video.bytesBase64Encoded}`;
+    }
+    
+    // Check for URL (uri, url, or gcsUri)
+    if (video.uri) return video.uri as string;
+    if (video.url) return video.url as string;
+    if (video.gcsUri) return video.gcsUri as string;
+  }
+
+  return null;
+}
+
+/**
+ * Find image URL in response (for Imagen fallback)
+ */
+function findImageUrl(data: Record<string, unknown>): string | null {
+  if (!data) return null;
+  
+  // Type-safe path extraction
+  const predictions = data?.predictions as Array<Record<string, unknown>> | undefined;
+  const images = data?.images as Array<Record<string, unknown>> | undefined;
+  const candidates = data?.candidates as Array<Record<string, unknown>> | undefined;
+  
+  const paths: Array<Record<string, unknown> | undefined> = [
+    predictions?.[0],
+    images?.[0],
+  ];
+  
+  // Handle nested candidates structure
+  if (candidates?.[0]) {
+    const content = (candidates[0] as Record<string, unknown>)?.content as Record<string, unknown> | undefined;
+    const parts = content?.parts as Array<Record<string, unknown>> | undefined;
+    if (parts?.[0]) {
+      paths.push(parts[0]);
+    }
+  }
+
+  for (const item of paths) {
+    if (!item) continue;
+    const img = item as Record<string, unknown>;
+    
+    if (img.bytesBase64Encoded) {
+      return `data:image/png;base64,${img.bytesBase64Encoded}`;
+    }
+    if (img.inlineData) {
+      const inlineData = img.inlineData as Record<string, string>;
+      if (inlineData.data) {
+        const mimeType = inlineData.mimeType || "image/png";
+        return `data:${mimeType};base64,${inlineData.data}`;
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Download video and convert to base64 for CORS-free playback
+ */
+async function downloadAsBase64(url: string, apiKey: string): Promise<string | null> {
+  if (url.startsWith("data:")) return url;
+  
+  try {
+    const response = await fetch(url, {
+      headers: { "x-goog-api-key": apiKey }
+    });
+
+    if (!response.ok) {
+      // Try without auth
+      const response2 = await fetch(url);
+      if (!response2.ok) return null;
+      const buffer = await response2.arrayBuffer();
+      return `data:video/mp4;base64,${Buffer.from(buffer).toString("base64")}`;
+    }
+    
+    const buffer = await response.arrayBuffer();
+    return `data:video/mp4;base64,${Buffer.from(buffer).toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Generate educational image with DALL-E 3
+ */
+async function generateWithDallE(
   apiKey: string,
   concept: string,
-  prompt: string
-): Promise<{ success: boolean; imageUrl?: string; summary?: string; error?: string; isProxied?: boolean }> {
+  prompt: string,
+  aiResponse: string
+): Promise<{ success: boolean; imageUrl?: string; summary?: string; error?: string }> {
   try {
-    debugLog("DALLE", "Starting DALL-E 3 image generation...");
-    
     const openai = new OpenAI({ apiKey });
 
-    const imagePrompt = `Educational infographic diagram explaining "${concept}".
-Style: Clean, minimalist, dark background (deep blue/purple gradient).
-Content: ${prompt}
-Visual elements: Simple geometric shapes (circles, rectangles), connecting arrows with glowing effects, clear visual hierarchy.
-Color scheme: Bright cyan, green, and orange elements on dark background.
-No text labels. Professional, modern design. High contrast colors.
-Landscape orientation, widescreen format.`;
+    // Build a prompt that directly illustrates the explanation
+    const keyTerms = extractKeyTerms(aiResponse);
+    
+    const imagePrompt = `Educational 3D diagram illustrating "${concept}".
+${prompt.slice(0, 200)}
+${keyTerms ? `Show these elements clearly: ${keyTerms}.` : ''}
+Style: Glowing neon scientific diagram on dark background, professional infographic quality, clear visual hierarchy showing the mechanism/process, luminescent cyan and purple elements.`;
 
-    debugLog("DALLE", "Generating image...");
+    log("DALLE_PROMPT", imagePrompt.slice(0, 100));
 
-    const imageResponse = await openai.images.generate({
+    const response = await openai.images.generate({
       model: "dall-e-3",
       prompt: imagePrompt,
       n: 1,
       size: "1792x1024",
       quality: "standard",
       style: "vivid",
-      response_format: "b64_json", // Get base64 directly to avoid CORS
+      response_format: "b64_json",
     });
 
-    const imageData = imageResponse.data[0];
-    
+    const imageData = response.data?.[0];
     if (!imageData?.b64_json) {
-      debugLog("DALLE", "No image data in response");
-      return { success: false, error: "No image data returned" };
+      return { success: false, error: "No image data" };
     }
 
-    debugLog("DALLE", "Image generated successfully, creating data URL");
-    
-    // Return as data URL to avoid CORS issues
-    const imageUrl = `data:image/png;base64,${imageData.b64_json}`;
-
-    // Generate summary
-    debugLog("DALLE", "Generating summary...");
-    const summaryResponse = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "Generate a 1-sentence description of what a diagram shows. Be specific. Don't say 'The image shows' - describe it directly.",
-        },
-        {
-          role: "user",
-          content: `Concept: ${concept}\nDiagram: ${prompt}\n\nDescribe what the diagram illustrates.`,
-        },
-      ],
-      temperature: 0.7,
-      max_tokens: 60,
-    });
-
-    const summary = summaryResponse.choices[0]?.message?.content ||
-      `A diagram explaining ${concept}`;
-
-    debugLog("DALLE", "Fallback complete");
-    return { success: true, imageUrl, summary, isProxied: true };
-  } catch (error: any) {
-    debugLog("DALLE", `Exception: ${error.message}`, { stack: error.stack?.slice(0, 300) });
-    return { success: false, error: error.message };
-  }
-}
-
-/**
- * Generate visual summary using GPT-4o-mini
- */
-async function generateVisualSummary(
-  apiKey: string | undefined,
-  concept: string,
-  prompt: string
-): Promise<string> {
-  if (!apiKey) {
-    return `An animated diagram explaining ${concept}`;
-  }
-
-  try {
-    const openai = new OpenAI({ apiKey });
-    
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "Generate a 1-sentence description of what an animated diagram shows. Be specific. Don't say 'The video shows' - describe it directly.",
-        },
-        {
-          role: "user",
-          content: `Concept: ${concept}\nAnimation: ${prompt}\n\nDescribe what the animation illustrates.`,
-        },
-      ],
-      temperature: 0.7,
-      max_tokens: 60,
-    });
-
-    return response.choices[0]?.message?.content || `An animated diagram explaining ${concept}`;
-  } catch (error: any) {
-    debugLog("SUMMARY", `Error generating summary: ${error.message}`);
-    return `An animated diagram explaining ${concept}`;
+    return {
+      success: true,
+      imageUrl: `data:image/png;base64,${imageData.b64_json}`,
+      summary: `Diagram illustrating ${concept}`,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown";
+    return { success: false, error: msg };
   }
 }

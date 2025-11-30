@@ -53,14 +53,14 @@ export async function GET(req: Request) {
             const lines = `${text}`.split(/\r?\n/);
             const payload = lines.map((line) => `data: ${line}`).join("\n");
             controller.enqueue(`${payload}\n\n`);
-            console.log(`[DEBUG] Sent transcript`, { sessionId, text });
+            // Skip per-delta logging for performance
           } catch (error) {
             console.error(`[ERROR] Failed to send transcript`, { sessionId, error });
           }
         };
         
         const onTranscript = (text: string) => {
-          console.log(`[DEBUG] Received transcript event`, { sessionId, text });
+          // Skip per-delta logging for performance
           send(text);
         };
         const onDone = () => {

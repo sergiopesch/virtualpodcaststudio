@@ -53,7 +53,7 @@ export async function GET(req: Request) {
             const lines = `${text}`.split(/\r?\n/);
             const payload = lines.map((line) => `data: ${line}`).join("\n");
             controller.enqueue(`event: ${type}\n${payload}\n\n`);
-            console.log(`[DEBUG] Sent user transcript ${type}`, { sessionId, text });
+            // Skip per-delta logging for performance
           } catch (error) {
             console.error(`[ERROR] Failed to send user transcript`, { sessionId, error });
           }
@@ -62,29 +62,30 @@ export async function GET(req: Request) {
         const sendSignal = (type: 'speech-started' | 'speech-stopped') => {
           try {
             controller.enqueue(`event: ${type}\ndata: ok\n\n`);
-            console.log(`[DEBUG] Sent user speech signal`, { sessionId, type });
+            // Skip per-signal logging for performance
           } catch (error) {
             console.error(`[ERROR] Failed to send user speech signal`, { sessionId, type, error });
           }
         };
 
         const onUserTranscript = (text: string) => {
-          console.log(`[DEBUG] Received user transcript event`, { sessionId, text });
+          // Skip per-delta logging for performance
           send(text, 'complete');
         };
 
         const onUserTranscriptDelta = (text: string) => {
-          console.log(`[DEBUG] Received user transcript delta`, { sessionId, text });
+          // Skip per-delta logging for performance
           send(text, 'delta');
         };
 
         const onSpeechStarted = () => {
-          console.log(`[DEBUG] Received user speech started`, { sessionId });
+          // Speech events are important - log only these
+          console.log(`[INFO] User speech started`, { sessionId });
           sendSignal('speech-started');
         };
 
         const onSpeechStopped = () => {
-          console.log(`[DEBUG] Received user speech stopped`, { sessionId });
+          console.log(`[INFO] User speech stopped`, { sessionId });
           sendSignal('speech-stopped');
         };
 
