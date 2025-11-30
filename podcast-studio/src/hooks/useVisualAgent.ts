@@ -2,6 +2,13 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 
+// Debug logging helper - always logs to help diagnose issues
+function debugLog(stage: string, message: string, data?: Record<string, unknown>) {
+  const timestamp = new Date().toISOString().slice(11, 23);
+  const dataStr = data ? ` ${JSON.stringify(data)}` : "";
+  console.log(`[VISUAL-AGENT] [${timestamp}] [${stage}] ${message}${dataStr}`);
+}
+
 // Visual data for video/image visualization
 export type VisualStatus = "analyzing" | "generating" | "ready" | "error";
 export type VisualType = "diagram" | "illustration" | "chart" | "animation" | "video";
@@ -20,6 +27,9 @@ export interface VisualData {
   error?: string;
   generationTime?: number;
   provider?: VideoProvider;
+  // Pre-generation metadata
+  pregenerated?: boolean;
+  matchedFromCache?: boolean;
 }
 
 // Conversation context for better visual generation
@@ -29,6 +39,20 @@ export interface ConversationContext {
   conversationHistory: string; // Recent conversation for context
   paperTitle?: string;       // The paper being discussed (if any)
   paperTopic?: string;       // Main topic of the paper
+}
+
+// Pre-generated visual from paper analysis
+export interface PregeneratedVisual {
+  concept: string;
+  keywords: string[]; // Keywords to match in transcript
+  prompt: string;
+  videoUrl?: string;
+  thumbnailUrl?: string;
+  isVideo?: boolean;
+  generationTime?: number;
+  provider?: VideoProvider;
+  status: "pending" | "generating" | "ready" | "error";
+  error?: string;
 }
 
 interface VisualAgentConfig {
@@ -43,6 +67,8 @@ interface VisualAgentConfig {
   videoProvider?: VideoProvider;
   openaiApiKey?: string;
   googleApiKey?: string;
+  // Pre-generated visuals cache
+  pregeneratedVisuals?: PregeneratedVisual[];
 }
 
 interface AnalysisResult {
@@ -90,13 +116,14 @@ export function useVisualAgent(config: VisualAgentConfig) {
     enabled,
     apiKey,
     sessionId,
-    minTranscriptLength = 200,
-    minSecondsBetweenVisuals = 60,
-    onlyHighPriority = true,
+    minTranscriptLength = 100, // Lowered from 200 for faster triggering
+    minSecondsBetweenVisuals = 20, // Lowered from 60 for more visuals
+    onlyHighPriority = false, // Changed to false to allow more visuals
     onVisualReady,
     videoProvider = "google_veo",
     openaiApiKey,
     googleApiKey,
+    pregeneratedVisuals = [],
   } = config;
 
   const [visuals, setVisuals] = useState<VisualData[]>([]);
@@ -109,6 +136,22 @@ export function useVisualAgent(config: VisualAgentConfig) {
   const generatedConceptsRef = useRef<string[]>([]);
   const pendingAnalysisRef = useRef<AbortController | null>(null);
   const conversationHistoryRef = useRef<string>("");
+  const usedPregeneratedRef = useRef<Set<string>>(new Set());
+
+  // Log config on mount
+  useEffect(() => {
+    debugLog("CONFIG", "Visual agent initialized", {
+      enabled,
+      minTranscriptLength,
+      minSecondsBetweenVisuals,
+      onlyHighPriority,
+      videoProvider,
+      hasApiKey: !!apiKey,
+      hasOpenaiKey: !!openaiApiKey,
+      hasGoogleKey: !!googleApiKey,
+      pregeneratedCount: pregeneratedVisuals.length,
+    });
+  }, [enabled, minTranscriptLength, minSecondsBetweenVisuals, onlyHighPriority, videoProvider, apiKey, openaiApiKey, googleApiKey, pregeneratedVisuals.length]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -178,28 +221,60 @@ export function useVisualAgent(config: VisualAgentConfig) {
     const now = Date.now();
     const timeSinceLastVisual = (now - lastVisualTimeRef.current) / 1000;
     if (lastVisualTimeRef.current > 0 && timeSinceLastVisual < minSecondsBetweenVisuals) {
-      return { 
-        skip: true, 
-        reason: `Rate limited: ${Math.ceil(minSecondsBetweenVisuals - timeSinceLastVisual)}s until next visual` 
-      };
+      const reason = `Rate limited: ${Math.ceil(minSecondsBetweenVisuals - timeSinceLastVisual)}s until next visual`;
+      debugLog("SKIP", reason);
+      return { skip: true, reason };
     }
 
     // Deduplication: check if similar concept was already generated
     for (const existing of generatedConceptsRef.current) {
       if (conceptsSimilar(concept, existing)) {
-        return { skip: true, reason: `Similar to existing: "${existing}"` };
+        const reason = `Similar to existing: "${existing}"`;
+        debugLog("SKIP", reason);
+        return { skip: true, reason };
       }
     }
 
     return { skip: false };
   }, [minSecondsBetweenVisuals]);
 
+  // Check if a pre-generated visual matches the current concept
+  const findPregeneratedMatch = useCallback((text: string): PregeneratedVisual | null => {
+    if (pregeneratedVisuals.length === 0) return null;
+
+    const lowerText = text.toLowerCase();
+    
+    for (const pregenVisual of pregeneratedVisuals) {
+      // Skip if already used
+      if (usedPregeneratedRef.current.has(pregenVisual.concept)) continue;
+      
+      // Skip if not ready
+      if (pregenVisual.status !== "ready" || !pregenVisual.videoUrl) continue;
+      
+      // Check if any keyword matches
+      const matched = pregenVisual.keywords.some(keyword => 
+        lowerText.includes(keyword.toLowerCase())
+      );
+      
+      if (matched) {
+        debugLog("PREGEN_MATCH", `Found pre-generated visual for: ${pregenVisual.concept}`, {
+          matchedKeywords: pregenVisual.keywords.filter(k => lowerText.includes(k.toLowerCase())),
+        });
+        return pregenVisual;
+      }
+    }
+    
+    return null;
+  }, [pregeneratedVisuals]);
+
   const generateVisual = useCallback(
     async (concept: string, visualType: VisualType, prompt: string, context?: ConversationContext) => {
+      debugLog("GENERATE_START", `Starting generation for: "${concept}"`, { visualType });
+      
       // Check if we should skip
       const { skip, reason } = shouldSkipGeneration(concept);
       if (skip) {
-        console.log(`[VISUAL-AGENT] Skipping generation: ${reason}`);
+        debugLog("GENERATE_SKIP", `Skipping: ${reason}`);
         return;
       }
 
@@ -221,7 +296,11 @@ export function useVisualAgent(config: VisualAgentConfig) {
       setIsGenerating(true);
 
       try {
-        console.log(`[VISUAL-AGENT] Generating video for: "${concept}" using ${videoProvider}`);
+        debugLog("GENERATE_API", `Calling generate-video API for: "${concept}"`, { 
+          provider: videoProvider,
+          hasGoogleKey: !!googleApiKey,
+          hasOpenaiKey: !!(openaiApiKey || apiKey),
+        });
         
         // Use video generation endpoint with selected provider
         const response = await fetch("/api/visual-agent/generate-video", {
@@ -244,6 +323,10 @@ export function useVisualAgent(config: VisualAgentConfig) {
         const data: VideoGenerateResult = await response.json();
 
         if (!response.ok || !data.success) {
+          debugLog("GENERATE_ERROR", `API returned error`, { 
+            status: response.status, 
+            error: data.error,
+          });
           throw new Error(data.error || "Generation failed");
         }
 
@@ -258,7 +341,12 @@ export function useVisualAgent(config: VisualAgentConfig) {
 
         updateVisual(id, updatedVisual);
 
-        console.log(`[VISUAL-AGENT] ✓ Visual ready: "${concept}" via ${data.provider} (${(data.generationTime! / 1000).toFixed(1)}s)${data.fallback ? " [fallback]" : ""}`);
+        debugLog("GENERATE_SUCCESS", `✓ Visual ready: "${concept}"`, {
+          provider: data.provider,
+          generationTime: `${((data.generationTime || 0) / 1000).toFixed(1)}s`,
+          fallback: data.fallback,
+          hasVideoUrl: !!data.videoUrl,
+        });
 
         // Inject context to AI so it can reference the visual
         if (data.visualSummary) {
@@ -272,11 +360,12 @@ export function useVisualAgent(config: VisualAgentConfig) {
             );
           }
         }
-      } catch (error: any) {
-        console.error("[VISUAL-AGENT] Generation error:", error);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : "Failed to generate visual";
+        debugLog("GENERATE_FAIL", `Generation failed: ${errorMessage}`);
         updateVisual(id, {
           status: "error",
-          error: error.message || "Failed to generate visual",
+          error: errorMessage,
         });
         // Remove from concepts list so it can be retried
         generatedConceptsRef.current = generatedConceptsRef.current.filter(c => c !== concept);
@@ -287,6 +376,37 @@ export function useVisualAgent(config: VisualAgentConfig) {
     [apiKey, videoProvider, openaiApiKey, googleApiKey, shouldSkipGeneration, addVisual, updateVisual, injectVisualContext, onVisualReady]
   );
 
+  // Show a pre-generated visual instantly
+  const showPregeneratedVisual = useCallback((pregenVisual: PregeneratedVisual) => {
+    const id = `pregen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    
+    // Mark as used
+    usedPregeneratedRef.current.add(pregenVisual.concept);
+    generatedConceptsRef.current.push(pregenVisual.concept);
+    lastVisualTimeRef.current = Date.now();
+    
+    const visual: VisualData = {
+      id,
+      concept: pregenVisual.concept,
+      visualType: "video",
+      status: "ready",
+      timestamp: Date.now(),
+      videoUrl: pregenVisual.videoUrl,
+      thumbnailUrl: pregenVisual.thumbnailUrl,
+      isVideo: pregenVisual.isVideo,
+      generationTime: pregenVisual.generationTime,
+      provider: pregenVisual.provider,
+      pregenerated: true,
+      matchedFromCache: true,
+    };
+    
+    addVisual(visual);
+    debugLog("PREGEN_SHOW", `Instantly showing pre-generated visual: "${pregenVisual.concept}"`);
+    
+    // Inject context to AI
+    injectVisualContext(pregenVisual.concept, `Pre-generated visual showing ${pregenVisual.concept}`);
+  }, [addVisual, injectVisualContext]);
+
   /**
    * Analyze transcript with full conversation context
    * @param context - Full conversation context including user question and AI response
@@ -294,23 +414,49 @@ export function useVisualAgent(config: VisualAgentConfig) {
    */
   const analyzeTranscript = useCallback(
     async (context: ConversationContext, isStreaming: boolean = false) => {
-      if (!enabled || !context.aiResponse) return;
+      if (!enabled) {
+        debugLog("ANALYZE_SKIP", "Visual agent disabled");
+        return;
+      }
+      
+      if (!context.aiResponse) {
+        debugLog("ANALYZE_SKIP", "No AI response to analyze");
+        return;
+      }
 
       const { aiResponse, userQuestion, conversationHistory, paperTitle, paperTopic } = context;
 
+      debugLog("ANALYZE_CHECK", `Checking transcript`, {
+        aiResponseLength: aiResponse.length,
+        minRequired: minTranscriptLength,
+        isStreaming,
+        hasApiKey: !!apiKey,
+      });
+
       // Check minimum length
       if (aiResponse.length < minTranscriptLength) {
+        debugLog("ANALYZE_SKIP", `Transcript too short: ${aiResponse.length} < ${minTranscriptLength}`);
         return;
+      }
+
+      // FIRST: Check for pre-generated visual match (instant display!)
+      const pregeneratedMatch = findPregeneratedMatch(aiResponse);
+      if (pregeneratedMatch) {
+        debugLog("PREGEN_HIT", `Found pre-generated match: "${pregeneratedMatch.concept}"`);
+        showPregeneratedVisual(pregeneratedMatch);
+        return; // Don't also trigger real-time generation
       }
 
       // Create a hash of the transcript to avoid re-analyzing the same text
       const hash = aiResponse.slice(-500) + userQuestion.slice(0, 100);
       if (hash === lastAnalyzedHashRef.current) {
+        debugLog("ANALYZE_SKIP", "Already analyzed this text");
         return;
       }
 
       // If still streaming and transcript is short, wait for more content
       if (isStreaming && aiResponse.length < minTranscriptLength * 1.5) {
+        debugLog("ANALYZE_SKIP", `Still streaming, waiting for more content: ${aiResponse.length} < ${minTranscriptLength * 1.5}`);
         return;
       }
 
@@ -327,7 +473,10 @@ export function useVisualAgent(config: VisualAgentConfig) {
       setIsAnalyzing(true);
 
       try {
-        console.log(`[VISUAL-AGENT] Analyzing with context - Q: "${userQuestion.slice(0, 50)}..." A: ${aiResponse.length} chars`);
+        debugLog("ANALYZE_START", `Analyzing transcript`, {
+          question: userQuestion.slice(0, 50),
+          responseLength: aiResponse.length,
+        });
         
         const response = await fetch("/api/visual-agent/analyze", {
           method: "POST",
@@ -344,20 +493,23 @@ export function useVisualAgent(config: VisualAgentConfig) {
           signal: abortController.signal,
         });
 
-        if (abortController.signal.aborted) return;
+        if (abortController.signal.aborted) {
+          debugLog("ANALYZE_ABORT", "Analysis was aborted");
+          return;
+        }
 
         const result: AnalysisResult = await response.json();
 
-        console.log(`[VISUAL-AGENT] Analysis result:`, {
+        debugLog("ANALYZE_RESULT", `Analysis complete`, {
           shouldGenerate: result.shouldGenerate,
           concept: result.concept,
           priority: result.priority,
-          reason: result.reason?.slice(0, 50),
+          reason: result.reason?.slice(0, 80),
         });
 
         // Cost control: only generate if high priority (when enabled)
         if (onlyHighPriority && result.priority !== "high") {
-          console.log(`[VISUAL-AGENT] Skipping non-high priority: ${result.priority}`);
+          debugLog("ANALYZE_SKIP", `Skipping non-high priority: ${result.priority}`);
           return;
         }
 
@@ -367,24 +519,28 @@ export function useVisualAgent(config: VisualAgentConfig) {
           result.visualType &&
           result.prompt
         ) {
+          debugLog("ANALYZE_TRIGGER", `Triggering generation for: "${result.concept}"`);
           // Start generation with full context
           generateVisual(result.concept, result.visualType, result.prompt, context);
+        } else {
+          debugLog("ANALYZE_NO_VISUAL", `No visual needed: ${result.reason?.slice(0, 50)}`);
         }
 
         // Update conversation history for next analysis
         conversationHistoryRef.current = `User: ${userQuestion}\nAI: ${aiResponse.slice(-500)}`;
-      } catch (error: any) {
-        if (error.name === 'AbortError') {
-          console.log("[VISUAL-AGENT] Analysis aborted (new analysis started)");
+      } catch (error: unknown) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          debugLog("ANALYZE_ABORT", "Analysis aborted (new analysis started)");
         } else {
-          console.error("[VISUAL-AGENT] Analysis error:", error);
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          debugLog("ANALYZE_ERROR", `Analysis failed: ${errorMessage}`);
         }
       } finally {
         setIsAnalyzing(false);
         pendingAnalysisRef.current = null;
       }
     },
-    [enabled, apiKey, minTranscriptLength, onlyHighPriority, generateVisual]
+    [enabled, apiKey, minTranscriptLength, onlyHighPriority, generateVisual, findPregeneratedMatch, showPregeneratedVisual]
   );
 
   const reset = useCallback(() => {

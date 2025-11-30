@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserSettingsDialog } from "@/components/settings/user-settings-dialog";
-import { useVisualAgent } from "@/hooks/useVisualAgent";
+import { useVisualAgent, type PregeneratedVisual, type VideoProvider as VisualVideoProvider } from "@/hooks/useVisualAgent";
 import { VisualCard } from "@/components/visual-agent/VisualCard";
 
 interface SelectedPaper {
@@ -158,10 +158,13 @@ const StudioPage: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [visualAgentEnabled, setVisualAgentEnabled] = useState(true);
+  const [pregeneratedVisuals, setPregeneratedVisuals] = useState<PregeneratedVisual[]>([]);
+  const [isPregenerating, setIsPregenerating] = useState(false);
 
   // Visual Agent hook - analyzes conversation and generates visual explanations
   // Runs in PARALLEL with AI speaking for faster visual delivery
   // When visual is ready, injects context to AI so it can reference the visual
+  // Pre-generated visuals are shown INSTANTLY when matched
   const {
     visuals,
     isAnalyzing: isVisualAgentAnalyzing,
@@ -173,13 +176,15 @@ const StudioPage: React.FC = () => {
     enabled: visualAgentEnabled && phase === "live",
     apiKey: apiKeys.openai, // OpenAI for analysis (always use OpenAI for text analysis)
     sessionId, // Pass sessionId so visual agent can inject context to AI
-    minTranscriptLength: 200, // Analyze after 200 chars of AI text
-    minSecondsBetweenVisuals: 45, // At most 1 visual per 45 seconds (cost control)
-    onlyHighPriority: true, // Only generate for truly complex concepts (cost control)
+    minTranscriptLength: 100, // Lowered: Analyze after 100 chars of AI text
+    minSecondsBetweenVisuals: 20, // Lowered: At most 1 visual per 20 seconds
+    onlyHighPriority: false, // Changed: Generate for all priorities
     // Multi-provider video settings
-    videoProvider, // User-selected video provider (Google Veo or OpenAI Sora)
+    videoProvider: videoProvider as VisualVideoProvider, // User-selected video provider (Google Veo or OpenAI Sora)
     openaiApiKey: apiKeys.openai, // For Sora & DALL-E fallback
     googleApiKey: apiKeys.google, // For Veo
+    // Pre-generated visuals for instant display
+    pregeneratedVisuals,
   });
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -942,6 +947,164 @@ const StudioPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchPaperContext checks these internally to avoid re-fetching
   }, [currentPaper?.id, currentPaper?.arxiv_url]);
 
+  // Pre-generate visuals when paper context is loaded
+  // This happens in the background before the session starts
+  useEffect(() => {
+    const pregenerateVisuals = async () => {
+      // Only run if we have a paper with text loaded
+      if (!currentPaper?.title || !currentPaper?.abstract) {
+        console.log("[PREGENERATE] No paper loaded, skipping pre-generation");
+        return;
+      }
+
+      // Only run if API key is available
+      if (!apiKeys.openai) {
+        console.log("[PREGENERATE] No OpenAI API key, skipping pre-generation");
+        return;
+      }
+
+      // Only run if visual agent is enabled
+      if (!visualAgentEnabled) {
+        console.log("[PREGENERATE] Visual agent disabled, skipping pre-generation");
+        return;
+      }
+
+      // Don't re-run if already done for this paper
+      if (pregeneratedVisuals.length > 0) {
+        console.log("[PREGENERATE] Already have pre-generated visuals, skipping");
+        return;
+      }
+
+      // Don't run if already in progress
+      if (isPregenerating) {
+        return;
+      }
+
+      setIsPregenerating(true);
+      console.log("[PREGENERATE] Starting pre-generation for:", currentPaper.title.slice(0, 50));
+
+      try {
+        // Step 1: Analyze paper to identify key concepts
+        const analyzeResponse = await fetch("/api/visual-agent/pregenerate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            paperTitle: currentPaper.title,
+            paperAbstract: currentPaper.abstract,
+            paperFullText: currentPaper.fullText,
+            apiKey: apiKeys.openai,
+            maxConcepts: 3, // Pre-generate top 3 concepts
+          }),
+        });
+
+        if (!analyzeResponse.ok) {
+          console.warn("[PREGENERATE] Analysis failed:", analyzeResponse.status);
+          return;
+        }
+
+        const analysisResult = await analyzeResponse.json();
+        
+        if (!analysisResult.success || !analysisResult.concepts?.length) {
+          console.log("[PREGENERATE] No concepts identified for pre-generation");
+          return;
+        }
+
+        console.log("[PREGENERATE] Identified concepts:", analysisResult.concepts.map((c: { concept: string }) => c.concept));
+
+        // Step 2: Initialize pre-generated visuals with "generating" status
+        const initialVisuals: PregeneratedVisual[] = analysisResult.concepts.map((concept: { concept: string; keywords: string[]; prompt: string }) => ({
+          concept: concept.concept,
+          keywords: concept.keywords,
+          prompt: concept.prompt,
+          status: "generating" as const,
+        }));
+
+        setPregeneratedVisuals(initialVisuals);
+
+        // Step 3: Generate videos for each concept in parallel
+        const videoProvider = apiKeys.google ? "google_veo" : "openai_sora";
+        
+        const generatePromises = analysisResult.concepts.map(async (concept: { concept: string; keywords: string[]; prompt: string }, index: number) => {
+          try {
+            console.log(`[PREGENERATE] Generating video ${index + 1}/${analysisResult.concepts.length}: "${concept.concept}"`);
+            
+            const videoResponse = await fetch("/api/visual-agent/generate-video", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                prompt: concept.prompt,
+                concept: concept.concept,
+                videoProvider,
+                openaiApiKey: apiKeys.openai,
+                googleApiKey: apiKeys.google,
+                paperTitle: currentPaper.title,
+              }),
+            });
+
+            const videoResult = await videoResponse.json();
+
+            if (videoResult.success && videoResult.videoUrl) {
+              console.log(`[PREGENERATE] ✓ Video ready for: "${concept.concept}" (${((videoResult.generationTime || 0) / 1000).toFixed(1)}s)`);
+              
+              // Update the specific visual in state
+              setPregeneratedVisuals((prev) =>
+                prev.map((v) =>
+                  v.concept === concept.concept
+                    ? {
+                        ...v,
+                        status: "ready" as const,
+                        videoUrl: videoResult.videoUrl,
+                        thumbnailUrl: videoResult.thumbnailUrl,
+                        isVideo: !videoResult.fallback,
+                        generationTime: videoResult.generationTime,
+                        provider: videoResult.provider,
+                      }
+                    : v
+                )
+              );
+            } else {
+              console.warn(`[PREGENERATE] ✗ Failed for: "${concept.concept}"`, videoResult.error);
+              setPregeneratedVisuals((prev) =>
+                prev.map((v) =>
+                  v.concept === concept.concept
+                    ? { ...v, status: "error" as const, error: videoResult.error }
+                    : v
+                )
+              );
+            }
+          } catch (error) {
+            console.error(`[PREGENERATE] Error generating video for: "${concept.concept}"`, error);
+            setPregeneratedVisuals((prev) =>
+              prev.map((v) =>
+                v.concept === concept.concept
+                  ? { ...v, status: "error" as const, error: "Generation failed" }
+                  : v
+              )
+            );
+          }
+        });
+
+        // Wait for all videos to complete
+        await Promise.all(generatePromises);
+        console.log("[PREGENERATE] ✓ Pre-generation complete");
+
+      } catch (error) {
+        console.error("[PREGENERATE] Error:", error);
+      } finally {
+        setIsPregenerating(false);
+      }
+    };
+
+    // Trigger pre-generation when paper is loaded and has text
+    // Use a small delay to not block the initial render
+    const timeoutId = setTimeout(() => {
+      pregenerateVisuals();
+    }, 1000);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only run when paper changes or visual agent toggles
+  }, [currentPaper?.id, currentPaper?.fullText, apiKeys.openai, apiKeys.google, visualAgentEnabled]);
+
   useEffect(() => {
     let interval: number | undefined;
     if (phase === "live") {
@@ -1679,6 +1842,18 @@ const StudioPage: React.FC = () => {
                         Context Ready
                       </div>
                     )}
+                    {visualAgentEnabled && isPregenerating && (
+                      <div className="flex items-center gap-1.5 md:gap-2 text-[10px] md:text-xs text-cyan-400/80 font-medium bg-cyan-900/20 px-2 py-1 rounded-full border border-cyan-900/30 animate-pulse">
+                        <span className="size-1.5 rounded-full bg-cyan-500" />
+                        Pre-generating visuals…
+                      </div>
+                    )}
+                    {visualAgentEnabled && !isPregenerating && pregeneratedVisuals.filter(v => v.status === "ready").length > 0 && (
+                      <div className="flex items-center gap-1.5 md:gap-2 text-[10px] md:text-xs text-cyan-400/80 font-medium bg-cyan-900/20 px-2 py-1 rounded-full border border-cyan-900/30">
+                        <span className="size-1.5 rounded-full bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.5)]" />
+                        {pregeneratedVisuals.filter(v => v.status === "ready").length} visuals ready
+                      </div>
+                    )}
                   </CardHeader>
                   <CardContent className="pt-4 md:pt-6 space-y-4 md:space-y-6">
                     {paperLoadError ? (
@@ -2144,26 +2319,34 @@ const StudioPage: React.FC = () => {
                               : "Session Idle"}
                           </span>
                         </div>
-                        {visualAgentEnabled && phase === "live" && (
+                        {visualAgentEnabled && (
                           <div className="flex items-center gap-2">
                             <div className={cn(
                               "size-2 rounded-full transition-colors duration-500",
-                              isVisualAgentGenerating
-                                ? "bg-purple-500 animate-pulse shadow-[0_0_8px_rgba(168,85,247,0.5)]"
-                                : isVisualAgentAnalyzing 
-                                  ? "bg-purple-400 animate-pulse" 
-                                  : visuals.length > 0 
-                                    ? "bg-purple-400" 
-                                    : "bg-purple-500/30"
+                              isPregenerating
+                                ? "bg-cyan-500 animate-pulse shadow-[0_0_8px_rgba(6,182,212,0.5)]"
+                                : isVisualAgentGenerating
+                                  ? "bg-purple-500 animate-pulse shadow-[0_0_8px_rgba(168,85,247,0.5)]"
+                                  : isVisualAgentAnalyzing 
+                                    ? "bg-purple-400 animate-pulse" 
+                                    : pregeneratedVisuals.filter(v => v.status === "ready").length > 0
+                                      ? "bg-cyan-400"
+                                      : visuals.length > 0 
+                                        ? "bg-purple-400" 
+                                        : "bg-purple-500/30"
                             )} />
                             <span className="hidden sm:inline">
-                              {isVisualAgentGenerating
-                                ? "Generating…"
-                                : isVisualAgentAnalyzing 
-                                  ? "Analyzing…" 
-                                  : visuals.length > 0 
-                                    ? `${visuals.length} visual${visuals.length > 1 ? 's' : ''}` 
-                                    : "Visual Agent"}
+                              {isPregenerating
+                                ? `Pre-generating ${pregeneratedVisuals.filter(v => v.status === "generating").length}/${pregeneratedVisuals.length}…`
+                                : isVisualAgentGenerating
+                                  ? "Generating…"
+                                  : isVisualAgentAnalyzing 
+                                    ? "Analyzing…" 
+                                    : pregeneratedVisuals.filter(v => v.status === "ready").length > 0
+                                      ? `${pregeneratedVisuals.filter(v => v.status === "ready").length} ready`
+                                      : visuals.length > 0 
+                                        ? `${visuals.length} visual${visuals.length > 1 ? 's' : ''}` 
+                                        : "Visual Agent"}
                             </span>
                           </div>
                         )}
