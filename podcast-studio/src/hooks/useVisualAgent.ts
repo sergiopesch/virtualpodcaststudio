@@ -187,7 +187,7 @@ export function useVisualAgent(config: VisualAgentConfig) {
         // Other errors - log but don't worry about it
         console.log(`[VISUAL-AGENT] Context injection skipped: ${data.error || data.warning || 'unknown'} (visual still works)`);
       }
-    } catch (error) {
+    } catch {
       // Network errors - just log, visual still works
       console.log("[VISUAL-AGENT] Context injection failed (network error) - visual still works");
     }

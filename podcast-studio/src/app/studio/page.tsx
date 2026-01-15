@@ -733,22 +733,22 @@ const StudioPage: React.FC = () => {
         try {
           const bytes = base64ToUint8Array(event.data);
           
-          // Reset interrupt flag when we receive audio - the AI is actively responding
-          if (isAiInterruptedRef.current) {
-            isAiInterruptedRef.current = false;
-          }
-          
-          if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
-            aiAudioChunksRef.current.push(bytes);
-          }
-          
-          // Ensure context is running before playing
-          if (audioContextRef.current?.state === 'suspended') {
+      // Reset interrupt flag when we receive audio - the AI is actively responding
+      if (isAiInterruptedRef.current) {
+        isAiInterruptedRef.current = false;
+      }
+      
+      if (aiAudioChunksRef.current.length < MAX_AUDIO_CHUNKS) {
+        aiAudioChunksRef.current.push(bytes);
+      }
+      
+      // Ensure context is running before playing
+      if (audioContextRef.current?.state === 'suspended') {
             audioContextRef.current.resume().catch(() => {});
-          }
-          
-          void playAiAudioChunk(bytes);
-          setIsAiSpeaking(true);
+      }
+      
+      void playAiAudioChunk(bytes);
+      setIsAiSpeaking(true);
         } catch (e) {
           console.error("[ERROR] Failed to process AI audio delta", e);
         }

@@ -8,8 +8,8 @@ below the AI's text response.
 
 **Supported Video Providers:**
 
-- **Google Veo 3.1** (Recommended) - High-quality video generation via Gemini API
-- **OpenAI Sora** - OpenAI's video generation model
+- **Google Veo 3.0** (Implemented) - High-quality video generation via Gemini API
+- **OpenAI Sora** - Not currently implemented (planned for future)
 
 All providers fall back to **DALL-E 3** for static image generation when video fails.
 
@@ -30,13 +30,13 @@ src/app/api/visual-agent/
 │  Dr. Sarah: "Transformers use attention mechanisms to weigh..."             │
 │       │                                                                      │
 │       ├──► Visual Agent: Detects complex concept                            │
-│       │    └──► Generates 4s video via [Selected Provider]                  │
-│       │        (Google Veo 2 or OpenAI Sora)                                │
+│       │    └──► Generates 3s video via Google Veo 3                         │
+│       │        (Falls back to DALL-E 3 image if video fails)                │
 │       │                                                                      │
 │  ┌────────────────────────────────────────────────────────────┐             │
 │  │  🎬 Attention Mechanism                              [▶️] │             │
 │  │  ┌─────────────────────────────────────────────────────┐  │             │
-│  │  │  [4-second animated video explaining the concept]  │  │             │
+│  │  │  [3-second animated video explaining the concept]  │  │             │
 │  │  └─────────────────────────────────────────────────────┘  │             │
 │  │  Generated in 8.2s via Google Veo                         │             │
 │  └────────────────────────────────────────────────────────────┘             │
@@ -50,13 +50,13 @@ src/app/api/visual-agent/
 
 Users can configure video generation in **Workspace Settings**:
 
-1. **Video Model Selector** - Choose between:
-   - Google Veo 2 (Recommended)
-   - OpenAI Sora
+1. **Video Model Selector** - Currently only Google Veo 3 is available:
+   - Google Veo 3 (Implemented)
+   - OpenAI Sora (Not yet implemented)
 
 2. **API Keys**:
    - **OpenAI API key** (required for voice, text, and Sora video)
-   - **Google API key** (required for Veo 2 video)
+   - **Google API key** (required for Veo 3 video)
 
 The selected video provider determines which API key is used for video generation.
 
@@ -137,24 +137,34 @@ Generates a video using the selected provider with DALL-E 3 fallback.
 {
   "prompt": "Educational diagram animation explaining attention mechanism...",
   "concept": "Attention Mechanism",
-  "videoProvider": "google_veo", // "google_veo" | "openai_sora"
   "openaiApiKey": "sk-...",      // For Sora & DALL-E fallback
-  "googleApiKey": "AIza..."      // For Veo
+  "googleApiKey": "AIza...",     // For Veo (if provided, Veo is tried first)
+  "apiKey": "sk-...",            // Alternative OpenAI key (fallback)
+  "userQuestion": "How does attention work?", // Optional context
+  "aiResponse": "The attention mechanism...", // Optional context
+  "paperTitle": "Attention Is All You Need"  // Optional context
 }
 ```
+
+**Note:** The provider is determined automatically:
+
+- If `googleApiKey` is provided, Google Veo 3 is tried first
+- If Veo fails or no Google key, falls back to DALL-E 3 (requires OpenAI key)
+- OpenAI Sora is not currently implemented in this endpoint
 
 **Response (Video success):**
 
 ```typescript
 {
   "success": true,
-  "videoUrl": "https://...",
-  "thumbnailUrl": "https://...",
+  "videoUrl": "data:video/mp4;base64,...", // Base64-encoded video or URL
   "concept": "Attention Mechanism",
-  "visualSummary": "Query, key, and value vectors flowing through attention layers",
-  "generationTime": 45000,
+  "visualSummary": "Animated visualization: Attention Mechanism",
+  "generationTime": 12000,
   "fallback": false,
-  "provider": "google_veo"
+  "provider": "google_veo",
+  "isProxied": true, // true if base64, false if external URL
+  "modelUsed": "veo-3.0-generate-preview"
 }
 ```
 
@@ -163,29 +173,34 @@ Generates a video using the selected provider with DALL-E 3 fallback.
 ```typescript
 {
   "success": true,
-  "videoUrl": "https://...", // Static image URL
+  "videoUrl": "data:image/png;base64,...", // Static image as base64
   "concept": "Attention Mechanism",
-  "visualSummary": "A diagram showing attention weights between tokens",
+  "visualSummary": "Diagram illustrating Attention Mechanism",
   "generationTime": 3500,
   "fallback": true,
-  "provider": "google_veo"
+  "provider": "dall-e-3",
+  "isProxied": true,
+  "modelUsed": "dall-e-3"
 }
 ```
 
 ## Provider Configuration
 
-### Google Veo 3.1 (Recommended)
+### Google Veo 3.0 (Recommended)
 
 | Setting | Value | Reason |
-|---------|-------|--------|
-| Model | `veo-3.1-fast-generate-preview` | Fastest Veo model (~10-20s) |
-| Duration | 5 seconds | Optimal for speed |
+| ------- | ----- | ------ |
+| Model | `veo-3.0-generate-preview` | Latest Veo 3 model (~10-20s) |
+| Duration | 3 seconds | Shorter = faster generation |
 | Resolution | 720p | Standard for Veo 3 |
 | Aspect Ratio | 16:9 | Widescreen display |
 
-> **Speed optimization** — The `/api/visual-agent/generate-video` endpoint uses `veo-3.1-fast-generate-preview` for fastest generation (~10-20s). Falls back to `veo-3.1-generate-preview` then `veo-3.0-generate-preview` if unavailable. Override with `GOOGLE_VEO_FAST_MODEL`, `GOOGLE_VEO_MODEL`, and `GOOGLE_VEO_STABLE_MODEL` environment variables.
+> **Speed optimization** — The `/api/visual-agent/generate-video` endpoint uses `veo-3.0-generate-preview` for fastest generation (~10-20s). Falls back to `veo-2.0-generate-001` if unavailable, then to Imagen 3 for image fallback.
 
-**API Endpoint:** `https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:predictLongRunning`
+**API Endpoints:**
+
+- Primary: `https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-preview:generateContent`
+- Fallback: `https://generativelanguage.googleapis.com/v1beta/models/veo-3.0-generate-preview:predictLongRunning`
 
 **Features:**
 
@@ -195,28 +210,29 @@ Generates a video using the selected provider with DALL-E 3 fallback.
 
 ### OpenAI Sora
 
-| Setting | Value | Reason |
-|---------|-------|--------|
-| Model | `sora` | Base model for cost efficiency |
-| Duration | 4 seconds | Shortest practical loop |
-| Resolution | 480p | Minimum for cost savings |
+> **Note:** Sora is not currently implemented in the codebase. The endpoint only supports Google Veo 3 with DALL-E 3 fallback.
 
-**API Endpoint:** `https://api.openai.com/v1/videos/generations`
+**Planned Implementation:**
 
-**Note:** Sora API availability varies by account. Falls back to DALL-E 3 if unavailable.
+- Model: `sora` (when available)
+- Duration: 4 seconds
+- Resolution: 480p
+- API Endpoint: `https://api.openai.com/v1/videos/generations`
+
+**Current Status:** Only Google Veo 3 is implemented. All video generation uses Veo 3, falling back to DALL-E 3 images if video generation fails.
 
 ## Cost & Speed Optimization
 
-| Provider | Estimated Cost | Duration | Generation Time |
-|----------|---------------|----------|-----------------|
-| Google Veo 3 | ~$0.10-0.25 | 5s | ~10-20s |
-| OpenAI Sora | ~$0.40 (4s × $0.10/s) | 4s | ~30-60s |
-| DALL-E 3 fallback | ~$0.04 | static | ~3-5s |
-| Analysis (GPT-4o-mini) | ~$0.001 | N/A | ~1-2s |
+| Provider | Estimated Cost | Duration | Generation Time | Status |
+| -------- | -------------- | -------- | --------------- | ------ |
+| Google Veo 3 | ~$0.10-0.25 | 3s | ~10-20s | ✅ Implemented |
+| OpenAI Sora | ~$0.40 (4s × $0.10/s) | 4s | ~30-60s | ❌ Not implemented |
+| DALL-E 3 fallback | ~$0.04 | static | ~3-5s | ✅ Implemented |
+| Analysis (GPT-4o-mini) | ~$0.001 | N/A | ~1-2s | ✅ Implemented |
 
 **Cost Controls in `useVisualAgent`:**
 
-- `minSecondsBetweenVisuals`: 45 seconds (rate limiting)
+- `minSecondsBetweenVisuals`: 20 seconds (rate limiting, default)
 - `onlyHighPriority`: true (only generate for complex concepts)
 - Concept deduplication (avoid regenerating similar visuals)
 
@@ -261,13 +277,13 @@ const {
   enabled: true,
   apiKey: "sk-...",              // OpenAI for analysis
   sessionId: "session_123",      // Required for context injection
-  minTranscriptLength: 200,
-  minSecondsBetweenVisuals: 45,
+  minTranscriptLength: 150,
+  minSecondsBetweenVisuals: 20,
   onlyHighPriority: true,
   // Multi-provider settings
-  videoProvider: "google_veo",   // Selected provider
-  openaiApiKey: "sk-...",        // For Sora & fallback
-  googleApiKey: "AIza...",       // For Veo
+  videoProvider: "google_veo",   // Currently only "google_veo" is supported
+  openaiApiKey: "sk-...",        // For DALL-E fallback
+  googleApiKey: "AIza...",       // For Veo 3
 });
 ```
 
@@ -354,9 +370,9 @@ IMPORTANT: In your NEXT response, briefly acknowledge this visual.
 
 **OpenAI Sora:**
 
-- Sora API may not be available to all accounts yet
-- Check for "Sora API not available" in logs
-- Falls back to DALL-E 3 automatically
+- Sora is not currently implemented in the codebase
+- Only Google Veo 3 is supported for video generation
+- All requests fall back to DALL-E 3 if video generation fails
 
 ### Fallback to image
 
@@ -372,7 +388,8 @@ IMPORTANT: In your NEXT response, briefly acknowledge this visual.
 
 ### Generation takes too long
 
-- Google Veo 3 typically generates in 10-20 seconds
+- Google Veo 3.0 typically generates in 10-20 seconds
 - If taking longer, check your API key has Veo access enabled
 - The UI shows "Generating video..." during this time
 - DALL-E fallback is faster (~3-5 seconds) if video fails
+- Video duration is set to 3 seconds for faster generation

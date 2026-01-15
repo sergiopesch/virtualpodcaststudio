@@ -131,13 +131,13 @@ export function Inspector({ selectedClipIds, clips, onUpdateClip }: InspectorPro
                <div className="space-y-3 pt-4 border-t border-border/50">
                   <h3 className="text-xs font-semibold uppercase text-muted-foreground">Visual Style</h3>
                    <div className="grid grid-cols-2 gap-2">
-                      {["talking-head", "paper-visual", "diagram", "overlay"].map(style => (
+                      {(["talking-head", "paper-visual", "diagram", "overlay"] as const).map(style => (
                           <Button 
                             key={style}
                             variant={selectedClip.visualStyle === style ? "secondary" : "outline"}
                             size="sm"
                             className="text-[10px] h-7"
-                            onClick={() => onUpdateClip(selectedClip.id, { visualStyle: style as any })}
+                            onClick={() => onUpdateClip(selectedClip.id, { visualStyle: style })}
                           >
                             {style.replace("-", " ")}
                           </Button>

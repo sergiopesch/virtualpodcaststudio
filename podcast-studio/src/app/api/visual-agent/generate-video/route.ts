@@ -237,41 +237,41 @@ async function generateWithVeo3(
             aspectRatio: "16:9",
             durationSeconds: 3, // 3s for faster generation
             personGeneration: "allow_adult",
-          }
+            }
         };
       } else {
         payload = {
-          prompt,
-          config: {
-            aspectRatio: "16:9",
+            prompt,
+            config: {
+              aspectRatio: "16:9",
             durationSeconds: 3,
-          }
-        };
+            }
+          };
       }
 
       const response = await fetch(`${endpoint.url}?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        const status = response.status;
+    if (!response.ok) {
+      const errorText = await response.text();
+      const status = response.status;
         log("VEO3_ERROR", `${status}: ${errorText.slice(0, 150)}`);
-        
-        if (status === 403 || status === 404) {
+      
+      if (status === 403 || status === 404) {
           // Skip to next endpoint quickly
           continue;
-        }
-        continue;
       }
+      continue;
+    }
 
-      const data = await response.json();
+    const data = await response.json();
       log("VEO3_RESPONSE", "Got response", { keys: Object.keys(data) });
 
       // Check for long-running operation
-      if (data.name) {
+    if (data.name) {
         log("VEO3_PENDING", `Operation started: ${data.name}`);
         // Use faster polling for real-time app
         const pollResult = await pollOperation(apiKey, data.name, 30); // 30 max attempts = ~45s timeout
@@ -279,7 +279,7 @@ async function generateWithVeo3(
           return { ...pollResult, modelUsed: endpoint.model };
         }
         if (pollResult.error) {
-          log("VEO3_POLL_ERR", pollResult.error);
+             log("VEO3_POLL_ERR", pollResult.error);
         }
         continue;
       }
@@ -288,8 +288,8 @@ async function generateWithVeo3(
       const mediaUrl = findVideoUrl(data) || findImageUrl(data);
       if (mediaUrl) {
         const base64 = await downloadAsBase64(mediaUrl, apiKey);
-        return {
-          success: true,
+      return {
+        success: true,
           videoUrl: base64 || mediaUrl,
           modelUsed: endpoint.model 
         };
@@ -438,7 +438,7 @@ function findImageUrl(data: Record<string, unknown>): string | null {
       }
     }
   }
-  
+
   return null;
 }
 

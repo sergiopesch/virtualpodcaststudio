@@ -244,10 +244,11 @@ Generate a 1-sentence description.`,
       visualSummary,
       generationTime: elapsed,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[VISUAL-AGENT] Generation error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to generate scene", details: error?.message },
+      { error: "Failed to generate scene", details: errorMessage },
       { status: 500 }
     );
   }

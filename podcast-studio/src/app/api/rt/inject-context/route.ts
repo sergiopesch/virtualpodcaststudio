@@ -74,21 +74,23 @@ export async function POST(request: NextRequest) {
           { status: 200 } // Return 200 but with success: false - visual still works
         );
       }
-    } catch (injectError: any) {
+    } catch (injectError: unknown) {
       console.error(`[INJECT-CONTEXT] Error calling injectContext:`, injectError);
+      const errorMessage = injectError instanceof Error ? injectError.message : String(injectError);
       return NextResponse.json(
         { 
           error: "Error during context injection", 
-          details: injectError?.message,
+          details: errorMessage,
           success: false 
         },
         { status: 200 } // Return 200 but with success: false - visual still works
       );
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[INJECT-CONTEXT] Unhandled error:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to inject context", details: error?.message },
+      { error: "Failed to inject context", details: errorMessage },
       { status: 500 }
     );
   }

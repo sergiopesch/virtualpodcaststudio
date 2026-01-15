@@ -63,7 +63,7 @@ Generate a brief description the AI host can use to reference this visual.`,
 export async function POST(request: NextRequest) {
   try {
     const body: GenerateRequest = await request.json();
-    const { prompt, concept, visualType, originalExplanation, apiKey } = body;
+    const { prompt, concept, visualType, apiKey } = body;
 
     if (!prompt) {
       return NextResponse.json(
@@ -132,19 +132,23 @@ export async function POST(request: NextRequest) {
       visualSummary, // NEW: Summary for AI to reference
       generationTime: elapsed,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[VISUAL-AGENT] Generation error:", error);
     
     // Handle specific OpenAI errors
-    if (error?.error?.code === "content_policy_violation") {
-      return NextResponse.json(
-        { error: "Content policy violation - prompt was rejected", code: "policy_violation" },
-        { status: 400 }
-      );
+    if (error && typeof error === 'object' && 'error' in error) {
+      const openaiError = error as { error?: { code?: string } };
+      if (openaiError.error?.code === "content_policy_violation") {
+        return NextResponse.json(
+          { error: "Content policy violation - prompt was rejected", code: "policy_violation" },
+          { status: 400 }
+        );
+      }
     }
 
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: "Failed to generate image", details: error?.message },
+      { error: "Failed to generate image", details: errorMessage },
       { status: 500 }
     );
   }

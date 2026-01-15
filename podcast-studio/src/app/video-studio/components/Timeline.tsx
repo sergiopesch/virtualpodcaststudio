@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useCallback } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { VideoClip, VideoProjectData, DragState, DragMode, ClipType, MediaAsset } from "../types";
 import { TRACK_HEIGHT, getClipTypeIcon } from "../utils";
@@ -71,7 +71,7 @@ export function Timeline({
       }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handleMouseMove = React.useCallback((e: MouseEvent) => {
       if (isDraggingPlayhead) {
           const rect = timelineRef.current?.getBoundingClientRect();
           if (!rect) return;
@@ -101,26 +101,26 @@ export function Timeline({
                }
            }
       }
-  };
+  }, [isDraggingPlayhead, draggingClip, pixelsPerSecond, onSeek, onClipMove, onClipTrim]);
 
-  const handleMouseUp = () => {
+  const handleMouseUp = React.useCallback(() => {
       setIsDraggingPlayhead(false);
       setDraggingClip(null);
-  };
+  }, []);
 
   useEffect(() => {
       if (isDraggingPlayhead || draggingClip) {
-          window.addEventListener('mousemove', handleMouseMove as any);
+          window.addEventListener('mousemove', handleMouseMove);
           window.addEventListener('mouseup', handleMouseUp);
       } else {
-          window.removeEventListener('mousemove', handleMouseMove as any);
+          window.removeEventListener('mousemove', handleMouseMove);
           window.removeEventListener('mouseup', handleMouseUp);
       }
       return () => {
-          window.removeEventListener('mousemove', handleMouseMove as any);
+          window.removeEventListener('mousemove', handleMouseMove);
           window.removeEventListener('mouseup', handleMouseUp);
       };
-  }, [isDraggingPlayhead, draggingClip]);
+  }, [isDraggingPlayhead, draggingClip, handleMouseMove, handleMouseUp]);
 
 
   const handleDragOver = (e: React.DragEvent) => {

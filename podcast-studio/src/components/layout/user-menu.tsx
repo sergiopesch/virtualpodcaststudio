@@ -556,7 +556,7 @@ export function UserMenu() {
                   </span>
                 </div>
                 <p className="text-[10px] text-gray-500 leading-tight">
-                  Google's latest • 5-8 sec videos
+                  Google&apos;s latest • 5-8 sec videos
                 </p>
                 <p className="text-[10px] text-gray-400 mt-1">
                   Uses: Google AI key
