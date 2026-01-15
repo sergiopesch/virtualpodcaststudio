@@ -279,6 +279,42 @@ export default function Home() {
                 </div>
               </section>
 
+              {/* Error Display */}
+              {error && (
+                <section className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-6 backdrop-blur-sm">
+                    <div className="flex items-start gap-4">
+                      <div className="size-6 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <span className="text-red-400 text-sm">⚠️</span>
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <h3 className="text-lg font-semibold text-red-400">Error Loading Papers</h3>
+                        <p className="text-sm text-red-300/90 leading-relaxed">{error}</p>
+                        {error.includes("Backend service is not available") && (
+                          <div className="mt-4 p-4 rounded-lg bg-black/40 border border-white/10">
+                            <p className="text-xs text-white/70 mb-2 font-semibold uppercase tracking-wider">To enable paper search:</p>
+                            <code className="text-xs text-white/90 font-mono bg-black/60 px-3 py-2 rounded block">
+                              cd backend && uvicorn main:app --reload
+                            </code>
+                            <p className="text-xs text-white/50 mt-3">
+                              Note: The backend is optional. You can still use the Audio Studio without it.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setError(null)}
+                        className="text-red-400 hover:text-red-300 hover:bg-red-500/20 h-8 w-8 p-0"
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  </div>
+                </section>
+              )}
+
               {/* Action Buttons */}
               <section className="flex justify-center py-8 sticky bottom-8 z-40 pointer-events-none">
                 <div className="flex gap-4 bg-black/60 backdrop-blur-2xl p-2.5 rounded-2xl shadow-apple-floating border border-white/10 pointer-events-auto">
