@@ -100,8 +100,9 @@ export async function POST(request: NextRequest) {
       style: "vivid",
     });
 
-    const imageUrl = imageResponse.data[0]?.url;
-    const revisedPrompt = imageResponse.data[0]?.revised_prompt || prompt;
+    const generatedImage = imageResponse.data?.[0];
+    const imageUrl = generatedImage?.url;
+    const revisedPrompt = generatedImage?.revised_prompt || prompt;
 
     if (!imageUrl) {
       return NextResponse.json(

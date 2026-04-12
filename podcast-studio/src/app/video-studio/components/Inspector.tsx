@@ -2,9 +2,8 @@ import React from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider"; // Assuming we have this or use input type=range
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { VideoClip, ClipType } from "../types";
+import { VideoClip } from "../types";
 import { getClipTypeIcon } from "../utils";
 
 interface InspectorProps {

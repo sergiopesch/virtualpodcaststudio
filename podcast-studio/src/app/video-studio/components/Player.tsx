@@ -32,7 +32,7 @@ export function Player({
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Media refs cache
-  const mediaCache = useRef<Record<string, HTMLImageElement | HTMLVideoElement>>({});
+  const mediaCache = useRef<Record<string, HTMLImageElement | HTMLVideoElement | HTMLAudioElement>>({});
   
   // Export refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);

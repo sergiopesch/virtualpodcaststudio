@@ -186,7 +186,6 @@ function ConnectionLine({
   connection: Connection; 
   elementsMap: Map<string, THREE.Vector3>;
 }) {
-  const lineRef = useRef<THREE.Line>(null);
   const [points, setPoints] = useState<THREE.Vector3[]>([]);
 
   useEffect(() => {
@@ -209,23 +208,12 @@ function ConnectionLine({
     }
   }, [connection, elementsMap]);
 
-  // Animate flow
-  useFrame(() => {
-    if (connection.animated && lineRef.current) {
-      const material = lineRef.current.material as THREE.LineDashedMaterial;
-      if (material.dashOffset !== undefined) {
-        material.dashOffset -= 0.02;
-      }
-    }
-  });
-
   if (points.length < 2) return null;
 
   const color = connection.color || "#ffffff";
 
   return (
     <Line
-      ref={lineRef}
       points={points}
       color={color}
       lineWidth={2}

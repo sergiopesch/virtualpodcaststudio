@@ -246,7 +246,7 @@ export function Timeline({
          </div>
 
          {/* Scrollable Timeline Area */}
-         <ScrollArea className="flex-1" orientation="horizontal">
+         <ScrollArea className="flex-1">
              <div className="relative min-w-full h-full" style={{ width: Math.max(duration * pixelsPerSecond + 500, 2000) }}>
                  
                  {/* Ruler */}

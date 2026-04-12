@@ -211,25 +211,29 @@ export default function Publisher() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-6 space-y-4">
-                      {platforms.map((channel) => (
-                        <div key={channel.name} className="flex items-center justify-between p-4 rounded-lg bg-secondary/20 border border-border/50 hover:bg-secondary/30 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <div className="size-10 rounded-lg bg-secondary flex items-center justify-center shadow-sm">
-                              <channel.icon className="size-5 text-foreground" />
+                      {platforms.map((channel) => {
+                        const ChannelIcon = channel.icon as React.ComponentType<{ className?: string }>;
+
+                        return (
+                          <div key={channel.name} className="flex items-center justify-between p-4 rounded-lg bg-secondary/20 border border-border/50 hover:bg-secondary/30 transition-colors">
+                            <div className="flex items-center gap-3">
+                              <div className="size-10 rounded-lg bg-secondary flex items-center justify-center shadow-sm">
+                                <ChannelIcon className="size-5 text-foreground" />
+                              </div>
+                              <div>
+                                <h3 className="font-semibold text-foreground">{channel.name}</h3>
+                                <p className="text-xs text-muted-foreground">Auto-sync enabled</p>
+                              </div>
                             </div>
-                            <div>
-                              <h3 className="font-semibold text-foreground">{channel.name}</h3>
-                              <p className="text-xs text-muted-foreground">Auto-sync enabled</p>
-                            </div>
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${channel.status === "Connected"
+                              ? "bg-accent/10 text-accent border border-accent/20"
+                              : "bg-secondary text-muted-foreground border border-border/50"
+                              }`}>
+                              {channel.status}
+                            </span>
                           </div>
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${channel.status === "Connected"
-                            ? "bg-accent/10 text-accent border border-accent/20"
-                            : "bg-secondary text-muted-foreground border border-border/50"
-                            }`}>
-                            {channel.status}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </CardContent>
                   </Card>
                 </div>
