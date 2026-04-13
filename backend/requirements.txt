@@ -1,7 +1,7 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0  
 httpx==0.28.1
-python-multipart==0.0.18
+python-multipart==0.0.22
 pydantic==2.10.4
 feedparser==6.0.11
 websockets==12.0
@@ -9,5 +9,5 @@ python-dotenv==1.0.0
 openai==1.57.0
 # Security packages
 slowapi==0.1.9  # Rate limiting
-python-jose[cryptography]==3.3.0  # JWT handling
+python-jose[cryptography]==3.4.0  # JWT handling
 passlib[bcrypt]==1.7.4  # Password hashing
