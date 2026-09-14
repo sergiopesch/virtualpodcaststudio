@@ -60,7 +60,7 @@ Next.js API route ──► FastAPI (`/api/papers`) ──► arXiv API
 
 ### Prerequisites
 - **Node.js 22 LTS** (22.3+ recommended; dependency-compatible runtime: 20.16–20.x or 22.3+)
-- **Python 3.8+** (only needed for papers API)
+- **Python 3.10+** (only needed for papers API)
 - **OpenAI API key** with access to the Realtime API
 
 ### 1. Configure Environment Variables
