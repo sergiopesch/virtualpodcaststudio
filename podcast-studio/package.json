@@ -53,6 +53,10 @@
   },
   "overrides": {
     "sharp": "0.35.4",
-    "postcss": "8.5.10"
+    "postcss": "8.5.24",
+    "@ai-sdk/provider-utils@^3.0.0": "3.0.28"
+  },
+  "engines": {
+    "node": ">=20.16.0 <21 || >=22.3.0"
   }
 }
